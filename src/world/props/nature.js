@@ -671,50 +671,60 @@ function roundTree(parts, o) {
   const fruitTree = o.variant === 'fruit';
   const k = fruitTree ? 0.9 : 1;
   const bark = o.bark;
-  addTrunk(parts, bark, [[0.25, -0.01], [0.245, 0.015], [0.225, 0.05], [0.2, 0.11], [0.183, 0.2], [0.172, 0.36], [0.163, 0.7], [0.153, 1.0], [0.134, 1.25], [0.08, 1.42], [0, 1.48]].map(([a, b]) => [a * k, b * k]),
-    { radial: 22, lobes: 4, lobeAmp: 0.55, lobeH: 0.36 * k, phase: r.angle(), lean: [r.float(-0.05, 0.05), r.float(-0.05, 0.05)] }, { seed: r.float(0, 50), foot: 0.1 });
-  const cy = 1.92 * k, R = 1.15 * k;
-  const limbs = 3;
+  // a short, sturdy trunk with soft root swellings that forks just under the canopy
+  const fork = 0.8 * k;
+  const lean = [r.float(-0.05, 0.05), r.float(-0.05, 0.05)];
+  const prof = trunkProfile(0.275 * k, 0.205 * k, fork + 0.1 * k, { flare: 0.4, flareH: 0.3 * k });
+  const base = addTrunk(parts, bark, prof, { radial: 22, lobes: 4, lobeAmp: 0.3, lobeH: 0.3 * k, phase: r.angle(), lean }, { seed: r.float(0, 50), foot: 0.12 });
+  const forkAt = trunkAxis(prof, lean, fork);
   const a0 = r.angle();
+  const limbs = [0, 1, 2].map((i) => [a0 + (i / 3) * TAU + r.float(-0.3, 0.3), r.float(0.85, 1.1)]);
   const skel = rand(o.ctx, 'skeleton');
   const paint = barkPainter(bark, { foot: 0 });
-  for (let i = 0; i < limbs; i++) {
-    const az = a0 + (i / limbs) * TAU + r.float(-0.3, 0.3);
-    const el = r.float(0.85, 1.1);
-    const dir = [Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az)];
-    grow(parts, bark, skel, [0, 0.95 * k, 0], dir, { len: 0.9 * k, rad: 0.12 * k, levels: bare ? 2 : 0, kids: [3, 3], shrink: 0.6, spread: 0.6, up: 0.16, minR: 0.03 * k, taperK: 0.66, painter: paint });
-  }
-  if (!bare) {
+  const cy = 1.92 * k, R = 1.15 * k;
+  if (bare) {
+    for (const [az, el] of limbs) {
+      grow(parts, bark, skel, forkAt, [Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az)], { len: 0.9 * k, rad: 0.13 * k, levels: 2, kids: [3, 3], shrink: 0.6, spread: 0.6, up: 0.16, minR: 0.03 * k, taperK: 0.66, painter: paint });
+    }
+    grow(parts, bark, skel, [forkAt[0], forkAt[1] - 0.04, forkAt[2]], [lean[0] * 2, 1, lean[1] * 2], { len: 0.75 * k, rad: 0.15 * k, levels: 2, kids: [2, 3], shrink: 0.6, spread: 0.55, up: 0.2, minR: 0.03 * k, taperK: 0.66, painter: paint });
+  } else {
+    const squash = [1.08, 0.95, 1.08];
     const clumps = canopyClumps(r, R);
     const leaves = o.leaves;
-    const surf = addCanopy(parts, leafLook(leaves.cols[0], sway), clumps, { detail: 14, k: 0.05 * R, amp: 0.028, freq: 2.2, fine: 0.016, seed: r.int(0, 999), squash: [1.08, 0.95, 1.08] }, [0, cy, 0],
+    const surf = addCanopy(parts, leafLook(leaves.cols[0], sway), clumps, { detail: 14, k: 0.05 * R, amp: 0.028, freq: 2.2, fine: 0.016, seed: r.int(0, 999), squash }, [0, cy, 0],
       canopyPainter(leaves.cols, { cy, ry: R * 0.85, alt: leaves.alt, altAmt: o.season === 'autumn' ? 0.5 : 0.28, seed: r.float(0, 40) }));
+    limbsIntoCanopy(parts, bark, skel, forkAt, limbs.map(([az]) => az), { at: [0, cy, 0], R, squash, surf }, { out: 0.5, rad: 0.13 * k, leaderRad: 0.155 * k, minR: 0.03 * k, painter: paint, depth: 0.25 * k });
     if (o.fruit !== 'none') dressCanopy(parts, surf, { fruit: o.fruit, season: o.season, sway, r: rand(o.ctx, 'fruit'), count: fruitTree ? 8 : 5, lo: -0.5, hi: 0.45, blossomCount: 70 });
   }
-  return { trunkR: 0.2 * k, reach: 1.25 * k, height: 2.95 * k, under: 0.88 * k };
+  return { reach: 1.25 * k, height: 2.95 * k, under: 0.88 * k, base };
 }
 
-/** A big old oak: thick flared trunk, heavy limbs, a broad dome of leaves. */
+/** A big old oak: a thick trunk on soft root swellings, heavy limbs, a broad dome of leaves. */
 function oakTree(parts, o) {
   const { r, bare, sway, bark } = o;
-  addTrunk(parts, bark, [[0, 0], [0.44, 0], [0.45, 0.04], [0.35, 0.14], [0.28, 0.3], [0.25, 0.7], [0.23, 1.2], [0.2, 1.6], [0.13, 1.95], [0, 2.02]],
-    { radial: 16, lobes: 6, lobeAmp: 0.55, lobeH: 0.5, phase: r.angle(), wobble: 0.07, seed: r.float(0, 50), lean: [r.float(-0.06, 0.06), r.float(-0.06, 0.06)] }, { seed: r.float(0, 50), streak: 0.09 });
+  const fork = 1.38;
+  const lean = [r.float(-0.06, 0.06), r.float(-0.06, 0.06)];
+  const prof = trunkProfile(0.35, 0.255, fork + 0.12, { flare: 0.42, flareH: 0.42 });
+  const base = addTrunk(parts, bark, prof, { radial: 18, lobes: 5, lobeAmp: 0.3, lobeH: 0.42, phase: r.angle(), wobble: 0.06, seed: r.float(0, 50), lean }, { seed: r.float(0, 50), streak: 0.09 });
+  const forkAt = trunkAxis(prof, lean, fork);
   const skel = rand(o.ctx, 'skeleton');
   const paint = barkPainter(bark, { foot: 0 });
   const a0 = r.angle();
-  for (let i = 0; i < 4; i++) {
-    const az = a0 + (i / 4) * TAU + r.float(-0.25, 0.25);
-    const el = r.float(0.62, 0.85);
-    grow(parts, bark, skel, [0, 1.45, 0], [Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az)],
-      { len: 1.35, rad: 0.15, levels: bare ? 2 : 0, kids: [3, 2], shrink: 0.64, spread: 0.6, up: 0.18, minR: 0.026, painter: paint });
-  }
-  if (!bare) {
-    const R = 1.6, cy = 3.45;
+  const limbs = [0, 1, 2, 3].map((i) => [a0 + (i / 4) * TAU + r.float(-0.25, 0.25), r.float(0.62, 0.85)]);
+  if (bare) {
+    for (const [az, el] of limbs) {
+      grow(parts, bark, skel, forkAt, [Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az)],
+        { len: 1.35, rad: 0.16, levels: 2, kids: [3, 2], shrink: 0.64, spread: 0.6, up: 0.18, minR: 0.026, painter: paint });
+    }
+    grow(parts, bark, skel, [forkAt[0], forkAt[1] - 0.05, forkAt[2]], [lean[0] * 2, 1, lean[1] * 2], { len: 1.1, rad: 0.185, levels: 2, kids: [2, 2], shrink: 0.62, spread: 0.6, up: 0.2, minR: 0.026, painter: paint });
+  } else {
+    const R = 1.6, cy = 3.45, squash = [1.3, 0.74, 1.22];
     const clumps = canopyClumps(r, R, { rings: [[-0.26, 0.5, 0.44, 5], [0.04, 0.6, 0.5, 6], [0.38, 0.4, 0.46, 4]], crown: 0.46, crownY: 0.44, jitter: 1.6 });
-    addCanopy(parts, leafLook(o.leaves.cols[0], sway), clumps, { detail: 15, k: 0.055 * R, amp: 0.03, freq: 1.9, seed: r.int(0, 999), squash: [1.3, 0.74, 1.22] }, [0, cy, 0],
+    const surf = addCanopy(parts, leafLook(o.leaves.cols[0], sway), clumps, { detail: 15, k: 0.055 * R, amp: 0.03, freq: 1.9, seed: r.int(0, 999), squash }, [0, cy, 0],
       canopyPainter(o.leaves.cols, { cy, ry: R * 0.72, alt: o.leaves.alt, altAmt: o.season === 'autumn' ? 0.5 : 0.28, seed: r.float(0, 40) }));
+    limbsIntoCanopy(parts, bark, skel, forkAt, limbs.map(([az]) => az), { at: [0, cy, 0], R, squash, surf }, { out: 0.52, rad: 0.16, leaderRad: 0.19, minR: 0.026, painter: paint, depth: 0.3, taperK: 0.62 });
   }
-  return { trunkR: 0.3, reach: 2.0, height: 4.75, under: 1.35 };
+  return { reach: 2.0, height: 4.75, under: 1.35, base };
 }
 
 /** One soft tier of a conifer: a puffy skirt with a rolled, round-scalloped, drooping rim. */
@@ -750,8 +760,8 @@ function coniferTree(parts, o) {
     ? [[0.62, 0.98, 1.05], [1.18, 0.88, 1.0], [1.72, 0.76, 0.95], [2.24, 0.63, 0.92], [2.74, 0.5, 0.9], [3.22, 0.36, 0.95]]
     : [[0.5, 1.3, 1.35], [1.25, 1.06, 1.25], [1.95, 0.8, 1.12], [2.6, 0.54, 1.12]];
   const top = tiers[tiers.length - 1][0] + tiers[tiers.length - 1][2];
-  addTrunk(parts, bark, [[0.21, 0], [0.205, 0.02], [0.175, 0.07], [0.145, 0.16], [0.125, 0.3], [0.11, 0.7], [0.08, top * 0.75], [0, top * 0.8]],
-    { radial: 16, lobes: 5, lobeAmp: 0.32, lobeH: 0.26, phase: r.angle() }, { seed: r.float(0, 50), foot: 0.1 });
+  const base = addTrunk(parts, bark, trunkProfile(0.135, 0.07, top * 0.76, { flare: 0.42, flareH: 0.26 }),
+    { radial: 16, lobes: 5, lobeAmp: 0.28, lobeH: 0.26, phase: r.angle() }, { seed: r.float(0, 50), foot: 0.1 });
   const base = cedar ? ['#28785f', '#43977a', '#174f42'] : ['#2f864a', '#4fa862', '#1b5a38'];
   const winter = cedar ? ['#357564', '#52937e', '#225548'] : ['#3a7a55', '#5c9a6c', '#275a40'];
   const cols = o.leavesOverride ? tones(o.leavesOverride) : (o.season === 'winter' ? winter : o.season === 'spring' ? base.map((c) => shade(c, 0.03, { hue: -0.01 })) : base);
@@ -766,7 +776,7 @@ function coniferTree(parts, o) {
         grow(parts, bark, skel, [0, y + 0.15, 0], [Math.cos(az), -0.05, Math.sin(az)], { len: R * 0.85, rad: 0.04, levels: 0, droop: 0.15, minR: 0.02, painter: paint });
       }
     });
-    return { trunkR: 0.15, reach: 1.0, height: top, under: cedar ? 1.1 : 1.35 };
+    return { reach: 1.0, height: top, under: cedar ? 1.1 : 1.35, base };
   }
   const [B, L, D] = cols.map(C);
   tiers.forEach(([y, R, H], i) => {
@@ -780,7 +790,7 @@ function coniferTree(parts, o) {
       c.offsetHSL(0, 0, noise3(x * 2.6 + seed, py * 2.6, z * 2.6) * 0.035);
     });
   });
-  return { trunkR: 0.15, reach: cedar ? 0.95 : 1.25, height: top, under: cedar ? 1.12 : 1.42 };
+  return { reach: cedar ? 0.95 : 1.25, height: top, under: cedar ? 1.12 : 1.42, base };
 }
 
 /** One palm frond: an arching, V-folded leaf with notched edges. */
