@@ -809,7 +809,7 @@ export const WATERSIDE = {
       let bay = 0;
       while (bay < postZ.length - 2 && postZ[bay + 1] < L * 0.55) bay++;
       const sideZ = +((postZ[bay] + postZ[bay + 1]) / 2).toFixed(3);
-      spots.side = spot([-(W / 2 - 0.06), top, sideZ], -90, 'sit');
+      spots.side = spot([+(0.06 - W / 2).toFixed(3), top, sideZ], -90, 'sit');
       spots.shore = spot([0, top, 0.25], 0, 'stand');
 
       // a ladder down into the water in the last bay on the +X side
@@ -837,11 +837,11 @@ export const WATERSIDE = {
       if (withLadder && room(W / 2 - 0.3, ladderZ) > 0.45) spots.ladder = spot([+(W / 2 - 0.3).toFixed(3), top, +ladderZ.toFixed(3)], 90, 'stand');
 
       // a rope coiled by a cleat near the edge, clear of the sitters, the ladder and the walkway
+      const clearOf = (x, z, d) => Object.values(spots).every((sp) => Math.hypot(sp.at[0] - x, sp.at[2] - z) > d);
       const free = (side, z) => z + 0.25 < L - 0.45 && z - 0.25 > 0.45
-        && !(side < 0 && Math.abs(z - sideZ) < 0.5)
+        && clearOf(side * (W / 2 - 0.3), z + 0.1, 0.38) && clearOf(side * (W / 2 - 0.08), z - 0.06, 0.3)
         && !(side > 0 && ladderZ != null && Math.abs(z - ladderZ) < 0.55)
-        && postZ.every((pz) => Math.abs(z - pz) > 0.14)
-        && (W >= 1.2 || Math.abs(z - L * 0.5) > 0.45);
+        && postZ.every((pz) => Math.abs(z - pz) > 0.14);
       let coilAt = null;
       for (const side of [-1, 1]) {
         for (let z = L - 0.75; z > 0.6 && !coilAt; z -= 0.05) if (free(side, z)) coilAt = [side, z];
