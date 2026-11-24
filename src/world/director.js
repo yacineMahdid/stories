@@ -71,11 +71,17 @@ class SceneSet {
     this.terrain = new Terrain({ center: this.center, size: TERRAIN_SIZE, res: 300, season: state.season, features, seed: 7, colors: this.world.direction.colors ?? {} });
     this.object.add(this.terrain.object);
 
-    // 3. Place the props on the ground (or on the water).
+    // 3. Place the props on the ground, on the water, or across it (a bridge rests on its banks).
     for (const [id, object] of this.objects) {
       const t = object.userData.thing;
       const def = CATALOG[t.kind];
-      const y = def?.floats ? WATER_LEVEL : t.ground === false ? 0 : this.terrain.heightAt(t.pos[0], t.pos[1]);
+      let y;
+      if (def?.floats) y = WATER_LEVEL;
+      else if (t.ground === false) y = 0;
+      else {
+        y = this.terrain.heightAt(t.pos[0], t.pos[1]);
+        if (y < WATER_LEVEL + 0.05 || def?.spans || t.kind === 'bridge') y = Math.max(this.restingHeight(object, t), WATER_LEVEL + 0.2);
+      }
       object.position.set(t.pos[0], y + (t.lift ?? 0), t.pos[1]);
       object.rotation.y = (t.facing ?? 0) * D2R;
       object.scale.setScalar(t.scale ?? 1);
@@ -96,6 +102,20 @@ class SceneSet {
     // 5. Lights.
     this.lights = new PropLights(stage.scene, { max: 12 });
     for (const object of this.objects.values()) this.lights.addFrom(object);
+  }
+
+  /** The highest ground under a prop's footprint edge: where something that spans water rests. */
+  restingHeight(object, t) {
+    const fp = object.userData.footprint ?? { r: 1 };
+    const s = t.scale ?? 1;
+    const hw = ((fp.w ?? (fp.r ?? 1) * 2) / 2) * s, hd = ((fp.d ?? (fp.r ?? 1) * 2) / 2) * s;
+    const yaw = (t.facing ?? 0) * D2R, c = Math.cos(yaw), sn = Math.sin(yaw);
+    let best = -Infinity;
+    for (const [lx, lz] of [[hw, 0], [-hw, 0], [0, hd], [0, -hd], [hw, hd], [-hw, hd], [hw, -hd], [-hw, -hd]]) {
+      const x = t.pos[0] + lx * c + lz * sn, z = t.pos[1] - lx * sn + lz * c;
+      best = Math.max(best, this.terrain.heightAt(x, z));
+    }
+    return best;
   }
 
   /** Spread a scatter entry over its area on suitable ground, as instanced copies. */
@@ -511,8 +531,8 @@ export class Director {
           height = shot.height ?? dist * 0.5;
           break;
         case 'wide':
-          dist = shot.distance ?? fit(extent + 3.2) * 0.95;
-          height = shot.height ?? 1.6 + dist * 0.28;
+          dist = shot.distance ?? fit(extent + 1.8) * 0.92;
+          height = shot.height ?? 1.1 + dist * 0.2;
           target.y = center.y - 0.1;
           break;
         case 'close': {
@@ -613,8 +633,8 @@ export class Director {
       const w = Math.max(sr.x1 - sr.x0, 1e-3), h = Math.max(sr.y1 - sr.y0, 1e-3);
       let score = 0;
       for (const b of boxes) {
-        // Something right at the lens (a canopy, a wall) fills the frame wherever the subjects are.
-        if (b.distanceToPoint(p) < 1.2) { score += 3; continue; }
+        // The camera inside something (a canopy, a house) sees nothing else.
+        if (b.clone().expandByScalar(0.35).containsPoint(p)) { score += 3; continue; }
         const r = rectOf(corners(b), cam);
         if (r.near > nearest - 0.15) continue;
         const ox = Math.min(r.x1, sr.x1) - Math.max(r.x0, sr.x0);
@@ -627,12 +647,21 @@ export class Director {
     const off = pos.clone().sub(target);
     let best = pos, bestScore = occlusion(pos);
     if (bestScore < 0.02) return pos;
-    for (const step of [8, -8, 16, -16, 24, -24, 36, -36, 50, -50, 65, -65, 80, -80]) {
+    // Try swinging around the subjects, coming a little closer, and rising a little; small
+    // departures from the intended framing cost a little, so they only win when they help.
+    const flat = off.clone().setY(0);
+    const rise = off.y;
+    for (const step of [0, 8, -8, 16, -16, 24, -24, 36, -36, 50, -50, 65, -65, 80, -80]) {
       if (Math.abs(step) > maxSwing) continue;
-      const p = target.clone().add(off.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), step * D2R));
-      const score = occlusion(p);
-      if (score < bestScore - 0.05) { best = p; bestScore = score; }
-      if (bestScore < 0.02) break;
+      for (const [k, up] of [[1, 0], [0.75, 0], [1, 0.8], [0.75, 0.8]]) {
+        if (!step && k === 1 && !up) continue;
+        const o = flat.clone().multiplyScalar(k).applyAxisAngle(new THREE.Vector3(0, 1, 0), step * D2R).setY(rise * k + up);
+        const p = target.clone().add(o);
+        const score = occlusion(p) + Math.abs(step) * 0.002 + (1 - k) * 0.12 + up * 0.08;
+        if (window.DEBUG_FRAMING) console.log('framing', step, k, up, score.toFixed(2));
+        if (score < bestScore - 0.03) { best = p; bestScore = score; }
+      }
+      if (bestScore < 0.04) break;
     }
     return best;
   }

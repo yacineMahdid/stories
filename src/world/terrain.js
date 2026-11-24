@@ -281,7 +281,9 @@ export class Terrain {
       }
     }
     h = h * (1 - flatW) + flatH * flatW;
-    // Water carves last: land near water levels out, then the bank drops to the bed.
+    // Water carves last: the sea first (its beaches), then lakes and rivers, which cut through
+    // beaches down to the sea. Land near water levels out, then the bank drops to the bed.
+    water.sort((a, b) => (a.type === 'sea' ? 0 : a.type === 'river' ? 2 : 1) - (b.type === 'sea' ? 0 : b.type === 'river' ? 2 : 1));
     for (const f of water) {
       let d;
       if (f.type === 'river') d = distToPolyline(x, z, f.points) - (f.width ?? 4) / 2;
@@ -296,7 +298,8 @@ export class Terrain {
       } else {
         const bank = f.bank ?? 3;
         const land = smooth(bank + 2.5, bank * 0.3, d);
-        h = h * (1 - land) + (f.banks ?? 0) * land;
+        const banks = f.banks ?? 0;
+        if (h > banks) h = h * (1 - land) + banks * land; // level hills by the water, never raise a beach
         if (d < 0.45) {
           const t = smooth(0.45, -1.1, d);
           h = Math.min(h, -depth * t + (1 - t) * h);

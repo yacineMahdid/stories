@@ -5,7 +5,7 @@
   "defaults": { "weather": "clear" },
 
   "terrain": [
-    { "type": "river", "points": [[1880, -400], [1720, 300], [1630, 720], [1600, 1000], [1660, 1300], [1720, 1520], [1760, 1800]], "width": 90, "depth": 1.0 },
+    { "type": "river", "points": [[2050, -2400], [1880, -400], [1720, 300], [1630, 720], [1600, 1000], [1660, 1300], [1720, 1520], [1760, 1800], [1800, 2400]], "width": 90, "depth": 1.0 },
     { "type": "sea", "points": [[-2600, 1560], [4800, 1470], [4800, 5400], [-2600, 5400]], "beach": 180 },
     { "type": "hill", "at": [520, 1380], "r": 300, "height": 3.0 },
     { "type": "hill", "at": [80, 300], "r": 420, "height": 2.2 },
@@ -51,7 +51,7 @@
       "radius": 6,
       "wild": { "grass": 0.7, "flowers": 0.04 },
       "things": [
-        { "id": "mill", "kind": "watermill", "at": [-0.6, 0], "facing": 270, "note": "Hattie's water mill; the wheel turns in the river" },
+        { "id": "mill", "kind": "watermill", "at": [-0.6, 0], "facing": 0, "note": "Hattie's water mill; the wheel turns in the river" },
         { "id": "bridge", "kind": "bridge", "at": [2.45, 11], "facing": 0, "length": 7.5, "width": 1.6, "style": "wood", "state": "intact", "note": "the old footbridge" },
         { "id": "mill-fence", "kind": "fence", "at": [-2, 6.5], "length": 5, "style": "rail", "facing": 0 },
         { "id": "mill-sacks", "kind": "sack", "at": [-3.6, 2.6] },
