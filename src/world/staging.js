@@ -455,7 +455,8 @@ export function autoPlace(pin) {
     case 'river':
       terrain.push({ type: 'river', points: [[-40, 4], [-10, 5], [10, 3], [40, 5]], width: 4 });
       things.push({ kind: 'bridge', at: [0, 4.2], facing: 90 });
-      if (/mill/.test(pin.name.toLowerCase())) things.push({ kind: 'watermill', at: [-6, 0] });
+      // The watermill's wheel is on its +X side: turned 270°, +X points south, into the river.
+      if (/mill/.test(pin.name.toLowerCase())) things.push({ kind: 'watermill', at: [-6, 0.2], facing: 270 });
       break;
     case 'lake':
       terrain.push({ type: 'pond', at: [0, 6], r: 6 });
