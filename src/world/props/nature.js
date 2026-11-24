@@ -301,12 +301,12 @@ function trunkAxis(profile, lean, y) {
  * How far a placed trunk reaches from the axis toward azimuth `a` (atan2(z, x)) near the ground,
  * measured along that direction over a body-wide window: where a character can stand.
  */
-function reachToward(g, a, { yMax = 0.14, window = 0.32 } = {}) {
+function reachToward(g, a, { yMin = -0.03, yMax = 0.14, window = 0.32 } = {}) {
   const pos = g.attributes.position;
   let best = 0;
   for (let i = 0; i < pos.count; i++) {
     const y = pos.getY(i);
-    if (y > yMax || y < -0.03) continue;
+    if (y > yMax || y < yMin) continue;
     const x = pos.getX(i), z = pos.getZ(i);
     let d = Math.atan2(z, x) - a;
     d = Math.atan2(Math.sin(d), Math.cos(d));
@@ -323,6 +323,28 @@ function footRadius(g, yMax = 0.06) {
   for (let i = 0; i < pos.count; i++) {
     const y = pos.getY(i);
     if (y <= yMax && y >= -0.03) best = Math.max(best, Math.hypot(pos.getX(i), pos.getZ(i)));
+  }
+  return best;
+}
+
+/** The front (+Z) surface of a placed geometry around (x, y): how far forward it reaches there. */
+function frontOf(g, x, y, { dx = 0.05, dy = 0.08 } = {}) {
+  const pos = g.attributes.position;
+  let best = -Infinity;
+  for (let i = 0; i < pos.count; i++) {
+    if (Math.abs(pos.getX(i) - x) < dx && Math.abs(pos.getY(i) - y) < dy) best = Math.max(best, pos.getZ(i));
+  }
+  return best === -Infinity ? 0 : best;
+}
+
+/** How far everything in a Parts reaches from the origin near the ground (for footprints). */
+function groundReach(parts, yMax = 0.08) {
+  let best = 0;
+  for (const { geometries } of parts.slots.values()) {
+    for (const g of geometries) {
+      const pos = g.attributes.position;
+      for (let i = 0; i < pos.count; i++) if (pos.getY(i) <= yMax) best = Math.max(best, Math.hypot(pos.getX(i), pos.getZ(i)));
+    }
   }
   return best;
 }
@@ -596,7 +618,7 @@ const DECIDUOUS = new Set(['round', 'oak', 'birch', 'fruit', 'cherry', 'willow',
 
 const BARK = {
   round: '#9a6944', oak: '#86634a', pine: '#7c5238', cedar: '#8c4d36', palm: '#b39064',
-  birch: '#efe9de', fruit: '#96653f', cherry: '#7a4a3a', willow: '#86694d', dead: '#958576',
+  birch: '#efe9de', fruit: '#96653f', cherry: '#8f5a48', willow: '#86694d', dead: '#958576',
 };
 
 /** Leaf tones for a tree in a season. */
@@ -762,9 +784,9 @@ function coniferTree(parts, o) {
   const top = tiers[tiers.length - 1][0] + tiers[tiers.length - 1][2];
   const base = addTrunk(parts, bark, trunkProfile(0.135, 0.07, top * 0.76, { flare: 0.42, flareH: 0.26 }),
     { radial: 16, lobes: 5, lobeAmp: 0.28, lobeH: 0.26, phase: r.angle() }, { seed: r.float(0, 50), foot: 0.1 });
-  const base = cedar ? ['#28785f', '#43977a', '#174f42'] : ['#2f864a', '#4fa862', '#1b5a38'];
+  const green = cedar ? ['#28785f', '#43977a', '#174f42'] : ['#2f864a', '#4fa862', '#1b5a38'];
   const winter = cedar ? ['#357564', '#52937e', '#225548'] : ['#3a7a55', '#5c9a6c', '#275a40'];
-  const cols = o.leavesOverride ? tones(o.leavesOverride) : (o.season === 'winter' ? winter : o.season === 'spring' ? base.map((c) => shade(c, 0.03, { hue: -0.01 })) : base);
+  const cols = o.leavesOverride ? tones(o.leavesOverride) : (o.season === 'winter' ? winter : o.season === 'spring' ? green.map((c) => shade(c, 0.03, { hue: -0.01 })) : green);
   if (bare) {
     // a bare conifer: a straight spine with short drooping whorls
     const skel = rand(o.ctx, 'skeleton');
@@ -875,14 +897,15 @@ function birchTree(parts, o) {
   const { r, bare, sway, bark } = o;
   const n = 2 + r.int(0, 1);
   const a0 = r.angle();
-  const markDark = C('#3f3a37'), markGrey = C('#b7b0a4');
+  const markDark = C('#3f3a37'), markGrey = C('#b7b0a4'), footC = C('#6a5848');
   const paint = (c, x, y, z) => {
     const a = Math.atan2(z, x);
     const n1 = noise3(x * 5 + 3, y * 2.6, z * 5);
     const band = fract(y * 3.1 + noise3(x * 2, y * 0.7, z * 2) * 0.6);
     c.lerp(markGrey, smooth(0.15, 0.4, n1) * 0.5);
     if (band > 0.82 && noise3(Math.cos(a) * 3, y * 4, Math.sin(a) * 3) > -0.1) c.lerp(markDark, 0.85);
-    c.lerp(markDark, (1 - smooth(0.0, 0.32, y)) * 0.55);
+    // old birches are dark and rough at the foot: a warm grey-brown, ragged where it meets the white
+    c.lerp(footC, (1 - smooth(0.04, 0.36, y + noise3(Math.cos(a) * 2.5, y * 3, Math.sin(a) * 2.5) * 0.1)) * 0.8);
   };
   const tops = [], curves = [], azs = [];
   for (let i = 0; i < n; i++) {
@@ -890,7 +913,7 @@ function birchTree(parts, o) {
     const sp = r.float(0.12, 0.2);
     const h = r.float(2.75, 3.25) * (i === 0 ? 1.06 : 1);
     const bx = Math.cos(az) * 0.06, bz = Math.sin(az) * 0.06;
-    const pts = [[bx, 0, bz], [bx + Math.cos(az) * sp * 0.4, h * 0.35, bz + Math.sin(az) * sp * 0.4], [bx + Math.cos(az) * sp * 1.1, h * 0.7, bz + Math.sin(az) * sp * 1.1], [bx + Math.cos(az) * sp * 1.6, h, bz + Math.sin(az) * sp * 1.6]];
+    const pts = [[bx, -0.04, bz], [bx + Math.cos(az) * sp * 0.4, h * 0.35, bz + Math.sin(az) * sp * 0.4], [bx + Math.cos(az) * sp * 1.1, h * 0.7, bz + Math.sin(az) * sp * 1.1], [bx + Math.cos(az) * sp * 1.6, h, bz + Math.sin(az) * sp * 1.6]];
     addPainted(parts, taper(pts, i === 0 ? 0.095 : 0.082, 0.04, { radial: 10 }), bark, undefined, paint);
     tops.push(pts[3]);
     azs.push(az);
@@ -905,7 +928,7 @@ function birchTree(parts, o) {
     }
   }
   // the foot where the trunks meet
-  addPainted(parts, trunkGeo([[0.21, 0], [0.205, 0.03], [0.16, 0.1], [0.125, 0.2], [0.06, 0.3], [0, 0.32]], { radial: 14, lobes: 4, lobeAmp: 0.3, lobeH: 0.16 }), bark, undefined, paint);
+  const base = addPainted(parts, trunkGeo([[0, -0.06], [0.24, -0.05], [0.225, -0.01], [0.2, 0.04], [0.175, 0.1], [0.15, 0.17], [0.12, 0.25], [0.085, 0.32], [0.045, 0.37], [0, 0.39]], { radial: 16, lobes: 3, lobeAmp: 0.22, lobeH: 0.2, phase: a0 + 0.5 }), bark, undefined, paint);
   if (!bare) {
     const cr = rand(o.ctx, 'crown');
     const cx = tops.reduce((a, t) => a + t[0], 0) / n, cz = tops.reduce((a, t) => a + t[2], 0) / n;
@@ -927,84 +950,98 @@ function birchTree(parts, o) {
         canopyPainter(o.leaves.cols, { cy: end[1] + 0.12, ry: pr, alt: o.leaves.alt, altAmt: 0.3, seed: cr.float(0, 40) }));
     }
   }
-  return { trunkR: 0.17, reach: 1.0, height: 4.0, under: 0.85 };
+  return { reach: 1.0, height: 4.0, under: 0.85, base };
 }
 
 /** Cherry: a dark trunk splitting low into spreading limbs under a wide flat cloud of blossom. */
 function cherryTree(parts, o) {
   const { r, bare, sway, bark } = o;
-  const bandC = C(shade(colorOf(bark), -0.09)), lightC = C(shade(colorOf(bark), 0.06));
+  const bandC = C(shade(colorOf(bark), -0.08)), lightC = C(shade(colorOf(bark), 0.06)), footC = C(shade(colorOf(bark), -0.07));
   const paint = (c, x, y, z) => {
     const b = fract(y * 9 + noise3(x * 3, y, z * 3) * 0.4);
-    c.lerp(b > 0.8 ? bandC : lightC, b > 0.8 ? 0.6 : 0.15);
+    c.lerp(b > 0.8 ? bandC : lightC, b > 0.8 ? 0.3 : 0.15);
   };
-  addPainted(parts, trunkGeo([[0, 0], [0.24, 0], [0.25, 0.03], [0.19, 0.1], [0.15, 0.22], [0.13, 0.5], [0.12, 0.8], [0.09, 0.95], [0, 1.0]],
-    { radial: 13, lobes: 5, lobeAmp: 0.45, lobeH: 0.28, phase: r.angle(), wobble: 0.05, seed: r.float(0, 30), lean: [r.float(-0.06, 0.06), r.float(-0.06, 0.06)] }), bark, undefined, paint);
+  // a short trunk that splits low into spreading limbs
+  const fork = 0.76;
+  const lean = [r.float(-0.06, 0.06), r.float(-0.06, 0.06)];
+  const prof = trunkProfile(0.2, 0.15, fork + 0.08, { flare: 0.42, flareH: 0.28 });
+  const base = addPainted(parts, trunkGeo(prof, { radial: 14, lobes: 5, lobeAmp: 0.28, lobeH: 0.28, phase: r.angle(), wobble: 0.05, seed: r.float(0, 30), lean }), bark, undefined, (c, x, y, z) => {
+    paint(c, x, y, z);
+    c.lerp(footC, (1 - smooth(0, 0.14, y)) * 0.45);
+  });
+  const forkAt = trunkAxis(prof, lean, fork);
   const skel = rand(o.ctx, 'skeleton');
   const a0 = r.angle();
-  for (let i = 0; i < 4; i++) {
-    const az = a0 + (i / 4) * TAU + r.float(-0.25, 0.25);
-    const el = r.float(0.55, 0.78);
-    grow(parts, bark, skel, [0, 0.82, 0], [Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az)],
-      { len: 1.0, rad: 0.095, levels: bare ? 2 : 0, kids: [3, 2], shrink: 0.62, spread: 0.62, up: 0.12, minR: 0.02, painter: paint });
-  }
-  if (!bare) {
-    const R = 1.15, cy = 2.15;
+  const limbs = [0, 1, 2, 3].map((i) => [a0 + (i / 4) * TAU + r.float(-0.25, 0.25), r.float(0.55, 0.78)]);
+  if (bare) {
+    for (const [az, el] of limbs) {
+      grow(parts, bark, skel, forkAt, [Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az)],
+        { len: 1.0, rad: 0.1, levels: 2, kids: [3, 2], shrink: 0.62, spread: 0.62, up: 0.12, minR: 0.02, painter: paint });
+    }
+    grow(parts, bark, skel, [forkAt[0], forkAt[1] - 0.03, forkAt[2]], [lean[0] * 2, 1, lean[1] * 2], { len: 0.8, rad: 0.115, levels: 2, kids: [2, 2], shrink: 0.62, spread: 0.6, up: 0.15, minR: 0.02, painter: paint });
+  } else {
+    const R = 1.15, cy = 2.15, squash = [1.4, 0.68, 1.32];
     const spring = o.season === 'spring' && !o.leavesOverride;
-    const cols = spring ? ['#f6b3c9', '#fcd7e3', '#e48aa9'] : o.leaves.cols;
+    const cols = spring ? ['#f6b3c9', '#fcd7e3', '#d993ad'] : o.leaves.cols;
     const alt = spring ? '#fde6ee' : o.leaves.alt;
     const clumps = canopyClumps(r, R, { rings: [[-0.22, 0.5, 0.42, 5], [0.04, 0.6, 0.5, 6], [0.34, 0.4, 0.46, 4]], crown: 0.46, crownY: 0.44 });
-    const surf = addCanopy(parts, leafLook(cols[0], sway), clumps, { detail: 14, k: 0.065, amp: 0.035, freq: 2.4, seed: r.int(0, 999), squash: [1.4, 0.68, 1.32] }, [0, cy, 0],
+    const surf = addCanopy(parts, leafLook(cols[0], sway), clumps, { detail: 14, k: 0.065, amp: 0.035, freq: 2.4, seed: r.int(0, 999), squash }, [0, cy, 0],
       canopyPainter(cols, { cy, ry: R * 0.74, alt, altAmt: spring ? 0.45 : 0.32, spots: spring ? { color: '#fff1f5', freq: 3.6, lo: 0.25, amt: 0.6 } : null, seed: r.float(0, 40) }));
+    limbsIntoCanopy(parts, bark, skel, forkAt, limbs.map(([az]) => az), { at: [0, cy, 0], R, squash, surf }, { out: 0.5, rad: 0.1, leaderRad: 0.115, minR: 0.02, painter: paint, depth: 0.25, taperK: 0.62 });
     if (spring) {
       const pr = rand(o.ctx, 'petals');
       for (let i = 0; i < 16; i++) {
         const a = pr.angle(), d = pr.float(0.3, 1.9);
         parts.add(sphere(pr.float(0.035, 0.05), 6, 3), { slot: 'foliage', color: pr.chance(0.5) ? '#f8c2d4' : '#fbdbe5' }, { at: [Math.cos(a) * d, 0.006, Math.sin(a) * d], scale: [1, 0.15, 0.7], rot: [0, pr.angle(), 0] });
       }
+      // soft paler puffs of bloom half sunk in the cloud
       for (const d of spiralDirs(10, -0.3, 0.8, rand(o.ctx, 'puffs'), 0.6)) {
         const p = surf(d);
-        parts.add(blob(0.09, { detail: 1, amp: 0.15, seed: 3 }), leafLook('#fbd3e0', sway), { at: [p[0], p[1], p[2]] });
+        const l = Math.hypot(d[0], d[1], d[2]);
+        parts.add(blob(0.11, { detail: 2, amp: 0.12, seed: 3 }), leafLook('#fbd3e0', sway), { at: [p[0] - d[0] / l * 0.045, p[1] - d[1] / l * 0.045, p[2] - d[2] / l * 0.045], scale: [1, 0.8, 1] });
       }
     } else if (o.fruit === 'cherry' && o.season === 'summer') {
       dressCanopy(parts, surf, { fruit: 'cherry', season: o.season, sway, r: rand(o.ctx, 'fruit'), count: 6 });
     }
   }
-  return { trunkR: 0.16, reach: 1.7, height: 3.05, under: 0.95 };
+  return { reach: 1.7, height: 3.05, under: 0.95, base };
 }
 
 /** Weeping willow: a leaning trunk, a soft dome and long curtains of leaves that sway. */
 function willowTree(parts, o) {
   const { r, bare, sway, bark } = o;
   const lx = r.float(-0.12, 0.12), lz = r.float(-0.12, 0.12);
-  addTrunk(parts, bark, [[0, 0], [0.3, 0], [0.31, 0.04], [0.24, 0.13], [0.2, 0.3], [0.17, 0.7], [0.16, 1.2], [0.14, 1.6], [0.09, 1.9], [0, 1.95]],
-    { radial: 14, lobes: 5, lobeAmp: 0.5, lobeH: 0.35, phase: r.angle(), wobble: 0.08, seed: r.float(0, 30), lean: [lx, lz], twist: 0.5 }, { seed: r.float(0, 30), streak: 0.1 });
+  const fork = 1.5;
+  const prof = trunkProfile(0.25, 0.17, fork + 0.1, { flare: 0.42, flareH: 0.36 });
+  const base = addTrunk(parts, bark, prof, { radial: 14, lobes: 5, lobeAmp: 0.3, lobeH: 0.36, phase: r.angle(), wobble: 0.08, seed: r.float(0, 30), lean: [lx, lz], twist: 0.5 }, { seed: r.float(0, 30), streak: 0.1 });
+  const forkAt = trunkAxis(prof, [lx, lz], fork);
   const skel = rand(o.ctx, 'skeleton');
   const paint = barkPainter(bark, { foot: 0 });
   const a0 = r.angle();
-  const tips = [];
-  for (let i = 0; i < 3; i++) {
-    const az = a0 + (i / 3) * TAU + r.float(-0.3, 0.3);
-    grow(parts, bark, skel, [lx * 0.8, 1.55, lz * 0.8], [Math.cos(az) * 0.6, 0.85, Math.sin(az) * 0.6], { len: 0.9, rad: 0.1, levels: bare ? 1 : 0, kids: [3], shrink: 0.7, spread: 0.6, up: 0.1, minR: 0.03, painter: paint }, 0, tips);
-  }
+  const azs = [0, 1, 2].map((i) => a0 + (i / 3) * TAU + r.float(-0.3, 0.3));
   const cy = 2.75, R = 0.95;
   const cols = o.leaves.cols;
   const [B, L, D] = cols.map(C);
   if (bare) {
+    const tips = [];
+    for (const az of azs) grow(parts, bark, skel, forkAt, [Math.cos(az) * 0.6, 0.85, Math.sin(az) * 0.6], { len: 0.9, rad: 0.1, levels: 1, kids: [3], shrink: 0.7, spread: 0.6, up: 0.1, minR: 0.03, painter: paint }, 0, tips);
+    grow(parts, bark, skel, [forkAt[0], forkAt[1] - 0.04, forkAt[2]], [lx, 1, lz], { len: 0.75, rad: 0.12, levels: 1, kids: [2], shrink: 0.7, spread: 0.55, up: 0.15, minR: 0.03, painter: paint }, 0, tips);
     // long, thin weeping twigs hanging from the branch tips
     for (const t of tips) {
       for (let j = 0; j < 3; j++) {
         const a = skel.angle(), out = skel.float(0.15, 0.35);
         const p0 = t.at, hang = skel.float(1.0, 1.6);
         grow(parts, bark, skel, p0, [Math.cos(a) * out, 0.35, Math.sin(a) * out], { len: 0.3, rad: 0.022, levels: 0, minR: 0.014, painter: paint });
-        parts.add(taper([[p0[0], p0[1] + 0.1, p0[2]], [p0[0] + Math.cos(a) * out, p0[1] + 0.05, p0[2] + Math.sin(a) * out], [p0[0] + Math.cos(a) * out * 1.3, p0[1] - hang * 0.5, p0[2] + Math.sin(a) * out * 1.3], [p0[0] + Math.cos(a) * out * 1.4, p0[1] - hang, p0[2] + Math.sin(a) * out * 1.4]], 0.016, 0.01, { radial: 4 }), recolor(bark, shade(colorOf(bark), 0.08)));
+        parts.add(taper([[p0[0], p0[1] + 0.1, p0[2]], [p0[0] + Math.cos(a) * out, p0[1] + 0.05, p0[2] + Math.sin(a) * out], [p0[0] + Math.cos(a) * out * 1.3, p0[1] - hang * 0.5, p0[2] + Math.sin(a) * out * 1.3], [p0[0] + Math.cos(a) * out * 1.4, Math.max(0.25, p0[1] - hang), p0[2] + Math.sin(a) * out * 1.4]], 0.016, 0.01, { radial: 4 }), recolor(bark, shade(colorOf(bark), 0.08)));
       }
     }
-    return { trunkR: 0.2, reach: 1.5, height: 3.4, under: 0.95 };
+    return { reach: 1.5, height: 3.4, under: 0.95, base };
   }
   const clumps = canopyClumps(r, R, { rings: [[0.0, 0.54, 0.52, 5], [0.34, 0.38, 0.48, 4]], crown: 0.48, crownY: 0.46 });
-  const surf = addCanopy(parts, leafLook(cols[0], sway), clumps, { detail: 12, k: 0.06, amp: 0.035, freq: 2.4, seed: r.int(0, 999), squash: [1.25, 0.8, 1.25], flatBottom: R * 0.4 }, [lx, cy, lz],
+  const squash = [1.25, 0.8, 1.25];
+  const surf = addCanopy(parts, leafLook(cols[0], sway), clumps, { detail: 12, k: 0.06, amp: 0.035, freq: 2.4, seed: r.int(0, 999), squash, flatBottom: R * 0.4 }, [lx, cy, lz],
     canopyPainter(cols, { cy, ry: R * 0.8, alt: o.leaves.alt, altAmt: 0.3, seed: r.float(0, 40) }));
+  limbsIntoCanopy(parts, bark, skel, forkAt, azs, { at: [lx, cy, lz], R, squash, surf }, { out: 0.45, drop: 0.05, rad: 0.1, leaderRad: 0.12, minR: 0.03, painter: paint, depth: 0.25 });
   // curtains: three layers of leafy ribbons that start up on the crown, flow over its edge
   // like long hair and fall toward the ground (higher at the front, so the trunk shows)
   const sr = rand(o.ctx, 'strands');
@@ -1035,27 +1072,34 @@ function willowTree(parts, o) {
       });
     }
   });
-  return { trunkR: 0.2, reach: 1.6, height: 3.55, under: 0.85 };
+  return { reach: 1.6, height: 3.55, under: 0.85, base };
 }
 
 /** A dead tree: a gnarled grey trunk with crooked bare branches and a hollow. */
 function deadTree(parts, o) {
   const { r, bark } = o;
-  addTrunk(parts, bark, [[0, 0], [0.27, 0], [0.28, 0.04], [0.21, 0.14], [0.17, 0.3], [0.15, 0.7], [0.13, 1.2], [0.11, 1.6], [0.08, 1.9], [0, 1.95]],
-    { radial: 13, lobes: 4, lobeAmp: 0.6, lobeH: 0.4, phase: r.angle(), twist: 1.3, wobble: 0.14, seed: r.float(0, 30), lean: [r.float(-0.15, 0.15), r.float(-0.15, 0.15)] }, { seed: r.float(0, 30), streak: 0.12 });
+  const lean = [r.float(-0.15, 0.15), r.float(-0.15, 0.15)];
+  const H = 1.62;
+  const prof = trunkProfile(0.22, 0.12, H, { flare: 0.45, flareH: 0.4 });
+  const base = addTrunk(parts, bark, prof, { radial: 13, lobes: 4, lobeAmp: 0.34, lobeH: 0.4, phase: r.angle(), twist: 1.3, wobble: 0.14, seed: r.float(0, 30), lean }, { seed: r.float(0, 30), streak: 0.12 });
   const skel = rand(o.ctx, 'skeleton');
   const paint = barkPainter(bark, { foot: 0, streak: 0.1 });
   const a0 = r.angle();
   for (let i = 0; i < 4; i++) {
     const az = a0 + (i / 4) * TAU + r.float(-0.4, 0.4);
-    const y = 1.05 + i * 0.22 + r.float(0, 0.1);
+    const y = 0.95 + i * 0.16 + r.float(0, 0.08);
     const el = r.float(0.4, 0.95);
-    grow(parts, bark, skel, [0, y, 0], [Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az)],
+    grow(parts, bark, skel, trunkAxis(prof, lean, y), [Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az)],
       { len: 0.9 - i * 0.08, rad: 0.085 - i * 0.008, levels: 2, kids: [2, 2], shrink: 0.6, spread: 0.75, up: 0.05, minR: 0.02, taperK: 0.55, painter: paint });
   }
-  // the hollow
-  parts.add(sphere(0.075, 10, 8), recolor(bark, '#3a2b24'), { at: [0, 0.78, 0.125], scale: [0.85, 1.25, 0.45] });
-  return { trunkR: 0.17, reach: 1.1, height: 2.9, under: 0.8 };
+  // a crooked leader carries the trunk on up (no cut post, no beak)
+  grow(parts, bark, skel, trunkAxis(prof, lean, H - 0.06), [lean[0] * 2 + r.float(-0.3, 0.3), 1, lean[1] * 2 + r.float(-0.3, 0.3)],
+    { len: 0.8, rad: 0.105, levels: 2, kids: [2, 2], shrink: 0.6, spread: 0.7, up: 0.08, minR: 0.02, taperK: 0.55, painter: paint });
+  // the hollow, set into the front of the trunk
+  const hy = 0.78, ha = trunkAxis(prof, lean, hy);
+  const hz = frontOf(base, ha[0], hy);
+  parts.add(sphere(0.075, 10, 8), recolor(bark, '#4a382d'), { at: [ha[0], hy, hz - 0.026], scale: [0.85, 1.25, 0.45] });
+  return { reach: 1.1, height: 2.9, under: 0.8, base };
 }
 
 const TREES = { round: roundTree, fruit: roundTree, oak: oakTree, pine: coniferTree, cedar: coniferTree, palm: palmTree, birch: birchTree, cherry: cherryTree, willow: willowTree, dead: deadTree };
@@ -1066,12 +1110,13 @@ const RINGS = { light: '#e6c896', ring: '#c99c66', heart: '#b88552' };
 
 /** A stump: flared bark body and a cut face with growth rings. Returns the seat height. */
 function stumpParts(parts, r, { bark = PALETTE.woodDark, R = 0.3, H = 0.3, moss = false, mushrooms = false, ctx = null } = {}) {
-  const prof = [[R * 1.34, -0.01], [R * 1.3, 0.012], [R * 1.18, 0.045], [R * 1.07, 0.09], [R * 1.01, 0.15], [R * 0.985, 0.21], [R * 0.975, H * 0.72], [R * 0.97, H - 0.02], [R * 0.93, H], [R * 0.86, H + 0.012], [0, H + 0.012]];
+  // a smooth flare from below the ground (no rim, no shelf) up into the straight body
+  const prof = [[0, -0.06], [R * 1.42, -0.05], [R * 1.31, -0.012], [R * 1.19, 0.035], [R * 1.1, 0.08], [R * 1.04, 0.14], [R * 1.0, 0.205], [R * 0.985, Math.max(0.22, H * 0.72)], [R * 0.975, H - 0.02], [R * 0.93, H], [R * 0.86, H + 0.012], [0, H + 0.012]];
   const mossC = moss ? '#78a94b' : null;
   const bp = barkPainter(bark, { foot: 0.12, seed: r.float(0, 30) });
   const M1 = C('#7aab4c'), M2 = C('#5f9140');
   const ms = r.float(0, 30);
-  addPainted(parts, trunkGeo(prof, { radial: 30, lobes: 5, lobeAmp: 0.28, lobeH: 0.2, phase: r.angle(), wobble: 0.04, seed: r.float(0, 30) }), bark, undefined, (c, x, y, z, nx, ny, nz, u, v) => {
+  const base = addPainted(parts, trunkGeo(prof, { radial: 30, lobes: 5, lobeAmp: 0.24, lobeH: 0.2, phase: r.angle(), wobble: 0.04, seed: r.float(0, 30) }), bark, undefined, (c, x, y, z, nx, ny, nz, u, v) => {
     bp(c, x, y, z, nx, ny, nz);
     if (mossC) {
       // a few soft patches climbing the bark from the ground
@@ -1095,16 +1140,19 @@ function stumpParts(parts, r, { bark = PALETTE.woodDark, R = 0.3, H = 0.3, moss 
     const mr = ctx ? rand(ctx, 'moss') : r;
     for (let i = 0; i < 4; i++) {
       const a = mr.angle();
-      const rr = R * (i < 2 ? 1.22 : 1.02);
-      parts.add(blob(mr.float(0.04, 0.06), { detail: 2, amp: 0.3, freq: 4, seed: i, squash: [1.3, 0.55, 1] }), { slot: 'foliage', color: i % 2 ? '#86b552' : '#6f9e47', sheen: 0.4 }, { at: [Math.cos(a) * rr, i < 2 ? 0.03 : mr.float(0.08, H * 0.55), Math.sin(a) * rr], rot: [0, -a, 0] });
+      const y = i < 2 ? 0.03 : mr.float(0.08, H * 0.55);
+      const rr = reachToward(base, a, { yMin: y - 0.03, yMax: y + 0.03, window: 0.12 }) - 0.012;
+      parts.add(blob(mr.float(0.04, 0.06), { detail: 2, amp: 0.3, freq: 4, seed: i, squash: [1.3, 0.55, 1] }), { slot: 'foliage', color: i % 2 ? '#86b552' : '#6f9e47', sheen: 0.4 }, { at: [Math.cos(a) * rr, y, Math.sin(a) * rr], rot: [0, -a, 0] });
     }
   }
   if (mushrooms) {
+    // a little cluster at the foot, just clear of the flare and facing away from the stump
     const mr = ctx ? rand(ctx, 'stump-shrooms') : r;
-    const a = mr.angle();
-    mushroomCluster(parts, mr, { variant: 'brown', at: [Math.cos(a) * R * 1.12, 0, Math.sin(a) * R * 1.12], scale: 0.7, count: 2 });
+    const a = Math.PI / 2 + mr.sign() * mr.float(0.75, 1.25);
+    const d = reachToward(base, a, { window: 0.4 }) + 0.1;
+    mushroomCluster(parts, mr, { variant: 'brown', at: [Math.cos(a) * d, 0, Math.sin(a) * d], scale: 0.9, count: 3, away: a });
   }
-  return H + 0.012;
+  return { seat: H + 0.012, base };
 }
 
 /** A fallen tree: a root plate, a long trunk on the ground and a crown at the far end. */
@@ -1115,7 +1163,7 @@ function fallenTree(parts, o) {
   const [L, tr] = spec;
   const x0 = -L / 2, x1 = L / 2;
   const sag = r.float(-0.08, 0.08);
-  addPainted(parts, taper([[x0, tr, 0], [x0 + L * 0.35, tr * 0.98, sag], [x0 + L * 0.7, tr * 0.96 + 0.02, sag * 0.5], [x1, tr * 0.9 + 0.08, -sag]], tr, tr * 0.62, { radial: 12, tip: true, base: true }),
+  const trunk = addPainted(parts, taper([[x0, tr, 0], [x0 + L * 0.35, tr * 0.98, sag], [x0 + L * 0.7, tr * 0.96 + 0.02, sag * 0.5], [x1, tr * 0.9 + 0.08, -sag]], tr, tr * 0.62, { radial: 12, tip: true, base: true }),
     bark, undefined, o.variant === 'birch' ? ((c, x, y, z) => { if (fract(x * 3.1 + noise3(x, y * 3, z * 3) * 0.5) > 0.84) c.lerp(C('#3f3a37'), 0.8); }) : barkPainter(bark, { foot: 0, streak: 0.1 }));
   // root plate: an upright disc of earth with root knuckles
   const plate = blob(tr * 3.1, { detail: 3, amp: 0.18, seed: r.int(0, 99), squash: [0.32, 0.9, 1] });
@@ -1144,7 +1192,7 @@ function fallenTree(parts, o) {
       addPainted(parts, c.geometry, leafLook(cols[0], sway), { at }, canopyPainter(cols, { cy: at[1], ry: R * 0.8, alt: o.leaves.alt, altAmt: 0.3 }));
     }
   }
-  return { L, tr };
+  return { L, tr, trunk };
 }
 
 /* ───────────────────────── mushrooms (shared with stumps and logs) ───────────────────────── */
@@ -1155,46 +1203,90 @@ const SHROOM = {
   glowing: { cap: '#86e6e0', capDark: '#4fb7c4', under: '#c9f6ef', stem: '#e6f7f1', dots: '#e9fffb', glow: '#6ff3ff' },
 };
 
-/** A cluster of mushrooms at `at`. Returns the light position for glowing ones. */
-function mushroomCluster(parts, r, { variant = 'red', at = [0, 0, 0], scale = 1, count = 3 } = {}) {
+/** A smooth version of a [r, y] profile (Catmull-Rom through its points), `n` points long. */
+function smoothProfile(prof, n) {
+  if (n <= prof.length) return prof;
+  const curve = new THREE.SplineCurve(prof.map(([a, b]) => new THREE.Vector2(a, b)));
+  return curve.getSpacedPoints(n - 1).map((v) => [v.x, v.y]);
+}
+
+/** A point on a [r, y] profile at fraction `s` of its length (from point `i0`), with its outward normal. */
+function onProfile(prof, s, i0 = 1) {
+  const at = (u) => {
+    const lens = [];
+    let total = 0;
+    for (let i = i0; i < prof.length - 1; i++) { const l = Math.hypot(prof[i + 1][0] - prof[i][0], prof[i + 1][1] - prof[i][1]); lens.push(l); total += l; }
+    let d = clamp(u, 0, 1) * total;
+    for (let k = 0; k < lens.length; k++) {
+      if (d <= lens[k] || k === lens.length - 1) {
+        const t = lens[k] ? clamp(d / lens[k], 0, 1) : 0;
+        const [r0, y0] = prof[i0 + k], [r1, y1] = prof[i0 + k + 1];
+        return [lerp(r0, r1, t), lerp(y0, y1, t)];
+      }
+      d -= lens[k];
+    }
+    return prof[prof.length - 1];
+  };
+  const [r, y] = at(s), a = at(s - 0.04), b = at(s + 0.04);
+  const tr = b[0] - a[0], ty = b[1] - a[1], l = Math.hypot(tr, ty) || 1;
+  return { r, y, nr: ty / l, ny: -tr / l };
+}
+
+/**
+ * A cluster of mushrooms at `at`. `detail` (1-2) scales the segment counts for big ones; `away`
+ * (an azimuth) keeps the small ones on that side of the big one (away from a stump or log).
+ */
+function mushroomCluster(parts, r, { variant = 'red', at = [0, 0, 0], scale = 1, count = 3, detail = 1, away = null } = {}) {
   const M = SHROOM[variant] ?? SHROOM.red;
   const glow = variant === 'glowing';
-  const capLook = glow ? { slot: 'lamp', color: M.cap, glow: M.glow, glowAmount: 1.1 } : M.cap;
-  const stemLook = glow ? { slot: 'lamp', color: M.stem, glow: '#b8fff6', glowAmount: 0.45 } : M.stem;
-  const underLook = glow ? { slot: 'lamp', color: M.under, glow: M.glow, glowAmount: 0.8 } : M.under;
-  const dotLook = glow ? { slot: 'lamp', color: M.dots, glow: '#e8ffff', glowAmount: 2.2 } : M.dots;
+  // glowing caps: a soft inner light, the dots and gills a little brighter (matte, not plastic)
+  const capLook = glow ? { slot: 'lamp', color: M.cap, glow: M.glow, glowAmount: 0.5, rough: 0.62 } : M.cap;
+  const stemLook = glow ? { slot: 'lamp', color: M.stem, glow: '#b8fff6', glowAmount: 0.3, rough: 0.62 } : M.stem;
+  const underLook = glow ? { slot: 'lamp', color: M.under, glow: M.glow, glowAmount: 0.55, rough: 0.62 } : M.under;
+  const dotLook = glow ? { slot: 'lamp', color: M.dots, glow: '#e8ffff', glowAmount: 1.8, rough: 0.62 } : M.dots;
   const n = clamp(count, 1, 7);
+  const capSeg = Math.round(14 * detail), stemSeg = Math.round(9 * detail);
+  const capPts = Math.round(6 + 5 * (detail - 1));
+  const dotGeo = detail >= 1.5 ? sphere(1, 8, 3) : sphere(1, 6, 2);
   const a0 = r.angle();
   for (let i = 0; i < n; i++) {
     const big = i === 0;
     const s = scale * (big ? 1 : r.float(0.5, 0.78));
-    const a = a0 + i * 2.39996;
+    const a = away != null && !big ? away + (i % 2 ? 1 : -1) * (0.4 + 0.55 * Math.floor((i - 1) / 2)) : a0 + i * 2.39996;
     const d = big ? 0 : scale * r.float(0.1, 0.17) * (1 + i * 0.12);
     const x = at[0] + Math.cos(a) * d, z = at[2] + Math.sin(a) * d;
     const h = s * (variant === 'brown' ? 0.15 : 0.13) * r.float(0.9, 1.15);
     const capR = s * (variant === 'brown' ? 0.085 : 0.095);
     const lean = [r.float(-0.12, 0.12), 0, r.float(-0.12, 0.12)];
     const stemR = s * 0.026;
-    parts.add(lathe([[stemR * 1.35, 0], [stemR * 1.4, h * 0.12], [stemR * 1.05, h * 0.4], [stemR, h * 0.85], [stemR * 0.95, h], [0, h]], 8), stemLook, { at: [x, at[1], z], rot: lean });
+    parts.add(lathe(smoothProfile([[stemR * 1.35, 0], [stemR * 1.4, h * 0.12], [stemR * 1.05, h * 0.4], [stemR, h * 0.85], [stemR * 0.95, h], [0, h]], Math.round(6 + 2 * (detail - 1))), stemSeg), stemLook, { at: [x, at[1], z], rot: lean });
     // cap: a soft dome with a rolled rim
     const capH = capR * (variant === 'brown' ? 0.62 : 0.75);
-    const prof = [[capR * 0.9, -capH * 0.06], [capR, capH * 0.12], [capR * 0.92, capH * 0.45], [capR * 0.65, capH * 0.82], [capR * 0.3, capH * 0.98], [0, capH]];
+    const prof = smoothProfile([[capR * 0.9, -capH * 0.06], [capR, capH * 0.12], [capR * 0.92, capH * 0.45], [capR * 0.65, capH * 0.82], [capR * 0.3, capH * 0.98], [0, capH]], capPts);
     const capAt = new THREE.Vector3(0, h, 0).applyEuler(new THREE.Euler(...lean)).add(new THREE.Vector3(x, at[1], z));
     const capRot = [lean[0] * 1.4, r.angle(), lean[2] * 1.4];
     const top = C(M.cap), dark = C(M.capDark);
-    addPainted(parts, lathe(prof, 13), capLook, { at: capAt.toArray(), rot: capRot }, (c, px, py, pz, nx, ny) => { c.copy(dark).lerp(top, smooth(-0.2, 0.7, ny)); });
-    parts.add(lathe([[0, -capH * 0.14], [capR * 0.5, -capH * 0.13], [capR * 0.9, -capH * 0.06]], 13), underLook, { at: capAt.toArray(), rot: capRot });
+    addPainted(parts, lathe(prof, capSeg), capLook, { at: capAt.toArray(), rot: capRot }, (c, px, py, pz, nx, ny) => { c.copy(dark).lerp(top, smooth(-0.2, 0.7, ny)); });
+    parts.add(lathe([[0, -capH * 0.14], [capR * 0.5, -capH * 0.13], [capR * 0.9, -capH * 0.06]], capSeg), underLook, { at: capAt.toArray(), rot: capRot });
     if (M.dots) {
+      // white spots on the cap itself (position and normal from its profile), never touching
+      const capM = new THREE.Matrix4().compose(capAt, new THREE.Quaternion().setFromEuler(new THREE.Euler(...capRot)), new THREE.Vector3(1, 1, 1));
       const nd = big ? 6 : 4;
-      for (let k = 0; k < nd; k++) {
-        const t = r.float(0.25, 0.85), da = r.angle();
-        const pr = capR * Math.sin(t * Math.PI * 0.5) * 0.95;
-        const py = capH * Math.cos(t * Math.PI * 0.5) * 0.98;
-        const local = new THREE.Vector3(Math.cos(da) * pr, py, Math.sin(da) * pr).applyEuler(new THREE.Euler(...capRot)).add(capAt);
-        const ds = capR * r.float(0.16, 0.24);
-        const nrm = new THREE.Vector3(Math.cos(da) * Math.sin(t * 1.2), Math.cos(t * 1.2), Math.sin(da) * Math.sin(t * 1.2)).applyEuler(new THREE.Euler(...capRot));
-        const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), nrm.normalize());
-        parts.add(sphere(ds, 7, 3), dotLook, { matrix: new THREE.Matrix4().compose(local, q, new THREE.Vector3(1, 0.3, 1)) });
+      const placed = [];
+      const d0 = r.angle(), s0 = r.float(0, 1);
+      for (let k = 0; placed.length < nd && k < nd * 5; k++) {
+        const sp = 0.12 + 0.68 * fract(s0 + k * 0.618);
+        const da = d0 + k * 2.39996;
+        const ds = capR * r.float(0.15, 0.21);
+        const q = onProfile(prof, sp);
+        const local = new THREE.Vector3(Math.cos(da) * q.r, q.y, Math.sin(da) * q.r);
+        if (placed.some(([o, os]) => o.distanceTo(local) < (os + ds) * 1.3)) continue;
+        placed.push([local.clone(), ds]);
+        const nrm = new THREE.Vector3(Math.cos(da) * q.nr, q.ny, Math.sin(da) * q.nr).normalize();
+        const thick = ds * 0.32;
+        local.addScaledVector(nrm, thick * 0.3);
+        const m = capM.clone().multiply(new THREE.Matrix4().compose(local, new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), nrm), new THREE.Vector3(ds, thick, ds)));
+        parts.add(dotGeo, dotLook, { matrix: m });
       }
     }
   }
@@ -2188,8 +2280,8 @@ export const NATURE = {
       state: { default: 'healthy', options: TREE_STATES, about: 'healthy, bare (no leaves), stump (cut, to sit on) or fallen' },
     },
     examples: [
-      { variant: 'round' }, { variant: 'oak' }, { variant: 'pine' }, { variant: 'palm' },
-      { variant: 'fruit', fruit: 'peach' }, { variant: 'cherry' }, { variant: 'birch' }, { variant: 'willow' },
+      { variant: 'round' }, { variant: 'oak' }, { variant: 'cedar' }, { variant: 'palm' },
+      { variant: 'fruit', fruit: 'peach' }, { variant: 'cherry' }, { variant: 'dead' }, { variant: 'oak', state: 'fallen' },
     ],
     build(p, ctx) {
       const season = seasonOf(ctx);
@@ -2211,27 +2303,34 @@ export const NATURE = {
         leaves: treeLeaves(variant, season, rand(ctx, 'autumn'), season === 'winter' ? null : leavesOverride),
       };
       const parts = new Parts();
-      let spots, footprint, height;
+      let spots, footprint, height, shift = [0, 0, 0];
+      const facingOut = (a) => Math.round(THREE.MathUtils.radToDeg(Math.atan2(Math.cos(a), Math.sin(a))));
+      const around = (a, d, y = 0) => [Math.cos(a) * d, y, Math.sin(a) * d];
       if (state === 'stump') {
         const R = { oak: 0.34, palm: 0.2, birch: 0.2, cedar: 0.22, pine: 0.22 }[variant] ?? 0.26;
-        const seat = stumpParts(parts, r, { bark: BARK[variant], R, H: 0.3, ctx });
-        spots = { seat: spot([0, seat * S, Math.max(0.02, R * S * 0.88 - 0.12)], 0, 'sit'), side: spot([0, 0, (R * 1.25 + 0.3) * S], 180, 'stand') };
-        footprint = { r: R * 1.35 * S };
+        const { seat, base } = stumpParts(parts, r, { bark: BARK[variant], R, H: 0.3, ctx });
+        spots = { seat: spot([0, seat * S, Math.max(0.02, R * S * 0.88 - 0.12)], 0, 'sit'), side: spot([0, 0, reachToward(base, Math.PI / 2) * S + 0.3], 180, 'stand') };
+        footprint = { r: groundReach(parts) * S + 0.03 };
         height = seat * S;
       } else if (state === 'fallen') {
         const f = fallenTree(parts, o);
+        // center the whole tree (root plate to crown) on the origin, so the footprint covers it
+        const b = new THREE.Box3();
+        for (const { geometries } of parts.slots.values()) for (const g of geometries) { g.computeBoundingBox(); b.union(g.boundingBox); }
+        const cx = (b.min.x + b.max.x) / 2, cz = (b.min.z + b.max.z) / 2;
+        shift = [-cx * S, 0, -cz * S];
         const n = Math.max(1, Math.floor((f.L * 0.6) / 0.55));
         spots = {};
         for (let i = 0; i < n; i++) {
-          const x = (-f.L / 2 + f.L * 0.22 + i * 0.55) * S;
-          spots[`seat${i + 1}`] = spot([x, f.tr * 2 * S, 0.02 * S], 0, 'sit');
+          const x = -f.L / 2 + f.L * 0.22 + i * 0.55;
+          spots[`seat${i + 1}`] = spot([(x - cx) * S, topNear(f.trunk, x, 0, f.tr * 0.5) * S, (0.02 - cz) * S], 0, 'sit');
         }
-        spots.rest = spot([-0.1 * S, 0, (f.tr + 0.14) * S], 0, 'floor');
-        footprint = { w: (f.L + 1.4) * S, d: 1.8 * S };
-        height = 1.2 * S;
+        spots.rest = spot([(-0.1 - cx) * S, 0, (f.tr - cz) * S + 0.14], 0, 'floor');
+        footprint = { w: (b.max.x - b.min.x) * S + 0.1, d: (b.max.z - b.min.z) * S + 0.1 };
+        height = (b.max.y) * S;
       } else {
         const info = TREES[variant](parts, o);
-        const t = info.trunkR * S, u = Math.max(info.under * S, t + 0.55);
+        const g = info.base;
         const q = Math.SQRT1_2;
         const skirt = (variant === 'pine' || variant === 'cedar') && !bare;
         if (skirt) {
@@ -2244,17 +2343,24 @@ export const NATURE = {
             rest: spot([e + 0.05, 0, 0], 90, 'floor'),
             shake: spot([-(e + 0.25), 0, 0], 90, 'stand'),
           };
-        } else spots = {
-          trunk: spot([0, 0, t + 0.13], 0, 'lean'),
-          under: spot([-u * q, 0, u * q], -45, 'stand'),
-          under2: spot([u * q, 0, -u * q], 135, 'stand'),
-          rest: spot([t + 0.16, 0, -0.04], 90, 'floor'),
-          shake: spot([-(t + 0.4), 0, -0.08], 90, 'stand'),
-        };
-        footprint = { r: Math.max(0.35, t * 2) * S };
+        } else {
+          // by the trunk: in a gap between the root swellings, just clear of the flare
+          const lean = gapNear(g, Math.PI / 2), rest = gapNear(g, 0), shake = gapNear(g, Math.PI);
+          const u1 = Math.max(info.under * S, reachToward(g, 0.75 * Math.PI) * S + 0.45);
+          const u2 = Math.max(info.under * S, reachToward(g, -0.25 * Math.PI) * S + 0.45);
+          spots = {
+            trunk: spot(around(lean.a, lean.r * S + 0.1), facingOut(lean.a), 'lean'),
+            under: spot(around(0.75 * Math.PI, u1), -45, 'stand'),
+            under2: spot(around(-0.25 * Math.PI, u2), 135, 'stand'),
+            rest: spot(around(rest.a, rest.r * S + 0.1), facingOut(rest.a), 'floor'),
+            shake: spot(around(shake.a, shake.r * S + 0.32), ((facingOut(shake.a) + 360) % 360) - 180, 'stand'),
+          };
+        }
+        footprint = { r: Math.max(0.35 * S, footRadius(g) * S + 0.03) };
         height = info.height * S;
       }
-      const out = S === 1 ? parts : new Parts().merge(parts, xform([0, 0, 0], [0, 0, 0], S));
+      const moved = S !== 1 || shift[0] || shift[2];
+      const out = moved ? new Parts().merge(parts, xform(shift, [0, 0, 0], S)) : parts;
       return finish(out.build(`tree-${variant}`), { footprint, spots, height });
     },
   },
@@ -2274,11 +2380,11 @@ export const NATURE = {
       const parts = new Parts();
       const r = rand(ctx, 'stump');
       const R = 0.28;
-      const seat = stumpParts(parts, r, { bark: colorOr(p.bark, '#7d5537'), R, H: 0.3, moss: flag(p.moss, false), mushrooms: flag(p.mushrooms, false), ctx });
+      const { seat, base } = stumpParts(parts, r, { bark: colorOr(p.bark, '#7d5537'), R, H: 0.3, moss: flag(p.moss, false), mushrooms: flag(p.mushrooms, false), ctx });
       const out = S === 1 ? parts : new Parts().merge(parts, xform([0, 0, 0], [0, 0, 0], S));
       return finish(out.build('stump'), {
-        footprint: { r: R * 1.35 * S },
-        spots: { seat: spot([0, seat * S, Math.max(0.02, R * S * 0.88 - 0.12)], 0, 'sit'), side: spot([0, 0, (R * 1.3 + 0.3) * S], 180, 'stand') },
+        footprint: { r: groundReach(parts) * S + 0.03 },
+        spots: { seat: spot([0, seat * S, Math.max(0.02, R * S * 0.88 - 0.12)], 0, 'sit'), side: spot([0, 0, reachToward(base, Math.PI / 2) * S + 0.3], 180, 'stand') },
         height: seat * S,
       });
     },
@@ -2483,11 +2589,13 @@ export const NATURE = {
     build(p, ctx) {
       const variant = oneOf(p.variant, ['red', 'brown', 'glowing'], 'red');
       const count = int(p.count, 3, 1, 7);
-      const S = size(p.size, 1, 0.3, 8);
+      const S = size(p.size, 1, 0.3, 6);
+      // big mushrooms get smoother caps, within the small-prop budget (about 3k triangles)
+      const detail = Math.min(clamp(Math.sqrt(S), 1, 2), clamp(2600 / count / 330, 1, 2));
       const parts = new Parts();
-      mushroomCluster(parts, rand(ctx, 'shrooms'), { variant, at: [0, 0, 0], scale: 1, count });
+      mushroomCluster(parts, rand(ctx, 'shrooms'), { variant, at: [0, 0, 0], scale: 1, count, detail });
       const out = S === 1 ? parts : new Parts().merge(parts, xform([0, 0, 0], [0, 0, 0], S));
-      const lights = variant === 'glowing' ? [light([0, 0.16 * S, 0], { color: '#8af2ff', intensity: 0.32 + 0.06 * count, distance: 2.2 * Math.sqrt(S) })] : [];
+      const lights = variant === 'glowing' ? [{ ...light([0, 0.3 * S, 0], { color: '#8af2ff', intensity: 0.2 + 0.03 * count, distance: 2.2 * Math.sqrt(S) }), halo: 0.6 }] : [];
       return finish(out.build(`mushroom-${variant}`), {
         footprint: { r: 0.22 * S },
         spots: { pick: spot([0, 0, 0.24 * S + 0.24], 180, 'kneel') },
