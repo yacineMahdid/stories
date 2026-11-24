@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { Terrain, WATER_LEVEL } from './terrain.js';
+import { Terrain, WATER_LEVEL, resolveFlatHeights } from './terrain.js';
 import { CATALOG, buildProp } from './props/index.js';
 import { PropLights } from './lights.js';
 import { spotTransform, placeCharacter, poseLift, POSE_CLIPS } from './blocking.js';
@@ -56,7 +56,8 @@ class SceneSet {
     }
 
     // 2. Terrain: world features, place features, changes, plus level pads under buildings.
-    const features = [...this.world.terrain, ...[...state.things.values()].filter((t) => t.kind === '__terrain').map((t) => t.feature)];
+    const features = [...this.world.terrain, ...[...state.things.values()].filter((t) => t.kind === '__terrain').map((t) => t.feature)].map((f) => ({ ...f }));
+    resolveFlatHeights(features);
     const probe = { features, seed: 7, roll: 0.35 };
     const rawHeight = (x, z) => Terrain.prototype.rawHeight.call(probe, x, z);
     for (const [id, object] of this.objects) {
@@ -180,6 +181,7 @@ class SceneSet {
       for (let i = 0; i < total * 3 && variants.flat().length < total; i++) {
         const a = r.angle(), d = Math.sqrt(r.next()) * ACTION;
         const x = this.center[0] + Math.cos(a) * d, z = this.center[1] + Math.sin(a) * d;
+        if (r.next() > 1.15 - THREE.MathUtils.smoothstep(d, ACTION * 0.6, ACTION)) continue; // thin out toward the edge
         if (!this.terrain.isGrass(x, z)) continue;
         if (footprints.some((f) => Math.hypot(x - f.x, z - f.z) < f.r + gap * 0.5)) continue;
         const s = 0.8 + r.next() * 0.45;
@@ -343,7 +345,11 @@ export class Director {
     const keep = new Set(state.cast.map((e) => e.who));
     for (const [id, member] of this.cast) {
       if (!keep.has(id)) { member.character.root.removeFromParent(); }
-      member.held?.removeFromParent();
+      if (member.held) {
+        this.set?.lights?.removeFrom(member.held);
+        if (this.set) this.set.ticks = this.set.ticks.filter((o) => o !== member.held);
+        member.held.removeFromParent();
+      }
     }
     this.cast.clear();
     const members = await Promise.all(state.cast.map(async (entry) => ({ entry, character: await this.characterFor(entry) })));
@@ -363,9 +369,15 @@ export class Director {
         const target = this.positionOf(f, members, state);
         if (target) yaw = Math.atan2(target.x - mark.position.x, target.z - mark.position.z);
       }
-      const clip = entry.do && character.actions.has(entry.do) ? entry.do : null;
+      let clip = entry.do && character.actions.has(entry.do) ? entry.do : null;
       if (entry.do && !clip) state.warnings.push(`No animation called "${entry.do}" (${entry.character.name}).`);
-      placeCharacter(character, { position: mark.position, yaw, pose: mark.pose }, clip ?? (mark.pose !== 'stand' ? POSE_CLIPS[mark.pose] : 'Idle'));
+      let pose = mark.pose;
+      if (mark.free) {
+        // Off a prop, "Sit" means sitting on the ground, and lying clips rest on the ground.
+        if (clip === 'Sit') clip = 'SitFloor';
+        if (clip === 'LieDown' || clip === 'Sleep') pose = 'lie';
+      }
+      placeCharacter(character, { position: mark.position, yaw, pose }, clip ?? (pose !== 'stand' ? POSE_CLIPS[pose] : 'Idle'));
       const feel = entry.feel && EMOTIONS[entry.feel] ? entry.feel : 'neutral';
       if (entry.feel && !EMOTIONS[entry.feel]) state.warnings.push(`No emotion called "${entry.feel}" (${entry.character.name}).`);
       character.setEmotion(feel);
@@ -408,7 +420,7 @@ export class Director {
     }
     const [x, z] = typeof at === 'string' ? place.pos : this.world.resolveAt(at, place, state.things);
     const y = this.set.terrain.heightAt(x, z);
-    return { position: new THREE.Vector3(x, Math.max(y, WATER_LEVEL), z), yaw: (place?.rotate ?? 0) * D2R, pose: entry.pose ?? 'stand' };
+    return { position: new THREE.Vector3(x, Math.max(y, WATER_LEVEL), z), yaw: (place?.rotate ?? 0) * D2R, pose: entry.pose ?? 'stand', free: true };
   }
 
   positionOf(ref, members, state) {
@@ -513,7 +525,7 @@ export class Director {
         }
         case 'two':
         case 'medium':
-          dist = shot.distance ?? fit(extent * 1.18 + 0.45);
+          dist = shot.distance ?? fit(extent * 0.95 + 0.38);
           height = shot.height ?? 0.55 + dist * 0.12;
           break;
         case 'over': {
@@ -544,7 +556,15 @@ export class Director {
           dist = shot.distance ?? fit(extent * 1.2 + 0.5);
           height = shot.height ?? 0.6 + dist * 0.12;
       }
-      if (!pos) pos = target.clone().addScaledVector(dir, dist).setY(target.y + height);
+      if (!pos) {
+        pos = target.clone().addScaledVector(dir, dist).setY(target.y + height);
+        // Don't let a lamp post or a tree stand between the camera and the subjects: swing
+        // around the target in small steps until the view is clear.
+        // An explicit `from` is honored within a small swing.
+        if (subs.length && kind !== 'establishing' && kind !== 'top') {
+          pos = this.clearView(pos, target, subs, shot.from == null ? 80 : 24) ?? pos;
+        }
+      }
     }
     // Keep the camera above the ground.
     const ground = this.set.terrain.heightAt(pos.x, pos.z);
@@ -560,6 +580,85 @@ export class Director {
     const radius = shot.shot === 'establishing' ? (place.radius ?? 10) * 2.2 : Math.max(pos.distanceTo(target) * 0.9, 12);
     this.stage.focus(target.clone().setY(0), Math.min(radius, 48));
     return shot;
+  }
+
+  /**
+   * A camera position near `pos` (same distance and height, swung around `target`) where no
+   * prop stands in front of the subjects on screen: a lamp post between two people ruins a
+   * two-shot even when it hides neither of them.
+   */
+  clearView(pos, target, subs, maxSwing = 80) {
+    const boxes = this.blockerBoxes(target);
+    const cam = this.stage.camera.clone();
+    const corners = (box) => [0, 1, 2, 3, 4, 5, 6, 7].map((i) => new THREE.Vector3(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z));
+    const rectOf = (points, c) => {
+      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, near = Infinity;
+      for (const p of points) {
+        const d = p.distanceTo(c.position);
+        near = Math.min(near, d);
+        const v = p.clone().project(c);
+        x0 = Math.min(x0, v.x); x1 = Math.max(x1, v.x); y0 = Math.min(y0, v.y); y1 = Math.max(y1, v.y);
+      }
+      return { x0, x1, y0, y1, near };
+    };
+    const subjectPoints = subs.flatMap((s) => [s.center.clone().addScalar(-s.radius), s.center.clone().addScalar(s.radius), s.head]);
+    // How much stands in front of the subjects on screen. A thin post counts as a quarter of
+    // the frame's width, because it splits the picture even when it hides little.
+    const occlusion = (p) => {
+      cam.position.copy(p);
+      cam.lookAt(target);
+      cam.updateMatrixWorld(true);
+      const sr = rectOf(subjectPoints, cam);
+      const nearest = Math.min(...subs.map((s) => s.center.distanceTo(p) - s.radius));
+      const w = Math.max(sr.x1 - sr.x0, 1e-3), h = Math.max(sr.y1 - sr.y0, 1e-3);
+      let score = 0;
+      for (const b of boxes) {
+        // Something right at the lens (a canopy, a wall) fills the frame wherever the subjects are.
+        if (b.distanceToPoint(p) < 1.2) { score += 3; continue; }
+        const r = rectOf(corners(b), cam);
+        if (r.near > nearest - 0.15) continue;
+        const ox = Math.min(r.x1, sr.x1) - Math.max(r.x0, sr.x0);
+        const oy = Math.min(r.y1, sr.y1) - Math.max(r.y0, sr.y0);
+        if (ox <= 0 || oy <= 0) continue;
+        score += Math.max(ox / w, 0.25) * (oy / h);
+      }
+      return score;
+    };
+    const off = pos.clone().sub(target);
+    let best = pos, bestScore = occlusion(pos);
+    if (bestScore < 0.02) return pos;
+    for (const step of [8, -8, 16, -16, 24, -24, 36, -36, 50, -50, 65, -65, 80, -80]) {
+      if (Math.abs(step) > maxSwing) continue;
+      const p = target.clone().add(off.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), step * D2R));
+      const score = occlusion(p);
+      if (score < bestScore - 0.05) { best = p; bestScore = score; }
+      if (bestScore < 0.02) break;
+    }
+    return best;
+  }
+
+  /** Bounding boxes of everything that could stand in front of the camera near a point. */
+  blockerBoxes(near) {
+    const boxes = [];
+    for (const o of this.set.objects.values()) {
+      if (o.position.distanceTo(near) > 30) continue;
+      const b = new THREE.Box3().setFromObject(o);
+      if (!b.isEmpty() && b.max.y - b.min.y > 0.25) boxes.push(b);
+    }
+    const m = new THREE.Matrix4();
+    for (const group of this.set.object.children) {
+      if (!group.name?.startsWith('scatter:')) continue;
+      for (const inst of group.children) {
+        if (!inst.isInstancedMesh) continue;
+        inst.geometry.computeBoundingBox();
+        for (let i = 0; i < inst.count; i++) {
+          inst.getMatrixAt(i, m);
+          const b = inst.geometry.boundingBox.clone().applyMatrix4(m);
+          if (b.max.y - b.min.y > 0.4 && b.getCenter(new THREE.Vector3()).distanceTo(near) < 25) boxes.push(b);
+        }
+      }
+    }
+    return boxes;
   }
 
   update(dt) {

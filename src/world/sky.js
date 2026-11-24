@@ -10,8 +10,8 @@ import * as THREE from 'three';
 const HOURS = [
   // h: hour; zenith/horizon: sky; sun: key light color; light: key intensity;
   // sky/ground: hemisphere colors; ambient: hemisphere intensity; glow: windows and lamps (0 day, 1 night)
-  { h: 0, zenith: '#0b1233', horizon: '#22305a', sun: '#9fb4ff', light: 0.5, sky: '#4a5f9c', ground: '#1e2436', ambient: 0.75, glow: 1, exposure: 1.25 },
-  { h: 4.7, zenith: '#111c45', horizon: '#2a3a66', sun: '#9fb4ff', light: 0.45, sky: '#4a5f9c', ground: '#1e2436', ambient: 0.75, glow: 1, exposure: 1.25 },
+  { h: 0, zenith: '#0b1233', horizon: '#22305a', sun: '#a9bcff', light: 0.6, sky: '#5068a8', ground: '#222a3e', ambient: 0.95, glow: 1, exposure: 1.32 },
+  { h: 4.7, zenith: '#111c45', horizon: '#2a3a66', sun: '#a9bcff', light: 0.55, sky: '#5068a8', ground: '#222a3e', ambient: 0.95, glow: 1, exposure: 1.32 },
   { h: 5.6, zenith: '#3d4f8c', horizon: '#f1a98d', sun: '#ffb27e', light: 0.8, sky: '#8f93bd', ground: '#4c4139', ambient: 0.7, glow: 0.7, exposure: 1.12 },
   { h: 6.6, zenith: '#6c97d8', horizon: '#ffd7ab', sun: '#ffd4a4', light: 1.9, sky: '#bccbe9', ground: '#6b5b49', ambient: 0.8, glow: 0.12, exposure: 1.02 },
   { h: 8.5, zenith: '#5b9de7', horizon: '#d3eaf7', sun: '#fff1db', light: 2.7, sky: '#d0e1f6', ground: '#7b6d59', ambient: 0.85, glow: 0, exposure: 1 },
@@ -20,8 +20,8 @@ const HOURS = [
   { h: 17.3, zenith: '#6b88cd', horizon: '#ffca96', sun: '#ffbe7a', light: 2.2, sky: '#d9c9c9', ground: '#6b5141', ambient: 0.78, glow: 0.1, exposure: 1.02 },
   { h: 18.4, zenith: '#4c5b9d', horizon: '#ff9667', sun: '#ff8f5a', light: 1.2, sky: '#b49bb1', ground: '#4b3b39', ambient: 0.7, glow: 0.55, exposure: 1.08 },
   { h: 19.3, zenith: '#263066', horizon: '#7e5b82', sun: '#a78dc2', light: 0.5, sky: '#6b6b9b', ground: '#2b2b39', ambient: 0.7, glow: 0.92, exposure: 1.18 },
-  { h: 20.6, zenith: '#121b42', horizon: '#28355e', sun: '#9fb4ff', light: 0.48, sky: '#4a5f9c', ground: '#1e2436', ambient: 0.75, glow: 1, exposure: 1.25 },
-  { h: 24, zenith: '#0b1233', horizon: '#22305a', sun: '#9fb4ff', light: 0.5, sky: '#4a5f9c', ground: '#1e2436', ambient: 0.75, glow: 1, exposure: 1.25 },
+  { h: 20.6, zenith: '#121b42', horizon: '#28355e', sun: '#a9bcff', light: 0.58, sky: '#5068a8', ground: '#222a3e', ambient: 0.95, glow: 1, exposure: 1.32 },
+  { h: 24, zenith: '#0b1233', horizon: '#22305a', sun: '#a9bcff', light: 0.6, sky: '#5068a8', ground: '#222a3e', ambient: 0.95, glow: 1, exposure: 1.32 },
 ];
 
 /** Weather presets. `grey` pulls the sky toward overcast grey, `dim` scales the key light. */
@@ -179,7 +179,7 @@ void main() {
   float h = d.y;
   vec3 col = mix(uHorizon, uZenith, pow(clamp(h, 0.0, 1.0), 0.5));
   col = mix(col, uHorizon * 1.04, exp(-max(h, 0.0) * 14.0) * 0.4);
-  col = mix(col, uGround, smoothstep(0.0, -0.18, h));
+  col = mix(col, uGround, (1.0 - smoothstep(-0.18, 0.0, h)));
 
   float sd = max(dot(d, uSunDir), 0.0);
   col += uSunColor * uSunVis * (0.22 * pow(sd, 5.0) + 0.45 * pow(sd, 40.0));
@@ -193,7 +193,7 @@ void main() {
     if (r > 0.972) {
       vec3 o = vec3(hash3(id + 3.1), hash3(id + 7.7), hash3(id + 1.3)) - 0.5;
       float tw = 0.55 + 0.45 * sin(uTime * (1.2 + r * 3.0) + r * 60.0);
-      float s = smoothstep(0.16, 0.0, length(f - o * 0.5)) * tw * (r > 0.993 ? 1.6 : 0.8);
+      float s = (1.0 - smoothstep(0.0, 0.16, length(f - o * 0.5))) * tw * (r > 0.993 ? 1.6 : 0.8);
       col += vec3(0.88, 0.92, 1.0) * s * uStars * smoothstep(0.02, 0.3, h);
     }
   }
@@ -214,7 +214,7 @@ void main() {
       float lit = smoothstep(-0.05, 0.12, dot(vec3(q, z), L));
       float crater = 0.88 + 0.12 * noise2(q * 3.0 + 2.0);
       vec3 moonCol = mix(uZenith * 1.6 + vec3(0.03), vec3(0.98, 0.96, 0.88) * crater, max(lit, 0.06));
-      col = mix(col, moonCol, uMoonVis * smoothstep(1.0, 0.86, r2));
+      col = mix(col, moonCol, uMoonVis * (1.0 - smoothstep(0.86, 1.0, r2)));
     }
   }
 
@@ -223,14 +223,14 @@ void main() {
     vec2 uv = d.xz / (hh + 0.16) * 0.7 + vec2(uTime * 0.0045, uTime * 0.0018);
     float n = fbm(uv * 1.25);
     float th = mix(0.74, 0.3, uCloud);
-    float dens = smoothstep(th, th + 0.16 + uCloudGrey * 0.25, n) * smoothstep(-0.02, 0.18, h);
+    float dens = smoothstep(th, th + 0.07 + uCloudGrey * 0.3, n) * smoothstep(-0.02, 0.18, h);
     vec2 toSun = normalize(uSunDir.xz + 1e-4) * 0.08;
     float shadow = smoothstep(th - 0.02, th + 0.3, fbm(uv * 1.25 + toSun));
     float day = 1.0 - uNight;
     vec3 lit = mix(vec3(1.0), uSunColor, 0.3) * mix(0.25, 1.0, day) + uHorizon * 0.15;
     vec3 dark = mix(uZenith, uHorizon, 0.5) * mix(0.75, 0.9, uCloudGrey) + vec3(0.05) * day;
     vec3 cloudCol = mix(lit, dark, clamp(shadow * 0.75 + uCloudGrey * 0.55, 0.0, 1.0));
-    cloudCol = mix(cloudCol, uHorizon, smoothstep(0.25, 0.0, h) * 0.6);
+    cloudCol = mix(cloudCol, uHorizon, (1.0 - smoothstep(0.0, 0.25, h)) * 0.6);
     col = mix(col, cloudCol, dens * mix(0.92, 0.98, uCloudGrey));
   }
 

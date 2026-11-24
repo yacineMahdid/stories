@@ -130,11 +130,17 @@ const TERRAIN_FRAG_COLOR = /* glsl */ `
   float brick = smoothstep(0.44, 0.56, mB.r);
   float soil = smoothstep(0.44, 0.56, mB.g);
 
-  // grass: two tones in broad patches, fine speckle, tiny darker clover dots
-  vec3 g = mix(uGrass, uGrass2, smoothstep(0.32, 0.72, n3));
-  g *= 0.95 + 0.08 * n2;
+  // grass: two tones in broad patches, a soft mottle, fine blade speckle, darker clover dots,
+  // and a worn, yellower fringe along paths
+  vec3 g = mix(uGrass, uGrass2, smoothstep(0.3, 0.75, n3));
+  float mottle = tNoise(vTW.xz * 0.9 + 11.0);
+  g *= 0.93 + 0.1 * mottle + 0.05 * n2;
+  float blades = tNoise(vTW.xz * vec2(15.0, 21.0)) * tNoise(vTW.xz * vec2(23.0, 13.0) + 5.0);
+  g *= 1.0 - 0.09 * smoothstep(0.3, 0.55, blades);
   float clover = smoothstep(0.9, 0.97, tNoise(vTW.xz * 9.0 + 7.0));
   g = mix(g, g * 0.86, clover * 0.6);
+  float fringe = smoothstep(0.04, 0.3, max(mA.r, max(mA.g, mB.r))) * (1.0 - smoothstep(0.3, 0.5, max(mA.r, max(mA.g, mB.r))));
+  g = mix(g, g * vec3(1.06, 1.0, 0.82), fringe * 0.55);
   vec3 col = g;
 
   vec3 sandC = uSand * (0.95 + 0.07 * n2) - 0.04 * smoothstep(0.85, 0.95, tNoise(vTW.xz * 14.0));
@@ -149,7 +155,7 @@ const TERRAIN_FRAG_COLOR = /* glsl */ `
     vec2 b = vTW.xz * vec2(2.2, 4.4);
     b.x += step(1.0, mod(floor(b.y), 2.0)) * 0.5;
     vec2 bf = fract(b);
-    float mortar = smoothstep(0.0, 0.06, bf.x) * smoothstep(1.0, 0.94, bf.x) * smoothstep(0.0, 0.1, bf.y) * smoothstep(1.0, 0.9, bf.y);
+    float mortar = smoothstep(0.0, 0.06, bf.x) * (1.0 - smoothstep(0.94, 1.0, bf.x)) * smoothstep(0.0, 0.1, bf.y) * (1.0 - smoothstep(0.9, 1.0, bf.y));
     vec3 brickC = uBrick * (0.86 + 0.22 * tHash(floor(b)));
     col = mix(col, mix(uStone * 0.8, brickC, mortar), brick);
   }
@@ -166,9 +172,9 @@ const TERRAIN_FRAG_COLOR = /* glsl */ `
   col = mix(col, cliffC, cliff);
 
   // water's edge: wet darker band, then the riverbed tinted under the water
-  float shore = smoothstep(uWaterLevel + 0.18, uWaterLevel + 0.02, vTW.y);
+  float shore = (1.0 - smoothstep(uWaterLevel + 0.02, uWaterLevel + 0.18, vTW.y));
   col *= 1.0 - 0.18 * shore;
-  float under = smoothstep(uWaterLevel, uWaterLevel - 0.35, vTW.y);
+  float under = (1.0 - smoothstep(uWaterLevel - 0.35, uWaterLevel, vTW.y));
   col = mix(col, uUnder * (0.9 + 0.15 * n2), under * 0.75);
 
   // snow: everything but steep cliffs; trodden paths keep some color
@@ -188,6 +194,19 @@ const TERRAIN_FRAG_COLOR = /* glsl */ `
 }
 `;
 
+/**
+ * Flats without a height (places, building pads) level the ground at its natural height there,
+ * so a village on a plateau or a windmill on a hill stays up where the land is.
+ */
+export function resolveFlatHeights(features, { seed = 7, roll = 0.35 } = {}) {
+  const base = { features: features.filter((f) => !['flat', 'plaza', 'field'].includes(f.type)), seed, roll };
+  for (const f of features) {
+    if (!['flat', 'plaza', 'field'].includes(f.type) || (f.height != null && f.height !== 'auto') || !f.at) continue;
+    f.height = Terrain.prototype.rawHeight.call(base, f.at[0], f.at[1]);
+  }
+  return features;
+}
+
 export class Terrain {
   /**
    * @param {object} o
@@ -204,9 +223,10 @@ export class Terrain {
     this.size = size;
     this.res = res;
     this.season = season;
-    this.features = features.map((f) => (f.type === 'river' || f.type === 'path') && f.points ? { ...f, points: smoothLine(f.points, 6) } : f);
+    this.features = features.map((f) => (f.type === 'river' || f.type === 'path') && f.points ? { ...f, points: smoothLine(f.points, 6) } : { ...f });
     this.seed = seed;
     this.roll = roll;
+    resolveFlatHeights(this.features, { seed, roll });
     this.origin = [center[0] - size / 2, center[1] - size / 2];
     this.object = new THREE.Group();
     this.object.name = 'terrain';
@@ -445,7 +465,8 @@ export class Terrain {
     g.computeBoundingSphere();
 
     const season = this.season;
-    const grass = colors.grass ?? seasonal(PALETTE.grass, season === 'winter' ? 'autumn' : season);
+    // The ground grass is a touch softer than the props' grass so tufts and bushes read on it.
+    const grass = colors.grass ?? `#${new THREE.Color(seasonal(PALETTE.grass, season === 'winter' ? 'autumn' : season)).offsetHSL(0, -0.08, -0.03).getHexString()}`;
     const c = (v) => new THREE.Color(v);
     this.uniforms = {
       uMaskA: { value: this.maskA },
@@ -547,8 +568,8 @@ export class Terrain {
             float caustic = wNoise(vWW.xz * 2.2 + vec2(uTime * 0.25, uTime * 0.17)) * wNoise(vWW.xz * 3.1 - vec2(uTime * 0.2, -uTime * 0.11));
             c += vec3(0.08, 0.1, 0.09) * smoothstep(0.25, 0.6, caustic) * (1.0 - t);
             float wave = 0.5 + 0.5 * sin(uTime * 1.4 + wNoise(vWW.xz * 0.8) * 6.0);
-            float foamLine = smoothstep(0.1 + 0.05 * wave, 0.02, wDepth);
-            float foamSpeck = smoothstep(0.6, 0.8, wNoise(vWW.xz * 4.0 + uTime * 0.25)) * smoothstep(0.28, 0.08, wDepth) * 0.6;
+            float foamLine = (1.0 - smoothstep(0.02, 0.1 + 0.05 * wave, wDepth));
+            float foamSpeck = smoothstep(0.6, 0.8, wNoise(vWW.xz * 4.0 + uTime * 0.25)) * (1.0 - smoothstep(0.08, 0.28, wDepth)) * 0.6;
             c = mix(c, vec3(0.95, 0.98, 1.0), clamp(foamLine * 0.85 + foamSpeck * 0.5, 0.0, 1.0));
             c = mix(c, vec3(0.86, 0.92, 0.96), uSnow * 0.25);
             diffuseColor.rgb = c;

@@ -19,12 +19,15 @@ async function fetchJSON(url) {
   return res.json();
 }
 
+// Your own story first (data/staging.json, or data/world.json staged automatically), else the sample.
 async function loadStory() {
-  const tries = q.get('story') ? [q.get('story')] : ['data/staging.json', 'samples/brindlewick/staging.json'];
+  const tries = q.get('story') ? [q.get('story')] : ['data/staging.json', 'data/world.json', 'samples/brindlewick/staging.json'];
   let lastError;
   for (const url of tries) {
     try {
-      const direction = await fetchJSON(url);
+      const json = await fetchJSON(url);
+      if (json.document || json.store) return { direction: {}, snapshot: json, url };
+      const direction = json;
       const worldUrl = new URL(direction.world ?? 'world.json', new URL(url, location.href)).href;
       const snapshot = await fetchJSON(worldUrl);
       return { direction, snapshot, url };
@@ -70,7 +73,10 @@ function renderCard(state) {
   $('where').innerHTML = place ? `<b>${escapeHtml(place.name)}</b>${place.description ? ` <span>— ${escapeHtml(place.description)}</span>` : ''}` : '';
   $('summary').textContent = page.summary;
   $('cast').innerHTML = state.cast.map((c) => `<span>${escapeHtml(c.character.name)}${c.do ? ` · ${escapeHtml(c.do)}` : ''}${c.feel ? ` · ${escapeHtml(c.feel)}` : ''}</span>`).join('');
-  $('notes').innerHTML = state.notes.map((n) => `<div>${escapeHtml(n.text)} <em>since ${escapeHtml(n.since)}${n.title ? ` “${escapeHtml(n.title)}”` : ''}</em></div>`).join('');
+  $('notes').innerHTML = [
+    ...state.changes.map((c) => `<div class="here">${escapeHtml(c.text)} <em>from this page on</em></div>`),
+    ...state.notes.map((n) => `<div>${escapeHtml(n.text)} <em>since ${escapeHtml(n.since)}${n.title ? ` “${escapeHtml(n.title)}”` : ''}</em></div>`),
+  ].join('');
   const warn = $('warn');
   const warnings = [...new Set([...state.warnings, ...world.warnings])];
   warn.hidden = !warnings.length;
@@ -189,6 +195,7 @@ $('hour').addEventListener('input', (e) => {
 });
 $('prev').addEventListener('click', () => go(view.index - 1));
 $('next').addEventListener('click', () => go(view.index + 1));
+if (window.innerWidth < 640) { $('page').classList.add('collapsed'); $('collapse').textContent = '+'; }
 $('collapse').addEventListener('click', () => {
   const card = $('page');
   card.classList.toggle('collapsed');

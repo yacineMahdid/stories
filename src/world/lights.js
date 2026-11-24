@@ -68,6 +68,14 @@ export class PropLights {
     }
   }
 
+  /** Forget the lights of a prop (a hand prop put away). */
+  removeFrom(object) {
+    this.entries = this.entries.filter((e) => e.follow?.object !== object);
+    for (const sprite of this.halos.children.slice()) {
+      if (sprite.userData.entry.follow?.object === object) { sprite.material.dispose(); sprite.removeFromParent(); }
+    }
+  }
+
   /** Light the entries nearest `center` with real point lights. */
   update(center, t = WORLD_UNIFORMS.uTime.value) {
     for (const s of this.halos.children) {

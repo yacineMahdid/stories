@@ -93,9 +93,9 @@ void main() {
     float ang = uTime * (1.0 + vSeed * 2.0) + vSeed * 30.0;
     vec2 r = vec2(cos(ang) * q.x - sin(ang) * q.y, sin(ang) * q.x + cos(ang) * q.y);
     r.y *= 1.0 + 1.2 * abs(sin(ang * 0.7));
-    a = smoothstep(0.25, 0.18, length(r * vec2(1.0, 1.8)));
+    a = (1.0 - smoothstep(0.18, 0.25, length(r * vec2(1.0, 1.8))));
   } else {
-    a = smoothstep(0.5, 0.15, length(q));
+    a = (1.0 - smoothstep(0.15, 0.5, length(q)));
   }
   float blink = mix(1.0, 0.5 + 0.5 * sin(uTime * (2.0 + vSeed * 3.0) + vSeed * 50.0), uBlink);
   vec3 c = mix(uColor, uColor2, step(0.5, fract(vSeed * 7.31)));

@@ -241,7 +241,7 @@ async function build() {
   if (bounds.isEmpty()) bounds.set(new THREE.Vector3(-2, 0, -2), new THREE.Vector3(2, 2, 2));
   const size = bounds.getSize(new THREE.Vector3());
   const radius = Math.max(size.x, size.z) / 2 + 3;
-  makeGround(Math.max(60, radius * 3));
+  makeGround(Math.max(320, radius * 4));
   stage.focus(bounds.getCenter(new THREE.Vector3()).setY(0), radius + 2);
   frameCamera(state.focus != null && built[state.focus] ? new THREE.Box3().setFromObject(built[state.focus].object) : bounds);
 

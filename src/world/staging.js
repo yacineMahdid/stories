@@ -84,10 +84,10 @@ export class World {
     this.terrain = [];
     for (const f of direction.terrain ?? []) this.terrain.push(this.featureToWorld(f, null));
     for (const place of this.places.values()) {
-      this.terrain.push({ type: 'flat', at: place.pos, r: place.radius, blend: 5, height: place.dir.height ?? 0, place: place.id });
+      this.terrain.push({ type: 'flat', at: place.pos, r: place.radius, blend: 5, height: place.dir.height ?? 'auto', place: place.id });
       if (place.ground && place.ground !== 'grass') {
         const g = typeof place.ground === 'string' ? { surface: place.ground } : place.ground;
-        this.terrain.push({ type: 'plaza', at: place.pos, r: g.r ?? place.radius * 0.8, size: g.size, rotate: (g.rotate ?? 0) + place.rotate, surface: g.surface ?? 'stone', place: place.id });
+        this.terrain.push({ type: 'plaza', at: place.pos, r: g.r ?? place.radius * 0.8, size: g.size, rotate: (g.rotate ?? 0) + place.rotate, surface: g.surface ?? 'stone', flatten: false, place: place.id });
       }
       for (const f of place.dir.terrain ?? []) this.terrain.push(this.featureToWorld(f, place));
     }
@@ -167,7 +167,7 @@ export class World {
     if (f.rotate != null || place) out.rotate = (f.rotate ?? 0) + (place?.rotate ?? 0);
     // Map-space features measure sizes in map units unless they say `units`.
     if (!place && !f.units) {
-      for (const k of ['r', 'width', 'beach', 'bank']) if (typeof f[k] === 'number') out[k] = f[k] * this.scale;
+      for (const k of ['r', 'width', 'beach', 'bank', 'edge', 'blend']) if (typeof f[k] === 'number') out[k] = f[k] * this.scale;
       if (f.size) out.size = f.size.map((v) => v * this.scale);
     }
     return out;
@@ -245,6 +245,7 @@ export class World {
     // Things after continuity: base, then lasting changes of earlier pages in the same story.
     const things = new Map([...this.things].map(([k, v]) => [k, { ...v }]));
     const looks = new Map();
+    const here = []; // lasting changes this page makes
     const applyChanges = (s, isEarlier) => {
       for (const ch of s.dir.changes ?? []) {
         const chPlace = this.placeByName(ch.place ?? s.dir.place ?? s.page.locationIds?.[0]) ?? place;
@@ -275,7 +276,8 @@ export class World {
           things.set(`terrain:${s.page.id}:${hashString(JSON.stringify(ch.terrain))}`, { kind: '__terrain', feature: this.featureToWorld(ch.terrain, chPlace), pos: chPlace?.pos ?? [0, 0], source: 'change' });
           touched = 'terrain';
         }
-        if (isEarlier && touched) notes.push({ text: label, since: s.page.path, title: s.page.title, id: touched });
+        if (isEarlier && touched) notes.push({ text: label, since: s.page.path, title: s.page.title, id: touched, look: !!ch.look });
+        if (!isEarlier && touched) here.push({ text: label, id: touched });
       }
     };
     for (let i = 0; i < index; i++) {
@@ -333,10 +335,27 @@ export class World {
     }
     const shots = Array.isArray(camera) ? camera : camera ? [camera] : [{ shot: cast.length ? 'medium' : 'wide' }];
 
+    // Only mention inherited changes that can matter here: things near this place, looks of
+    // characters on this page.
+    const castIds = new Set(cast.map((c) => c.who));
+    const NEAR = 30;
+    const latest = new Map();
+    for (const n of notes) latest.set(n.look ? `look:${n.id}` : n.id, n); // the newest change to each thing
+    const seenText = new Set();
+    const relevant = [...latest.values()].filter((n) => {
+      const key = `${n.text}|${n.since}`;
+      if (seenText.has(key)) return false;
+      seenText.add(key);
+      if (n.look) return castIds.has(this.character(n.id)?.id);
+      const t = things.get(n.id);
+      if (!t) return n.id === 'terrain' || [...this.things.values()].some((b) => b.id === n.id && place && Math.hypot(b.pos[0] - place.pos[0], b.pos[1] - place.pos[1]) < NEAR);
+      return !place || Math.hypot(t.pos[0] - place.pos[0], t.pos[1] - place.pos[1]) < NEAR;
+    });
+
     return {
       index, page, dir: scene.dir, place, chain: chain.map((s) => s.page.id),
       hour, season, weather, ambient, day,
-      things, cast, shots, notes, warnings: [...warnings],
+      things, cast, shots, notes: relevant, allNotes: notes, changes: here, warnings: [...warnings],
       looks,
     };
   }
@@ -397,40 +416,67 @@ export function expandGroups(list, placeId) {
   return out;
 }
 
-/** A modest automatic set for a pin nobody has staged yet, from its kind and description. */
+/** A modest automatic set for a pin nobody has staged yet, from its kind, name and description. */
 export function autoPlace(pin) {
-  const text = `${pin.kind} ${pin.name} ${pin.description}`.toLowerCase();
-  const has = (...words) => words.some((w) => text.includes(w));
+  const SETS = [
+    ['beach', ['beach', 'shore', 'coast', 'harbor', 'harbour', 'dock', 'pier', 'port', 'bay', 'sea']],
+    ['river', ['river', 'mill', 'bridge', 'stream', 'brook', 'ford']],
+    ['lake', ['lake', 'pond', 'pool', 'spring']],
+    ['forest', ['forest', 'wood', 'grove', 'clearing', 'glade', 'thicket']],
+    ['ruin', ['ruin', 'temple', 'ancient', 'tomb', 'shrine']],
+    ['wild', ['cave', 'wasteland', 'graveyard', 'swamp', 'dead']],
+    ['hill', ['hill', 'peak', 'lookout', 'mountain', 'cliff']],
+    ['town', ['town', 'village', 'square', 'market', 'city', 'street', 'plaza']],
+  ];
+  // The name says what the place is; the description only helps when the name doesn't.
+  const pick = (text) => SETS.find(([, words]) => words.some((w) => new RegExp(`\\b${w}`).test(text)))?.[0];
+  const kindHint = { town: 'town', danger: 'wild', secret: 'ruin', landmark: null, region: 'forest', place: null }[pin.kind];
+  const set = pick(pin.name.toLowerCase()) ?? (pin.kind === 'town' ? 'town' : null) ?? pick(pin.description.toLowerCase()) ?? kindHint ?? 'meadow';
   const things = [];
   const terrain = [];
   let ground = null;
-  if (has('town', 'village', 'square', 'market', 'city')) {
-    ground = { surface: 'stone', r: 7 };
-    things.push({ id: `${pin.id}/well`, kind: has('fountain') ? 'fountain' : 'well', at: [0, 0] });
-    things.push({ kind: 'ring', of: 'house', r: 11, count: 5, start: 160, facing: 'in' });
-    things.push({ kind: 'ring', of: 'lamp', r: 6.5, count: 4, start: 45 });
-  } else if (has('forest', 'wood', 'grove', 'clearing')) {
-    things.push({ kind: 'scatter', of: 'tree', area: { r: 22 }, avoid: { r: 6 }, count: 40, params: { variant: ['round', 'pine', 'oak'] } });
-    things.push({ kind: 'scatter', of: 'mushroom', area: { r: 8 }, count: 5 });
-  } else if (has('beach', 'shore', 'coast', 'harbor', 'harbour', 'dock', 'port')) {
-    terrain.push({ type: 'sea', points: [[-60, 6], [60, 6], [60, 80], [-60, 80]], beach: 8 });
-    things.push({ kind: 'dock', at: [3, 3] });
-    things.push({ kind: 'scatter', of: 'tree', area: { r: 18 }, avoid: { r: 7 }, count: 8, params: { variant: 'palm' } });
-  } else if (has('river', 'mill', 'bridge', 'stream')) {
-    terrain.push({ type: 'river', points: [[-40, 4], [-10, 5], [10, 3], [40, 5]], width: 4 });
-    things.push({ kind: 'bridge', at: [0, 4.2], facing: 90 });
-  } else if (has('lake', 'pond')) {
-    terrain.push({ type: 'pond', at: [0, 5], r: 6 });
-  } else if (has('ruin', 'temple', 'secret', 'ancient')) {
-    things.push({ kind: 'ruin', at: [0, -2] });
-  } else if (has('danger', 'cave', 'dark')) {
-    things.push({ kind: 'scatter', of: 'tree', area: { r: 20 }, avoid: { r: 5 }, count: 25, params: { variant: 'dead' } });
-    things.push({ kind: 'scatter', of: 'rock', area: { r: 10 }, count: 8 });
-  } else {
-    things.push({ kind: 'scatter', of: 'tree', area: { r: 20 }, avoid: { r: 7 }, count: 14 });
-    things.push({ kind: 'scatter', of: 'flowers', area: { r: 8 }, count: 6 });
+  switch (set) {
+    case 'town':
+      ground = { surface: 'stone', r: 7 };
+      things.push({ id: `${pin.id}/centre`, kind: /fountain/.test(pin.description.toLowerCase()) ? 'fountain' : 'well', at: [0, 0] });
+      things.push({ kind: 'ring', of: 'house', r: 11, count: 5, start: 160, facing: 'in' });
+      things.push({ kind: 'ring', of: 'lamp', r: 6.5, count: 4, start: 45 });
+      break;
+    case 'forest':
+      things.push({ kind: 'scatter', of: 'tree', area: { r: 22 }, avoid: { r: 6 }, count: 40, params: { variant: ['round', 'pine', 'oak'] } });
+      things.push({ kind: 'scatter', of: 'mushroom', area: { r: 8 }, count: 5 });
+      break;
+    case 'beach':
+      terrain.push({ type: 'sea', points: [[-60, 6], [60, 6], [60, 80], [-60, 80]], beach: 8 });
+      things.push({ kind: 'dock', at: [3, 3] });
+      things.push({ kind: 'scatter', of: 'tree', area: { r: 18 }, avoid: { r: 7 }, count: 8, params: { variant: 'palm' } });
+      break;
+    case 'river':
+      terrain.push({ type: 'river', points: [[-40, 4], [-10, 5], [10, 3], [40, 5]], width: 4 });
+      things.push({ kind: 'bridge', at: [0, 4.2], facing: 90 });
+      if (/mill/.test(pin.name.toLowerCase())) things.push({ kind: 'watermill', at: [-6, 0] });
+      break;
+    case 'lake':
+      terrain.push({ type: 'pond', at: [0, 6], r: 6 });
+      things.push({ kind: 'scatter', of: 'reeds', area: { at: [0, 6], r: 7 }, count: 6, onWater: true });
+      break;
+    case 'ruin':
+      things.push({ kind: 'ruin', at: [0, -2] });
+      things.push({ kind: 'scatter', of: 'tree', area: { r: 20 }, avoid: { r: 7 }, count: 16 });
+      break;
+    case 'wild':
+      things.push({ kind: 'scatter', of: 'tree', area: { r: 20 }, avoid: { r: 5 }, count: 25, params: { variant: 'dead' } });
+      things.push({ kind: 'scatter', of: 'rock', area: { r: 10 }, count: 8 });
+      break;
+    case 'hill':
+      terrain.push({ type: 'hill', at: [0, 0], r: 14, height: 3 });
+      things.push({ kind: 'scatter', of: 'flowers', area: { r: 8 }, count: 8 });
+      break;
+    default:
+      things.push({ kind: 'scatter', of: 'tree', area: { r: 20 }, avoid: { r: 7 }, count: 14 });
+      things.push({ kind: 'scatter', of: 'flowers', area: { r: 8 }, count: 6 });
   }
-  return { things, terrain, ground, auto: true };
+  return { things, terrain, ground, auto: set };
 }
 
 /** Guess a 3D look from a canvas character card (species, hair and colors from the text). */

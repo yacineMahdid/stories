@@ -162,9 +162,32 @@ export class WorldStage {
   }
 
   tick(time) {
-    const dt = this.lastTime === null ? 0 : Math.min((time - this.lastTime) / 1000, 0.1);
+    const raw = this.lastTime === null ? 0 : (time - this.lastTime) / 1000;
+    const dt = Math.min(raw, 0.1);
     this.lastTime = time;
     if (this.paused) return;
+    this.adaptResolution(raw);
     this.step(dt);
+  }
+
+  /**
+   * Keep the frame rate smooth on slower devices: when frames stay slow, render at a lower
+   * pixel ratio; when there is room again, go back up (never above the screen's own ratio).
+   */
+  adaptResolution(frame) {
+    if (!(frame > 0) || frame > 0.5) return;
+    this.frameAvg = this.frameAvg == null ? frame : this.frameAvg * 0.95 + frame * 0.05;
+    this.adaptWait = (this.adaptWait ?? 2) - frame;
+    if (this.adaptWait > 0) return;
+    const max = Math.min(window.devicePixelRatio, 2);
+    const ratio = this.renderer.getPixelRatio();
+    let next = ratio;
+    if (this.frameAvg > 1 / 28 && ratio > 0.75) next = Math.max(0.75, ratio - 0.25);
+    else if (this.frameAvg < 1 / 55 && ratio < max) next = Math.min(max, ratio + 0.25);
+    if (next !== ratio) {
+      this.renderer.setPixelRatio(next);
+      this.resize();
+      this.adaptWait = 2;
+    }
   }
 }
