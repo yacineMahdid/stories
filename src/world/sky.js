@@ -32,7 +32,7 @@ export const WEATHERS = {
   rain: { label: 'Rain', cloud: 0.95, dim: 0.26, grey: 0.72, fog: [22, 120], wet: 1, rain: 1, wind: 0.55 },
   storm: { label: 'Storm', cloud: 1, dim: 0.16, grey: 0.86, fog: [16, 85], wet: 1, rain: 2, wind: 1, lightning: true, darken: 0.55 },
   snow: { label: 'Snowfall', cloud: 0.88, dim: 0.42, grey: 0.55, fog: [18, 95], snowfall: 1, snow: 0.85, wind: 0.25 },
-  fog: { label: 'Fog', cloud: 0.6, dim: 0.45, grey: 0.62, fog: [2, 34], wind: 0.1 },
+  fog: { label: 'Fog', cloud: 0.6, dim: 0.45, grey: 0.62, fog: [4, 46], wind: 0.1 },
 };
 
 export const SEASON_OF_MONTH = (m) => (m == null ? null : ['winter', 'winter', 'spring', 'spring', 'spring', 'summer', 'summer', 'summer', 'autumn', 'autumn', 'autumn', 'winter'][((m - 1) % 12 + 12) % 12]);

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import {
   Parts, finish, spot, light, roundBox, box, roundCyl, cyl, cone, sphere, lathe, blob, tube, extrude, ring, xform,
-  material, patchMaterial, PALETTE, SCALE, SEASONS, shade, mix, rng, noise3, signMaterial, waterMaterial,
+  material, patchMaterial, PALETTE, SCALE, SEASONS, shade, mix, rng, noise3, signMaterial, waterMaterial, WORLD_UNIFORMS,
 } from '../kit.js';
 
 // Prop family: village (street furniture and small props). See ../kit.js for the conventions:
@@ -17,7 +17,7 @@ const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 const smooth = (e0, e1, x) => { const t = clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };
 const fract = (x) => x - Math.floor(x);
-/** Deterministic hash in [0, 1) for painting patterns (never Math.random). */
+/** Deterministic hash in [0, 1) for painting patterns (no unseeded randomness anywhere). */
 const hash = (a, b = 0, c = 0) => fract(Math.sin(a * 127.1 + b * 311.7 + c * 74.7) * 43758.5453);
 
 /* ───────────────────────── params ───────────────────────── */
@@ -83,6 +83,12 @@ function colorsOr(v, d) {
   return out.length ? out : d;
 }
 const seasonOf = (ctx) => (SEASONS.includes(ctx?.season) ? ctx.season : 'summer');
+/** A darker shade that never falls below a soft dark (dark woods stay wood, not black). */
+function deeper(color, amount) {
+  const hsl = {};
+  new THREE.Color(color).getHSL(hsl);
+  return shade(color, -Math.min(amount, Math.max(0, hsl.l - 0.2)));
+}
 /** A seeded random stream for one aspect of a prop, stable across seasons and hours. */
 const rand = (ctx, tag) => rng(`${ctx?.seed ?? 1}:${tag}`);
 
@@ -345,7 +351,7 @@ function flagMaterial(map = null) {
       .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>
         float flagU = uv.x;
         float flagPh = flagU * 6.3 - uTime * (4.2 + 2.5 * uWind) + modelMatrix[3].x * 0.9 + modelMatrix[3].z * 0.7;
-        float flagA = (0.035 + 0.05 * uWind);
+        float flagA = (0.055 + 0.06 * uWind);
         float flagZ = flagA * flagU * sin(flagPh) + flagA * 0.35 * flagU * sin(flagPh * 0.5 + uv.y * 2.0);
         float flagD = flagA * (sin(flagPh) + flagU * 6.3 * cos(flagPh)) / 0.9;
         objectNormal = normalize(objectNormal + vec3(-flagD, 0.0, 0.0));`)
@@ -384,7 +390,7 @@ const FRUIT = {
 /** A heap of round fruit (spheres) filling an ellipse of rx × rz at height y. */
 function fruitHeap(P, R, kind, { at = [0, 0, 0], rx = 0.15, rz = 0.12, r = 0.05, layers = 2, tilt = 0 } = {}) {
   const [c0, c1] = FRUIT[kind] ?? FRUIT.apple;
-  const g = sphere(r, 7, 5);
+  const g = sphere(r, 8, 6);
   let n = 0;
   for (let layer = 0; layer < layers; layer++) {
     const shrink = 1 - layer * 0.42;
@@ -413,7 +419,7 @@ function fruitHeap(P, R, kind, { at = [0, 0, 0], rx = 0.15, rz = 0.12, r = 0.05,
 /** A small wooden bucket or tin pail (used by the bucket prop and the flower stall). */
 function pail(P, R, { at = [0, 0, 0], h = 0.28, r = 0.15, tin = false, color = null, handle = true } = {}) {
   const [x0, y0, z0] = at;
-  const body = color ?? (tin ? '#aeb6bf' : PALETTE.woodLight);
+  const body = color ?? (tin ? '#c9d0d7' : PALETTE.woodLight);
   const rb = r * 0.8;
   const prof = [[0, 0], [rb - 0.012, 0], [rb, 0.012], [r, h - 0.01], [r - 0.006, h], [r - 0.022, h], [r - 0.024, h - 0.02], [rb - 0.02, 0.03], [0, 0.03]];
   if (tin) {
@@ -421,10 +427,10 @@ function pail(P, R, { at = [0, 0, 0], h = 0.28, r = 0.15, tin = false, color = n
     P.add(ring(r + 0.002, 0.009, { radial: 5, tubular: 18 }), { slot: 'metal', color: shade(body, 0.06) }, { at: [x0, y0 + h - 0.004, z0] });
     for (const t of [0.25]) P.add(ring(lerp(rb, r, t) + 0.004, 0.006, { radial: 4, tubular: 18 }), { slot: 'metal', color: shade(body, -0.06) }, { at: [x0, y0 + h * t, z0] });
   } else {
-    paint(P, lathe(prof, 14), body, { at }, staves(body, { cx: x0, cz: z0, n: 14, y0, y1: y0 + h, seed: R.int(0, 999) }), { flat: true });
+    paint(P, lathe(prof, 12), body, { at }, staves(body, { cx: x0, cz: z0, n: 12, y0, y1: y0 + h, seed: R.int(0, 999) }), { flat: true });
     for (const t of [0.2, 0.78]) {
       const rr = lerp(rb, r, t) + 0.006;
-      P.add(lathe([[rr - 0.004, -0.018], [rr, -0.014], [rr, 0.014], [rr - 0.004, 0.018]], 14), PALETTE.ironLight, { at: [x0, y0 + h * t, z0] });
+      P.add(lathe([[rr - 0.004, -0.018], [rr, -0.014], [rr, 0.014], [rr - 0.004, 0.018]], 12), PALETTE.ironLight, { at: [x0, y0 + h * t, z0] });
     }
   }
   if (handle) {
@@ -535,11 +541,11 @@ function buildFountain(p, ctx) {
   const seed = rand(ctx, 'fountain').int(0, 999);
 
   // basin wall (stone courses), a soft light rim cap to sit on, pilasters around it
-  const blocks = 2 * Math.max(6, Math.round(10 * s));
+  const blocks = 2 * Math.min(16, Math.max(6, Math.round(10 * s)));
   const segs = blocks * 2;
   const wall = [[R + 0.14, 0], [R + 0.15, 0.04], [R + 0.11, 0.09], [R + 0.03, 0.1], [R + 0.03, 0.21], [R + 0.04, 0.3], [R + 0.03, 0.32],
     [inner, 0.32], [inner - 0.01, 0.12], [inner - 0.03, 0.1], [0, 0.1]];
-  const courses = masonry(stone, { courses: [0.1, 0.205, 0.33], segs, seed });
+  const courses = masonry(stone, { courses: [0.1, 0.205, 0.33], segs, seed, spread: 0.09 });
   paint(P, lathe(wall, segs), stone, {}, (c, x, y, z) => {
     if (y < 0.099) c.set(dark);
     else if (Math.hypot(x, z) < inner + 0.01) c.set(shade(stone, -0.14));
@@ -571,8 +577,9 @@ function buildFountain(p, ctx) {
   const TIERS = [[0.62, 0.2, 0.7], [0.34, 0.12, 0.42], [0.22, 0.085, 0.25]];
   for (let i = 0; i < tiers; i++) { pillar(TIERS[i][0] * k, TIERS[i][1] * k); bowl(TIERS[i][2] * k); }
   const footY = tiers ? y : 0.1;
-  const fh = tiers ? 0.3 * k : 0.42 * k;
-  P.add(lathe([[0.1 * k, 0], [0.11 * k, 0.03 * k], [0.06 * k, fh * 0.32], [0.05 * k, fh * 0.57], [0.085 * k, fh * 0.74], [0.065 * k, fh * 0.92], [0.03 * k, fh], [0, fh]], 12), cap, { at: [0, footY - 0.005, 0] });
+  const kf = tiers ? k : Math.max(k, 0.85);
+  const fh = tiers ? 0.3 * k : 0.62 * kf;
+  P.add(lathe([[0.1 * kf, 0], [0.11 * kf, 0.03 * kf], [0.06 * kf, fh * 0.32], [0.05 * kf, fh * 0.57], [0.085 * kf, fh * 0.74], [0.065 * kf, fh * 0.92], [0.03 * kf, fh], [0, fh]], 12), cap, { at: [0, footY - 0.005, 0] });
   const topY = footY + fh;
   const landY = tiers ? bowls[bowls.length - 1].y : wl;
 
@@ -602,7 +609,7 @@ function buildFountain(p, ctx) {
   if (water === 'running') {
     const fall = fallMaterial();
     tex = fall.map;
-    const fm = { slot: 'clear', color: '#f4fdff', opacity: 0.7 };
+    const fm = { slot: 'clear', color: '#f4fdff', opacity: 0.55 };
     // thin sheets of water spill over each bowl's lip and fall almost straight down
     for (let i = 0; i < bowls.length; i++) {
       const b = bowls[i];
@@ -614,9 +621,9 @@ function buildFountain(p, ctx) {
       foam.add(lathe([[rl + 0.08 * k, 0], [rl + 0.03 * k, 0.03 * k], [rl - 0.03 * k, 0.03 * k], [rl - 0.07 * k, 0]], 28), fm, { at: [0, yb - 0.006, 0] });
     }
     // a slim jet from the spout, opening into a little umbrella that falls back around it
-    const jh = 0.18 * k, drop = topY - landY;
-    jet.add(lathe([[0.014 * k, 0], [0.02 * k, jh * 0.7], [0.035 * k, jh], [0.075 * k, jh * 1.06], [0.11 * k, jh * 0.88], [0.135 * k, jh * 0.35], [0.15 * k, -drop * 0.45], [0.16 * k, -drop + 0.012]], 16), fall);
-    foam.add(lathe([[0.22 * k, 0], [0.18 * k, 0.025 * k], [0.13 * k, 0.025 * k], [0.1 * k, 0]], 20), fm, { at: [0, landY - 0.006, 0] });
+    const jh = 0.18 * kf, drop = topY - landY, jr = tiers ? 1 : 1.5;
+    jet.add(lathe([[0.014 * kf, 0], [0.02 * kf, jh * 0.7], [0.035 * kf, jh], [0.075 * kf, jh * 1.06], [0.11 * kf * jr, jh * 0.88], [0.135 * kf * jr, jh * 0.35], [0.15 * kf * jr, -drop * 0.45], [0.16 * kf * jr, -drop + 0.012]], 16), fall);
+    foam.add(lathe([[0.22 * kf * jr, 0], [0.18 * kf * jr, 0.025 * kf], [0.13 * kf * jr, 0.025 * kf], [0.1 * kf * jr, 0]], 20), fm, { at: [0, landY - 0.006, 0] });
   }
   const group = P.build('fountain');
   let foamGroup = null, jetGroup = null;
@@ -652,8 +659,7 @@ function buildWell(p, ctx) {
   const ro = 0.55, ri = 0.39, wallH = 0.56;
   // stacked stone blocks around a dark shaft
   P.add(cyl(ri + 0.07, wallH - 0.02, { segments: 18, open: true }), '#4a4f56');
-  P.add(new THREE.CircleGeometry(ri + 0.07, 18).rotateX(-Math.PI / 2), '#3c4148', { at: [0, 0.005, 0] });
-  const courses = 3, per = 13, ch = (wallH - 0.02) / courses;
+  const courses = 3, per = 11, ch = (wallH - 0.02) / courses;
   for (let k = 0; k < courses; k++) {
     for (let i = 0; i < per; i++) {
       const a = ((i + (k % 2) * 0.5) / per) * TAU + R.float(-0.03, 0.03);
@@ -663,9 +669,9 @@ function buildWell(p, ctx) {
     }
   }
   // rim cap
-  P.add(lathe([[ro + 0.01, 0], [ro + 0.025, 0.03], [ro + 0.01, 0.07], [ro - 0.03, 0.085], [ri + 0.03, 0.085], [ri - 0.005, 0.06], [ri - 0.01, 0.0]], 28), shade(stone, 0.1), { at: [0, wallH - 0.03, 0] });
+  P.add(lathe([[ro + 0.01, 0], [ro + 0.025, 0.03], [ro + 0.01, 0.07], [ro - 0.03, 0.085], [ri + 0.03, 0.085], [ri - 0.005, 0.06], [ri - 0.01, 0.0]], 22), shade(stone, 0.1), { at: [0, wallH - 0.03, 0] });
   // water far down
-  waterDisc(P, ri + 0.02, 0.24, { deep: '#2c6f8c', shallow: '#3f8aa6', segs: 20 });
+  waterDisc(P, ri + 0.02, 0.24, { deep: '#2c6f8c', shallow: '#3f8aa6', segs: 16 });
   const top = wallH + 0.055;
   // posts, crossbeam and a little gabled roof
   const px = ro - 0.08, postH = 1.12;
@@ -682,10 +688,10 @@ function buildWell(p, ctx) {
     const M = xform([0, yc - 0.03, zc], [sd * pitch, 0, 0]);
     P.add(softBox(roofW, 0.06, span + 0.06, 0.025), roof, { matrix: M });
     // shingle rows: soft darker ridges across the panel, and a trim along the eave
-    for (const t of [-0.12, 0.12]) P.add(softBox(roofW - 0.03, 0.022, 0.06, 0.01), shade(roof, -0.06), { matrix: M.clone().multiply(xform([0, 0.05, sd * t * span])) });
+    P.add(softBox(roofW - 0.03, 0.022, 0.06, 0.01), shade(roof, -0.06), { matrix: M.clone().multiply(xform([0, 0.05, sd * 0.02 * span])) });
     P.add(softBox(roofW + 0.02, 0.05, 0.06, 0.018), shade(roof, -0.12), { matrix: M.clone().multiply(xform([0, -0.005, sd * (span / 2 + 0.01)])) });
   }
-  P.add(roundCyl(0.05, roofW + 0.04, { segments: 10, steps: 1, bevel: 0.02 }), shade(roof, -0.12), { at: [-(roofW + 0.04) / 2, ridge + 0.005, 0], rot: [0, 0, -Math.PI / 2] });
+  P.add(cyl(0.05, roofW + 0.04, { segments: 8 }), shade(roof, -0.12), { at: [-(roofW + 0.04) / 2, ridge + 0.005, 0], rot: [0, 0, -Math.PI / 2] });
   for (const x of [-px, px]) {
     P.add(extrude([[-span * 0.62, 0], [span * 0.62, 0], [0, ridge - beamY - 0.02]], 0.04, { bevel: 0.008, bevelSegments: 1, curveSegments: 1 }), wood, { at: [x, beamY + 0.04, 0], rot: [0, Math.PI / 2, 0] });
   }
@@ -696,11 +702,11 @@ function buildWell(p, ctx) {
   const coil = [[0.04, 0]];
   for (let i = 0; i <= 12; i++) coil.push([i % 2 ? 0.074 : 0.066, 0.02 + (i / 12) * 0.38]);
   coil.push([0.04, 0.42]);
-  P.add(lathe(coil, 10), '#d2b57e', { at: [-0.21, ay, 0], rot: [0, 0, -Math.PI / 2] });
-  for (const x of [-0.23, 0.21]) P.add(roundCyl(0.085, 0.025, { segments: 10, steps: 1, bevel: 0.008 }), shade(wood, -0.1), { at: [x, ay, 0], rot: [0, 0, -Math.PI / 2] });
+  P.add(lathe(coil, 8), '#d2b57e', { at: [-0.21, ay, 0], rot: [0, 0, -Math.PI / 2] });
+  for (const x of [-0.23, 0.21]) P.add(cyl(0.085, 0.025, { segments: 10 }), shade(wood, -0.1), { at: [x, ay, 0], rot: [0, 0, -Math.PI / 2] });
   P.add(softBox(0.035, 0.2, 0.035, 0.012), PALETTE.iron, { at: [px + 0.1, ay - 0.18, 0] });
   rod(P, [px + 0.1, ay - 0.16, 0], [px + 0.24, ay - 0.16, 0], 0.02, PALETTE.iron, { seg: 6 });
-  P.add(roundCyl(0.03, 0.12, { segments: 10, steps: 1, bevel: 0.012 }), PALETTE.woodRed, { at: [px + 0.13, ay - 0.16, 0], rot: [0, 0, -Math.PI / 2] });
+  P.add(roundCyl(0.03, 0.12, { segments: 8, steps: 1, bevel: 0.012 }), PALETTE.woodRed, { at: [px + 0.13, ay - 0.16, 0], rot: [0, 0, -Math.PI / 2] });
   // rope down to a hanging bucket
   if (bucket) {
     const by = top + 0.1, bh = 0.2, br = 0.11;
@@ -764,21 +770,21 @@ function goodsOn(P, R, goods, { at = [0, 0, 0], w = 1.4, d = 0.45 } = {}) {
   };
   if (goods === 'fruit') {
     const kinds = ['apple', 'orange', 'pear', 'plum', 'lemon', 'peach'];
-    const n = clamp(Math.round(w / 0.42), 2, 5);
+    const n = clamp(Math.round(w / 0.5), 2, 5);
     const tw = w / n - 0.03;
     for (let i = 0; i < n; i++) {
       const x = cx - w / 2 + (i + 0.5) * (w / n);
       tray(x, cz, tw, d * 0.9);
-      fruitHeap(P, R, kinds[i % kinds.length], { at: [x, y + 0.04 + Math.sin(0.18) * d * 0.45, cz], rx: tw / 2 - 0.035, rz: d * 0.38, r: 0.052, layers: 2, tilt: 0.18 });
+      fruitHeap(P, R, kinds[i % kinds.length], { at: [x, y + 0.04 + Math.sin(0.18) * d * 0.45, cz], rx: tw / 2 - 0.035, rz: d * 0.38, r: 0.064, layers: 2, tilt: 0.18 });
     }
   } else if (goods === 'fish') {
     P.add(softBox(w, 0.04, d * 0.95, 0.012), { slot: 'metal', color: '#b9c3cc' }, { at: [cx, y, cz] });
     P.add(blob(0.5, { detail: 1, amp: 0.12, seed: 3, squash: [w * 0.94, 0.05, d * 0.86] }), '#e9f4f8', { at: [cx, y + 0.045, cz] });
-    const n = clamp(Math.round(w / 0.24), 3, 9);
+    const n = clamp(Math.round(w / 0.3), 3, 8);
     for (let i = 0; i < n; i++) {
       const x = cx - w / 2 + (i + 0.5) * (w / n);
       const col = R.pick(['#8aa3b8', '#9fb4c4', '#f29b84', '#7f97b0']);
-      fish(P, R, [x, y + 0.075, cz + R.float(-0.04, 0.04)], col, R.float(0.75, 0.95), R.float(-0.4, 0.4) + Math.PI / 2);
+      fish(P, R, [x, y + 0.08, cz + R.float(-0.04, 0.04)], col, R.float(1.05, 1.25), R.float(-0.4, 0.4) + Math.PI / 2);
     }
     for (let i = 0; i < 2; i++) P.add(sphere(0.035, 7, 5), '#f6d84a', { at: [cx + (i ? 0.35 : -0.42) * w, y + 0.09, cz + d * 0.28], scale: [1, 0.85, 1.25] });
   } else if (goods === 'flowers') {
@@ -798,26 +804,26 @@ function goodsOn(P, R, goods, { at = [0, 0, 0], w = 1.4, d = 0.45 } = {}) {
       basketTray(P, R, [x, y, cz], tw, d * 0.85);
       const kind = i % 3;
       if (kind === 0) {
-        for (let j = 0; j < 3; j++) loaf(P, R, [x + (j - 1) * tw * 0.3, y + 0.07, cz + R.float(-0.03, 0.03)], 'loaf');
+        for (let j = 0; j < 2; j++) loaf(P, R, [x + (j - 0.5) * tw * 0.45, y + 0.08, cz + R.float(-0.03, 0.03)], 'loaf', 1.35);
       } else if (kind === 1) {
-        for (let j = 0; j < 4; j++) loaf(P, R, [x + (j % 2 - 0.5) * tw * 0.42, y + 0.06, cz + (j < 2 ? -0.07 : 0.08)], 'bun');
+        for (let j = 0; j < 4; j++) loaf(P, R, [x + (j % 2 - 0.5) * tw * 0.45, y + 0.075, cz + (j < 2 ? -0.08 : 0.09)], 'bun', 1.35);
       } else {
-        for (let j = 0; j < 3; j++) loaf(P, R, [x, y + 0.06 + j * 0.0, cz + (j - 1) * 0.11], 'baguette');
+        for (let j = 0; j < 3; j++) loaf(P, R, [x, y + 0.075, cz + (j - 1) * 0.12], 'baguette', 1.2);
       }
     }
   } else if (goods === 'pottery') {
-    const n = clamp(Math.round(w / 0.24), 3, 9);
+    const n = clamp(Math.round(w / 0.3), 3, 8);
     for (let i = 0; i < n; i++) {
       const x = cx - w / 2 + (i + 0.5) * (w / n);
       const z = cz + (i % 2 ? -0.08 : 0.06);
-      vase(P, R, [x, y, z], R.pick(['#c8714a', '#4f86c6', '#f1e3c8', '#5aa56a', '#d98a5a', '#3fa3a0']), i);
+      vase(P, R, [x, y, z], R.pick(['#c8714a', '#4f86c6', '#f1e3c8', '#5aa56a', '#d98a5a', '#3fa3a0']), i, 1.35);
     }
   } else if (goods === 'toys') {
-    const n = clamp(Math.round(w / 0.3), 3, 7);
+    const n = clamp(Math.round(w / 0.36), 3, 7);
     for (let i = 0; i < n; i++) {
       const x = cx - w / 2 + (i + 0.5) * (w / n);
       const z = cz + (i % 2 ? -0.07 : 0.06);
-      toy(P, R, [x, y, z], i);
+      toy(P, R, [x, y, z], i, 1.3);
     }
   }
 }
@@ -857,21 +863,30 @@ function basketTray(P, R, at, w, d) {
   P.add(softBox(w - 0.04, 0.012, d - 0.04, 0.005), '#f4efe6', { at: [x, y + 0.055, z] });
 }
 
-function loaf(P, R, at, kind) {
+function loaf(P, R, at, kind, s = 1) {
   const crust = shade('#c98a46', R.float(-0.04, 0.04));
   const [x, y, z] = at;
+  const M = xform(at, [0, R.float(-0.15, 0.15), 0], s);
+  const add = (g, c, local) => P.add(g, c, { matrix: M.clone().multiply(local) });
+  const slash = sphere(0.02, 6, 4);
   if (kind === 'baguette') {
-    P.add(sphere(0.05, 10, 6), crust, { at: [x, y, z], scale: [3.4, 0.75, 0.85], rot: [0, R.float(-0.15, 0.15), 0] });
-    for (let i = -1; i <= 1; i++) P.add(softBox(0.06, 0.01, 0.018, 0.004), '#efd29a', { at: [x + i * 0.08, y + 0.032, z], rot: [0, 0.6, 0] });
+    add(sphere(0.05, 10, 6), crust, xform([0, 0, 0], [0, 0, 0], [3.4, 0.75, 0.85]));
+    for (let i = -1; i <= 1; i++) {
+      const x = i * 0.075, top = 0.0375 * Math.sqrt(Math.max(0, 1 - (x / 0.17) ** 2));
+      add(slash, '#f2d9a4', xform([x, top - 0.004, 0], [0, 0.7, 0], [1.6, 0.25, 0.42]));
+    }
   } else if (kind === 'bun') {
-    P.add(sphere(0.045, 8, 6), crust, { at: [x, y, z], scale: [1, 0.7, 1] });
+    add(sphere(0.045, 8, 6), shade(crust, 0.04), xform([0, 0, 0], [0, 0, 0], [1, 0.7, 1]));
   } else {
-    P.add(sphere(0.06, 10, 6), crust, { at: [x, y + 0.01, z], scale: [1.5, 0.85, 1.05] });
-    for (let i = -1; i <= 1; i++) P.add(softBox(0.012, 0.01, 0.07, 0.004), '#efd29a', { at: [x + i * 0.03, y + 0.058, z], rot: [0, 0.4, 0] });
+    add(sphere(0.06, 10, 6), crust, xform([0, 0.01, 0], [0, 0, 0], [1.5, 0.85, 1.05]));
+    for (let i = -1; i <= 1; i++) {
+      const x = i * 0.034, top = 0.01 + 0.051 * Math.sqrt(Math.max(0, 1 - (x / 0.09) ** 2));
+      add(slash, '#f2d9a4', xform([x, top - 0.004, 0], [0, 1.2, 0], [1.5, 0.25, 0.4]));
+    }
   }
 }
 
-function vase(P, R, at, color, i) {
+function vase(P, R, at, color, i, s = 1) {
   const shapes = [
     [[0, 0], [0.06, 0], [0.085, 0.06], [0.075, 0.14], [0.04, 0.19], [0.045, 0.22], [0.035, 0.225], [0, 0.2]],
     [[0, 0], [0.05, 0], [0.11, 0.05], [0.115, 0.08], [0.1, 0.09], [0, 0.07]],
@@ -879,42 +894,45 @@ function vase(P, R, at, color, i) {
     [[0, 0], [0.07, 0], [0.08, 0.03], [0.07, 0.11], [0.072, 0.13], [0.06, 0.135], [0, 0.12]],
   ];
   const prof = shapes[i % shapes.length];
-  paint(P, lathe(prof, 12), color, { at }, (c, x, y) => {
-    if (Math.abs(y - at[1] - 0.06) < 0.012) c.set(shade(color, 0.12));
+  paint(P, lathe(prof, 12), color, { at, scale: s }, (c, x, y) => {
+    if (Math.abs(y - at[1] - 0.06 * s) < 0.012 * s) c.set(shade(color, 0.12));
   }, { flat: true });
 }
 
-function toy(P, R, at, i) {
-  const [x, y, z] = at;
+function toy(P, R, at, i, s = 1) {
+  const M = xform(at, [0, R.float(-0.4, 0.4), 0], s);
+  const add = (g, c, local) => P.add(g, c, { matrix: M.clone().multiply(local) });
   const k = i % 4;
   if (k === 0) {
     // a beach ball: six colored gores
     const gores = ['#e9434c', '#f8f4ea', '#4f86c6', '#f8f4ea', '#f6cf3a', '#f8f4ea'];
-    paint(P, sphere(0.07, 12, 8), '#e9434c', { at: [x, y + 0.07, z], rot: [0.4, 0.3, 0] }, (c, px, py, pz) => {
-      const a = (Math.atan2(pz - z, px - x) / TAU + 0.5) * 6;
-      c.set(Math.abs(py - (y + 0.07)) > 0.062 ? '#f8f4ea' : gores[Math.floor(a) % 6]);
+    const B = M.clone().multiply(xform([0, 0.07, 0], [0.4, 0.3, 0]));
+    const inv = B.clone().invert(), q = new THREE.Vector3();
+    paint(P, sphere(0.07, 12, 8), '#e9434c', { matrix: B }, (c, px, py, pz) => {
+      q.set(px, py, pz).applyMatrix4(inv);
+      const a = (Math.atan2(q.z, q.x) / TAU + 0.5) * 6;
+      c.set(Math.abs(q.y) > 0.062 ? '#f8f4ea' : gores[Math.floor(a) % 6]);
     }, { flat: true });
   } else if (k === 1) {
     const cols = ['#4f86c6', '#f2c94c', '#5aa56a', '#ee8c3e'];
-    P.add(softBox(0.08, 0.08, 0.08, 0.012), cols[0], { at: [x - 0.045, y, z] });
-    P.add(softBox(0.08, 0.08, 0.08, 0.012), cols[1], { at: [x + 0.045, y, z + 0.01], rot: [0, 0.3, 0] });
-    P.add(softBox(0.08, 0.08, 0.08, 0.012), cols[2], { at: [x, y + 0.08, z], rot: [0, -0.2, 0] });
+    add(softBox(0.08, 0.08, 0.08, 0.012), cols[0], xform([-0.045, 0, 0]));
+    add(softBox(0.08, 0.08, 0.08, 0.012), cols[1], xform([0.045, 0, 0.01], [0, 0.3, 0]));
+    add(softBox(0.08, 0.08, 0.08, 0.012), cols[2], xform([0, 0.08, 0], [0, -0.2, 0]));
   } else if (k === 2) {
     const fur = '#c98a52';
-    P.add(sphere(0.06, 9, 6), fur, { at: [x, y + 0.06, z], scale: [1, 1.05, 0.9] });
-    P.add(sphere(0.05, 9, 6), fur, { at: [x, y + 0.15, z + 0.005] });
+    add(sphere(0.06, 9, 6), fur, xform([0, 0.06, 0], [0, 0, 0], [1, 1.05, 0.9]));
+    add(sphere(0.05, 9, 6), fur, xform([0, 0.15, 0.005]));
     for (const sx of [-1, 1]) {
-      P.add(sphere(0.02, 6, 4), fur, { at: [x + sx * 0.035, y + 0.195, z] });
-      P.add(sphere(0.022, 6, 4), fur, { at: [x + sx * 0.06, y + 0.07, z + 0.02] });
+      add(sphere(0.02, 6, 4), fur, xform([sx * 0.035, 0.195, 0]));
+      add(sphere(0.022, 6, 4), fur, xform([sx * 0.06, 0.07, 0.02]));
     }
-    P.add(sphere(0.018, 6, 4), '#f0d2a8', { at: [x, y + 0.14, z + 0.045] });
+    add(sphere(0.018, 6, 4), '#f0d2a8', xform([0, 0.14, 0.045]));
+    for (const sx of [-1, 1]) add(sphere(0.008, 5, 4), '#3a3440', xform([sx * 0.018, 0.165, 0.044]));
   } else {
-    rod(P, [x, y, z], [x, y + 0.26, z], 0.008, PALETTE.woodLight, { seg: 5 });
+    add(cyl(0.008, 0.26, { segments: 5 }), PALETTE.woodLight, xform([0, 0, 0]));
     const cols = ['#e9434c', '#4f86c6', '#f6cf3a', '#5aa56a'];
-    for (let j = 0; j < 4; j++) {
-      P.add(extrude([[0, 0], [0.07, 0.0], [0.0, 0.07]], 0.006, { bevel: 0.002, bevelSegments: 1 }), cols[j], { at: [x, y + 0.26, z + 0.012], rot: [0, 0, (j / 4) * TAU + 0.3] });
-    }
-    P.add(sphere(0.012, 6, 4), '#f4efe6', { at: [x, y + 0.26, z + 0.02] });
+    for (let j = 0; j < 4; j++) add(extrude([[0, 0], [0.07, 0.0], [0.0, 0.07]], 0.006, { bevel: 0.002, bevelSegments: 1 }), cols[j], xform([0, 0.26, 0.012], [0, 0, (j / 4) * TAU + 0.3]));
+    add(sphere(0.012, 6, 4), '#f4efe6', xform([0, 0.26, 0.02]));
   }
 }
 
@@ -1119,36 +1137,57 @@ function buildBarrel(p, ctx) {
 
 const SACK_STYLE = ['tied', 'open', 'lying'];
 
+/** A soft cloth lathe: vertices pushed in and out a little by noise (stronger above `crumple`). */
+function clothLathe(prof, segs, seed, { amp = 0.035, crumple = Infinity, crumpleAmp = 0.14 } = {}) {
+  const g = lathe(prof, segs);
+  const pos = g.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+    const a = y > crumple ? crumpleAmp : amp;
+    const n = noise3(x * 7 + seed, y * 7, z * 7 - seed);
+    pos.setX(i, x * (1 + a * n));
+    pos.setZ(i, z * (1 + a * n));
+  }
+  g.computeVertexNormals();
+  return g;
+}
+
+const SACK_UPRIGHT = [[0, 0], [0.15, 0], [0.2, 0.03], [0.222, 0.1], [0.226, 0.14], [0.227, 0.16], [0.227, 0.19], [0.225, 0.21], [0.205, 0.28], [0.16, 0.34], [0.095, 0.385], [0.062, 0.4]];
+const SACK_TOP = [[0.066, 0.412], [0.1, 0.44], [0.12, 0.47], [0.1, 0.497], [0.05, 0.507], [0, 0.502]];
+const SACK_OPEN = [[0, 0], [0.15, 0], [0.2, 0.03], [0.225, 0.1], [0.23, 0.14], [0.23, 0.16], [0.229, 0.19], [0.226, 0.21], [0.212, 0.27], [0.192, 0.31], [0.178, 0.33], [0.165, 0.322], [0, 0.31]];
+const SACK_LYING = [[0, -0.27], [0.08, -0.262], [0.13, -0.225], [0.15, -0.14], [0.155, -0.07], [0.155, -0.04], [0.155, 0.01], [0.155, 0.04], [0.15, 0.13], [0.12, 0.2], [0.075, 0.25], [0.048, 0.268], [0.07, 0.29], [0.075, 0.32], [0.045, 0.34], [0, 0.338]];
+
 function sackAt(P, R, at, color, style, yaw, s, seed) {
-  const M = xform(at, [0, yaw, 0], s);
-  const add = (g, look, local) => P.add(g, look, { matrix: M.clone().multiply(local) });
-  const stripe = shade(color, -0.2, { hue: -0.02 });
-  const band = (c, x, y, z) => {
-    const q = new THREE.Vector3(x, y, z).applyMatrix4(M.clone().invert());
-    const v = style === 'lying' ? q.x : q.y;
-    if (Math.abs(v - (style === 'lying' ? -0.05 : 0.2)) < 0.014 || Math.abs(v - (style === 'lying' ? 0.03 : 0.25)) < 0.014) c.set(stripe);
-    c.lerp(C(shade(color, -0.12)), clamp(noise3(q.x * 9 + seed, q.y * 9, q.z * 9) * 0.6, 0, 0.35));
-  };
-  if (style === 'lying') {
-    paint(P, blob(0.2, { detail: 2, amp: 0.05, seed, squash: [1.4, 0.58, 0.95], flatBottom: 0.72 }), { slot: 'cloth', color }, { matrix: M.clone().multiply(xform([0, 0.085, 0])) }, band);
-    add(blob(0.07, { detail: 1, amp: 0.2, seed: seed + 1, squash: [0.9, 0.8, 1] }), { slot: 'cloth', color: shade(color, 0.03) }, xform([0.3, 0.09, 0]));
-    add(ring(0.045, 0.012, { radial: 4, tubular: 12 }), '#a8865a', xform([0.255, 0.09, 0], [0, 0, Math.PI / 2]));
-    return 0.17 * s;
+  const lying = style === 'lying';
+  const M = lying ? xform(at, [0, yaw, 0], s).multiply(xform([0, 0.098, 0], [0, 0, -Math.PI / 2], [0.63, 1, 0.95])) : xform(at, [0, yaw, 0], s);
+  const inv = M.clone().invert(), q = new THREE.Vector3();
+  const print = C(shade(color, -0.24, { hue: -0.05, sat: -0.05 }));
+  const weave = C(shade(color, -0.07));
+  const prof = lying ? SACK_LYING : style === 'open' ? SACK_OPEN : [...SACK_UPRIGHT, ...SACK_TOP];
+  const bands = lying ? [[-0.07, -0.04], [0.01, 0.04]] : [[0.14, 0.16], [0.19, 0.21]];
+  const g = clothLathe(prof, 14, seed, { amp: 0.035, crumple: lying ? 0.26 : 0.405, crumpleAmp: 0.16 });
+  paint(P, g, { slot: 'cloth', color }, { matrix: M }, (c, x, y, z) => {
+    q.set(x, y, z).applyMatrix4(inv);
+    if (bands.some(([a, b]) => q.y > a && q.y < b)) c.copy(print);
+    else if (fract(q.y * 26 + 0.5 * (Math.floor(fract(0.25 - Math.atan2(q.z, q.x) / TAU) * 14) % 2)) < 0.5) c.lerp(weave, 0.5);
+  }, { flat: true });
+  const twine = '#a8865a';
+  if (lying) {
+    P.add(ring(0.05, 0.014, { radial: 4, tubular: 12 }), twine, { matrix: M.clone().multiply(xform([0, 0.27, 0])) });
+    return 0.19 * s;
   }
-  paint(P, blob(0.2, { detail: 2, amp: 0.06, seed, squash: [1, 1.12, 0.86], flatBottom: 0.72 }), { slot: 'cloth', color }, { matrix: M.clone().multiply(xform([0, 0.16, 0])) }, band);
   if (style === 'open') {
-    add(ring(0.15, 0.035, { radial: 6, tubular: 18 }), { slot: 'cloth', color: shade(color, 0.04) }, xform([0, 0.34, 0], [0, 0, 0], [1, 1, 0.88]));
-    add(blob(0.15, { detail: 1, amp: 0.1, seed: seed + 2, squash: [1, 0.35, 0.86] }), '#e8cf86', xform([0, 0.345, 0]));
-    return 0.4 * s;
+    P.add(ring(0.18, 0.032, { radial: 6, tubular: 20 }), { slot: 'cloth', color: shade(color, 0.03) }, { matrix: M.clone().multiply(xform([0, 0.335, 0])) });
+    P.add(blob(0.16, { detail: 1, amp: 0.08, seed: seed + 2, squash: [1, 0.3, 1] }), '#efd38c', { matrix: M.clone().multiply(xform([0, 0.335, 0])) });
+    P.add(sphere(0.05, 7, 5), '#b7895a', { matrix: M.clone().multiply(xform([0.05, 0.37, 0.03], [0.4, 0, 0.3], [1, 0.45, 0.8])) });
+    return 0.38 * s;
   }
-  add(blob(0.13, { detail: 1, amp: 0.08, seed: seed + 3, squash: [1, 0.75, 0.9] }), { slot: 'cloth', color }, xform([0, 0.33, 0]));
-  add(ring(0.052, 0.014, { radial: 4, tubular: 12 }), '#a8865a', xform([0, 0.4, 0]));
-  add(blob(0.075, { detail: 1, amp: 0.3, seed: seed + 4, squash: [1.25, 0.75, 1.15] }), { slot: 'cloth', color: shade(color, 0.03) }, xform([0, 0.445, 0]));
+  P.add(ring(0.066, 0.017, { radial: 5, tubular: 14 }), twine, { matrix: M.clone().multiply(xform([0, 0.402, 0])) });
   return 0.5 * s;
 }
 
 function buildSack(p, ctx) {
-  const color = colorOr(p.color, '#d9c18f');
+  const color = colorOr(p.color, '#e2cc9c');
   const style = oneOf(p.style, SACK_STYLE, 'tied');
   const count = int(p.count, 1, 1, 3);
   const R = rand(ctx, 'sack');
@@ -1157,7 +1196,7 @@ function buildSack(p, ctx) {
   if (style === 'lying' && count > 1) lay.forEach((l, i) => { l[0] *= 0.1; l[2] = (i - (count - 1) / 2) * 0.36; });
   lay.forEach(([x, y, z], i) => sackAt(P, R, [x, y, z], shade(color, R.float(-0.04, 0.03)), style, style === 'lying' ? R.float(-0.12, 0.12) : R.angle(), R.float(0.92, 1.06), R.int(0, 999)));
   const spots = { side: spot([0, 0, 0.6], 180, 'stand') };
-  if (style === 'lying') spots.sit = spot([0, 0.17, 0.06], 0, 'sit');
+  if (style === 'lying') spots.sit = spot([0, 0.19, 0.04], 0, 'sit');
   return finish(P.build('sack'), { footprint: { r: count === 1 ? 0.28 : 0.5 }, spots });
 }
 
@@ -1171,7 +1210,7 @@ let daisyGeo = null;
 function daisyHead() {
   if (daisyGeo) return daisyGeo;
   const pts = [];
-  const n = 8, steps = 4;
+  const n = 8, steps = 6;
   for (let i = 0; i < n * steps; i++) {
     const a = (i / (n * steps)) * TAU;
     const lobe = Math.abs(Math.cos((a * n) / 2));
@@ -1213,15 +1252,17 @@ function plant(P, R, kind, at, color, k = 1, season = 'summer') {
     for (let i = 0; i < 6; i++) {
       const a = (i / 6) * TAU + R.float(-0.2, 0.2), r = i === 0 ? 0 : 0.065 * k;
       const top = stem(x0 + Math.cos(a) * r * 0.5, z0 + Math.sin(a) * r * 0.5, (0.13 + R.float(0, 0.05)) * k, [Math.cos(a) * r * 0.5, Math.sin(a) * r * 0.5]);
-      P.add(daisyHead(), { slot: 'foliage', color }, { at: top, rot: [R.float(-0.3, 0.3), R.angle(), R.float(-0.3, 0.3)], scale: k });
-      P.add(sphere(0.017, 6, 4), { slot: 'foliage', color: '#f6c93a' }, { at: [top[0], top[1] + 0.008 * k, top[2]], scale: [k, 0.6 * k, k] });
+      P.add(daisyHead(), { slot: 'foliage', color }, { at: top, rot: [R.float(-0.3, 0.3), R.angle(), R.float(-0.3, 0.3)], scale: k * 1.25 });
+      P.add(sphere(0.02, 7, 5), { slot: 'foliage', color: '#f6c93a' }, { at: [top[0], top[1] + 0.01 * k, top[2]], scale: [k, 0.6 * k, k] });
     }
   } else if (kind === 'rose') {
-    P.add(blob(0.12 * k, { detail: 2, amp: 0.2, seed: R.int(0, 99), squash: [1, 0.9, 1] }), { slot: 'foliage', color: '#4f9a4c' }, { at: [x0, y0 + 0.1 * k, z0] });
-    for (let i = 0; i < 6; i++) {
-      const a = (i / 6) * TAU + R.float(-0.3, 0.3), up = R.float(0.2, 0.9);
-      const d = new THREE.Vector3(Math.cos(a) * (1 - up * 0.6), up, Math.sin(a) * (1 - up * 0.6)).normalize().multiplyScalar(0.115 * k);
-      P.add(blob(0.034 * k, { detail: 1, amp: 0.25, seed: i + 7, squash: [1, 0.85, 1] }), { slot: 'foliage', color: shade(color, R.float(-0.06, 0.04)) }, { at: [x0 + d.x, y0 + 0.1 * k + d.y, z0 + d.z] });
+    P.add(blob(0.11 * k, { detail: 2, amp: 0.16, seed: R.int(0, 99), squash: [1, 0.85, 1] }), { slot: 'foliage', color: '#4f9a4c' }, { at: [x0, y0 + 0.09 * k, z0] });
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 7) * TAU + R.float(-0.3, 0.3), up = i === 7 ? 1 : R.float(0.15, 0.75);
+      const d = new THREE.Vector3(Math.cos(a) * (1 - up * 0.7), up, Math.sin(a) * (1 - up * 0.7)).normalize().multiplyScalar(0.11 * k);
+      const c = shade(color, R.float(-0.05, 0.04));
+      P.add(sphere(0.036 * k, 8, 6), { slot: 'foliage', color: c }, { at: [x0 + d.x, y0 + 0.09 * k + d.y, z0 + d.z], scale: [1, 0.85, 1] });
+      P.add(sphere(0.016 * k, 6, 4), { slot: 'foliage', color: shade(c, -0.1) }, { at: [x0 + d.x * 1.25, y0 + 0.09 * k + d.y * 1.25, z0 + d.z * 1.25] });
     }
   } else if (kind === 'sunflower') {
     for (let i = 0; i < 2; i++) {
@@ -1267,7 +1308,7 @@ function buildPot(p, ctx) {
   const prof = [[0, 0], [0.105, 0], [0.115, 0.012], [0.145, 0.19], [0.17, 0.19], [0.178, 0.205], [0.175, 0.255], [0.162, 0.262], [0.148, 0.255], [0.135, 0.22], [0, 0.22]];
   paint(P, lathe(prof, 18), potColor, { scale: k }, (c, x, y) => { if (y > 0.185 * k) c.set(shade(potColor, 0.06)); else c.lerp(C(shade(potColor, -0.08)), 1 - y / (0.19 * k)); });
   P.add(blob(0.14, { detail: 1, amp: 0.12, seed: 4, squash: [1, 0.25, 1] }), '#6b4a32', { at: [0, 0.225 * k, 0], scale: k });
-  if (kind !== 'none') plant(P, R, kind, [0, 0.235 * k, 0], color, k, seasonOf(ctx));
+  if (kind !== 'none') plant(P, R, kind, [0, 0.235 * k, 0], color, k * 1.35, seasonOf(ctx));
   return finish(P.build('pot'), { footprint: { r: 0.2 * k }, spots: { tend: spot([0, 0, 0.2 * k + 0.32], 180, 'kneel') } });
 }
 
@@ -1276,14 +1317,14 @@ const BUCKET_FILL = ['empty', 'water', 'apples', 'fish', 'flowers', 'sand'];
 function buildBucket(p, ctx) {
   const tin = oneOf(p.style, ['wood', 'tin'], 'wood') === 'tin';
   const fill = oneOf(p.contents, BUCKET_FILL, 'water');
-  const color = colorOr(p.color, tin ? '#aeb6bf' : PALETTE.woodLight);
+  const color = colorOr(p.color, tin ? '#c9d0d7' : PALETTE.woodLight);
   const R = rand(ctx, 'bucket');
   const P = new Parts();
   const h = 0.28, r = 0.15;
   pail(P, R, { h, r, tin, color });
   const lv = h - 0.05;
   if (fill === 'water') waterDisc(P, r - 0.025, lv, { segs: 16 });
-  else if (fill === 'apples') fruitHeap(P, R, 'apple', { at: [0, lv - 0.04, 0], rx: r - 0.04, rz: r - 0.04, r: 0.055, layers: 2 });
+  else if (fill === 'apples') fruitHeap(P, R, 'apple', { at: [0, lv - 0.01, 0], rx: r - 0.035, rz: r - 0.035, r: 0.058, layers: 2 });
   else if (fill === 'fish') {
     P.add(new THREE.CircleGeometry(r - 0.025, 14).rotateX(-Math.PI / 2), '#9cc8d8', { at: [0, lv - 0.03, 0] });
     for (let i = 0; i < 2; i++) fish(P, R, [i ? 0.03 : -0.03, lv + 0.02 * i, 0], R.pick(['#8aa3b8', '#f29b84']), 1, Math.PI / 2 + (i ? 0.6 : -0.4));
@@ -1425,13 +1466,13 @@ function buildNoticeboard(p, ctx) {
   const P = new Parts();
   const W = 1.24, y0 = 0.62, h = 0.78;
   for (const x of [-W / 2 + 0.02, W / 2 - 0.02]) {
-    P.add(softBox(0.1, y0 + h + 0.34, 0.1, 0.025), shade(wood, -0.05), { at: [x, 0, -0.01] });
+    P.add(softBox(0.1, y0 + h + 0.42, 0.1, 0.025), shade(wood, -0.05), { at: [x, 0, -0.01] });
     P.add(softBox(0.15, 0.06, 0.15, 0.022), shade(wood, -0.15), { at: [x, 0, -0.01] });
   }
   P.add(softBox(W - 0.04, h, 0.06, 0.02), wood, { at: [0, y0, 0] });
   paint(P, softBox(W - 0.18, h - 0.14, 0.03, 0.008), '#cf9f68', { at: [0, y0 + 0.07, 0.03] }, (c, x, y) => c.lerp(C('#b98754'), clamp(noise3(x * 14, y * 14, 3) * 0.8, 0, 0.5)));
   // little gabled roof
-  const ry = y0 + h + 0.3, pitch = 0.5, half = 0.24;
+  const ry = y0 + h + 0.4, pitch = 0.5, half = 0.24;
   for (const sd of [-1, 1]) {
     P.add(softBox(W + 0.24, 0.05, half * 2 / Math.cos(pitch) * 0.55, 0.02), roof, { matrix: xform([0, ry - Math.sin(pitch) * half * 0.5, sd * half * 0.5], [sd * pitch, 0, 0]) });
   }
@@ -1439,7 +1480,7 @@ function buildNoticeboard(p, ctx) {
   if (title) {
     const tw = 0.74, th = 0.17;
     P.add(softBox(tw + 0.06, th + 0.06, 0.04, 0.015), shade(wood, -0.12), { at: [0, y0 + h - 0.005, 0.02] });
-    P.add(new THREE.PlaneGeometry(tw, th), label(title, { bg: '#f6ecd3', fg: '#5a3a22', width: Math.round((160 * tw) / th), height: 160 }), { at: [0, y0 + h + th / 2 + 0.025, 0.041] });
+    P.add(new THREE.PlaneGeometry(tw, th), label(title, { bg: '#fbf3e0', fg: '#5a3a22', width: Math.round((160 * tw) / th), height: 160 }), { at: [0, y0 + h + th / 2 + 0.025, 0.041] });
   }
   // pinned papers with scribbled lines and a round pin
   const cols = ['#fbf3df', '#fde0e4', '#dcefe0', '#dbe8f6', '#fbefb4', '#efe2f7'];
@@ -1580,7 +1621,7 @@ function stoneRun(P, R, color, x0, x1) {
 
 function fenceGate(P, R, style, color, gw) {
   const leaf = style === 'stone' ? 'picket' : style;
-  const c = style === 'stone' ? '#c08a55' : color;
+  const c = style === 'stone' ? PALETTE.wood : color;
   const x0 = -gw / 2 + 0.07, x1 = gw / 2 - 0.07;
   if (leaf === 'picket') {
     for (const y of [0.12, 0.38]) P.add(softBox(x1 - x0, 0.055, 0.03, 0.01), shade(c, -0.06), { at: [0, y, -0.032] });
@@ -1611,7 +1652,7 @@ function buildFence(p, ctx) {
   const gate = flag(p.gate, false) && L >= 1.7;
   const R = rand(ctx, 'fence');
   const P = new Parts();
-  const gw = 0.94;
+  const gw = style === 'stone' ? 1.14 : 0.94;
   const runs = gate ? [[-L / 2, -gw / 2], [gw / 2, L / 2]] : [[-L / 2, L / 2]];
   for (const [a, b] of runs) {
     if (style === 'stone') {
@@ -1640,6 +1681,1056 @@ function buildFence(p, ctx) {
   };
   if (gate) { spots.gate = spot([0, 0, 0.55], 180, 'stand'); spots['gate-back'] = spot([0, 0, -0.55], 0, 'stand'); }
   return finish(P.build('fence'), { footprint: { w: L + 0.1, d: style === 'stone' ? 0.46 : 0.26 }, spots });
+}
+
+/* ───────────────────────── tables and seats ───────────────────────── */
+
+const TABLE_SHAPES = ['round', 'square', 'long'];
+const TABLE_ITEMS = ['none', 'tea', 'meal', 'flowers', 'lantern'];
+
+function teapot(P, at, color) {
+  const [x, y, z] = at;
+  P.add(lathe([[0, 0], [0.05, 0], [0.075, 0.03], [0.08, 0.06], [0.065, 0.1], [0.035, 0.115], [0, 0.115]], 12), color, { at });
+  P.add(sphere(0.016, 6, 4), shade(color, -0.1), { at: [x, y + 0.122, z] });
+  rod(P, [x + 0.06, y + 0.035, z], [x + 0.115, y + 0.1, z], 0.012, color, { seg: 6, top: 0.008 });
+  P.add(arcTube(0.035, 0.009, -Math.PI / 2, Math.PI / 2, { radial: 4, segments: 8 }), color, { at: [x - 0.072, y + 0.06, z], rot: [0, Math.PI, 0] });
+}
+function cup(P, at, color, saucer = true) {
+  const [x, y, z] = at;
+  if (saucer) P.add(lathe([[0, 0], [0.05, 0], [0.058, 0.008], [0.05, 0.01], [0, 0.006]], 12), '#f6f1e6', { at });
+  P.add(lathe([[0, 0], [0.025, 0], [0.034, 0.045], [0.03, 0.046], [0.022, 0.008], [0, 0.008]], 10), color, { at: [x, y + 0.008, z] });
+  P.add(new THREE.CircleGeometry(0.027, 8).rotateX(-Math.PI / 2), '#a8673a', { at: [x, y + 0.04, z] });
+}
+function plate(P, at, food, R) {
+  const [x, y, z] = at;
+  P.add(lathe([[0, 0], [0.07, 0], [0.095, 0.014], [0.088, 0.016], [0.06, 0.006], [0, 0.006]], 14), '#f6f1e6', { at });
+  if (food === 'cake') {
+    P.add(extrude([[0, 0], [0.07, -0.035], [0.07, 0.035]], 0.05, { bevel: 0.006, bevelSegments: 1 }), '#f4e4c8', { at: [x - 0.03, y + 0.032, z], rot: [Math.PI / 2, 0, R.float(0, 6)] });
+    P.add(sphere(0.014, 6, 4), '#e2473f', { at: [x + 0.005, y + 0.068, z] });
+  } else if (food === 'sandwich') {
+    for (let i = 0; i < 2; i++) {
+      const M = xform([x + (i ? 0.03 : -0.03), y + 0.012, z + (i ? -0.01 : 0.01)], [0, R.float(0, 6), 0]);
+      P.add(extrude([[0, 0.05], [-0.045, -0.03], [0.045, -0.03]], 0.035, { bevel: 0.006, bevelSegments: 1 }), '#f2dcaa', { matrix: M.clone().multiply(xform([0, 0.024, 0], [Math.PI / 2, 0, 0])) });
+      P.add(extrude([[0, 0.054], [-0.05, -0.034], [0.05, -0.034]], 0.008, { bevel: 0.003, bevelSegments: 1 }), '#7cc45c', { matrix: M.clone().multiply(xform([0, 0.025, 0], [Math.PI / 2, 0, 0])) });
+    }
+  } else {
+    for (let i = 0; i < 5; i++) P.add(sphere(0.022, 6, 4), i % 2 ? '#e2473f' : '#f6cf3a', { at: [x + Math.cos(i * 1.3) * 0.035, y + 0.025, z + Math.sin(i * 1.3) * 0.035] });
+  }
+}
+function tableLantern(P, at) {
+  const [x, y, z] = at;
+  P.add(roundCyl(0.055, 0.025, { segments: 8, steps: 1, bevel: 0.01 }), PALETTE.iron, { at });
+  P.add(roundCyl(0.042, 0.11, { segments: 8, steps: 1, bevel: 0.01 }), { slot: 'lamp', color: '#fff0c8' }, { at: [x, y + 0.022, z] });
+  for (let i = 0; i < 4; i++) { const a = (i / 4) * TAU + Math.PI / 4; P.add(box(0.012, 0.11, 0.012), PALETTE.iron, { at: [x + Math.cos(a) * 0.045, y + 0.022, z + Math.sin(a) * 0.045] }); }
+  P.add(cone(0.065, 0.06, 8), PALETTE.iron, { at: [x, y + 0.13, z] });
+  P.add(arcTube(0.025, 0.006, 0, Math.PI, { radial: 4, segments: 8 }), PALETTE.iron, { at: [x, y + 0.19, z] });
+}
+
+/** A table into P; returns its top height and size. */
+function addTable(P, R, { shape = 'round', wood = PALETTE.woodLight, cloth = null, items = 'none', at = [0, 0, 0] } = {}) {
+  const [x0, , z0] = at;
+  const H = SCALE.table;
+  let w, d;
+  const leg = deeper(wood, 0.14);
+  if (shape === 'round') {
+    // a cafe table: a round top with a darker edge band on a slim column and four curved feet
+    w = d = 0.86;
+    P.add(roundCyl(0.43, 0.045, { segments: 24, steps: 2, bevel: 0.018 }), wood, { at: [x0, H - 0.045, z0] });
+    P.add(roundCyl(0.415, 0.022, { segments: 24, steps: 1, bevel: 0.008 }), deeper(wood, 0.07), { at: [x0, H - 0.058, z0] });
+    P.add(roundCyl(0.13, 0.03, { segments: 12, steps: 1, bevel: 0.01 }), leg, { at: [x0, H - 0.075, z0] });
+    P.add(cyl(0.034, H - 0.1, { segments: 10 }), leg, { at: [x0, 0.04, z0] });
+    P.add(lathe([[0.075, 0], [0.08, 0.02], [0.05, 0.06], [0, 0.065]], 10), leg, { at: [x0, 0, z0] });
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * TAU + Math.PI / 4;
+      plank(P, [x0 + Math.cos(a) * 0.04, 0.045, z0 + Math.sin(a) * 0.04], [x0 + Math.cos(a) * 0.27, 0.022, z0 + Math.sin(a) * 0.27], 0.05, 0.032, leg);
+      P.add(roundCyl(0.032, 0.022, { segments: 8, steps: 1, bevel: 0.008 }), leg, { at: [x0 + Math.cos(a) * 0.27, 0, z0 + Math.sin(a) * 0.27] });
+    }
+  } else {
+    w = shape === 'long' ? 1.5 : 0.8; d = shape === 'long' ? 0.72 : 0.8;
+    P.add(softBox(w, 0.055, d, 0.022), wood, { at: [x0, H - 0.055, z0] });
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) P.add(taperBox(0.065, H - 0.05, 0.065, 0.016, 1.25), leg, { at: [x0 + sx * (w / 2 - 0.08), 0, z0 + sz * (d / 2 - 0.08)] });
+      P.add(softBox(0.03, 0.06, d - 0.2, 0.01), leg, { at: [x0 + sx * (w / 2 - 0.08), H - 0.11, z0] });
+    }
+    for (const sz of [-1, 1]) P.add(softBox(w - 0.2, 0.06, 0.03, 0.01), leg, { at: [x0, H - 0.11, z0 + sz * (d / 2 - 0.08)] });
+  }
+  let top = H;
+  if (cloth) {
+    // a draped cloth: flat on top, falling in soft folds with a wavy hem
+    const look = { slot: 'cloth', color: cloth, double: true };
+    const drop = 0.2;
+    let g;
+    if (shape === 'round') {
+      g = lathe([[0.5, H - drop], [0.49, H - drop * 0.7], [0.475, H - drop * 0.35], [0.46, H - 0.015], [0.445, H + 0.006], [0, H + 0.008]], 32);
+    } else {
+      // a box-shaped drape: the top and four hanging sides, subdivided so they can fold
+      g = new THREE.BoxGeometry(w + 0.05, drop, d + 0.05, Math.round(w * 14), 3, Math.round(d * 14)).translate(0, H - drop / 2 + 0.008, 0);
+      const ix = g.index.array, keep = [];
+      for (let i = 0; i < ix.length; i += 3) {
+        let low = 0;
+        for (let k = 0; k < 3; k++) if (g.attributes.position.getY(ix[i + k]) < H - drop + 0.009 + 0.001) low++;
+        if (low < 3) keep.push(ix[i], ix[i + 1], ix[i + 2]);
+      }
+      g.setIndex(keep);
+    }
+    const pos = g.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+      const hang = clamp((H - y) / drop, 0, 1);
+      if (hang <= 0) continue;
+      const a = Math.atan2(z, x);
+      const fold = Math.sin(a * 9 + x * 9 + z * 9) * 0.02 * hang;
+      const out = 0.025 * hang * hang;
+      const len = Math.hypot(x, z) || 1;
+      pos.setX(i, x + (x / len) * (fold + out));
+      pos.setZ(i, z + (z / len) * (fold + out));
+    }
+    g.computeVertexNormals();
+    P.add(g, look, { at: [x0, 0, z0] });
+    top += 0.009;
+  }
+  const y = top;
+  if (items === 'tea') {
+    teapot(P, [x0 - 0.08, y, z0 - 0.06], '#f1e3c8');
+    cup(P, [x0 + 0.15, y, z0 + 0.12], '#f6f1e6');
+    cup(P, [x0 + 0.13, y, z0 - 0.17], '#f6f1e6');
+    P.add(lathe([[0, 0], [0.03, 0], [0.04, 0.035], [0.035, 0.045], [0, 0.045]], 10), '#9fc7e8', { at: [x0 + 0.05, y, z0 + 0.14] });
+  } else if (items === 'meal') {
+    const off = shape === 'long' ? 0.3 : 0.17;
+    plate(P, [x0 - off, y, z0 + 0.12], 'sandwich', R);
+    plate(P, [x0 + off, y, z0 - 0.12], 'cake', R);
+    plate(P, [x0 + (shape === 'long' ? -0.05 : 0.12), y, z0 + 0.16], 'fruit', R);
+    for (const [gx, gz] of [[0.02, -0.14], [-0.12, -0.12]]) {
+      P.add(cyl(0.026, 0.08, { segments: 10 }), { slot: 'clear', color: '#e6f3f7', opacity: 0.5 }, { at: [x0 + gx, y, z0 + gz] });
+      P.add(cyl(0.022, 0.055, { segments: 10 }), '#f4a43a', { at: [x0 + gx, y + 0.004, z0 + gz] });
+    }
+  } else if (items === 'flowers') {
+    P.add(lathe([[0, 0], [0.04, 0], [0.055, 0.05], [0.035, 0.1], [0.04, 0.12], [0, 0.11]], 12), '#9fc7e8', { at: [x0, y, z0] });
+    bouquet(P, R, [x0, y + 0.1, z0], R.pick(['#e9434c', '#f49ac1', '#f6cf3a', '#a57fd9']), 7, 0.08);
+  } else if (items === 'lantern') {
+    tableLantern(P, [x0, y, z0]);
+  }
+  return { top, w, d, lights: items === 'lantern' ? [light([x0, y + 0.08, z0], { intensity: 0.6, distance: 4 })] : [] };
+}
+
+function tableSpots(w, d, at = [0, 0, 0]) {
+  const [x, , z] = at;
+  return {
+    front: spot([x, 0, z + d / 2 + 0.42], 180, 'stand'), back: spot([x, 0, z - d / 2 - 0.42], 0, 'stand'),
+    left: spot([x + w / 2 + 0.42, 0, z], 270, 'stand'), right: spot([x - w / 2 - 0.42, 0, z], 90, 'stand'),
+  };
+}
+
+function buildTable(p, ctx) {
+  const shape = oneOf(p.shape, TABLE_SHAPES, 'round');
+  const wood = colorOr(p.color, PALETTE.woodLight);
+  const cloth = colorOr(p.cloth, null);
+  const items = oneOf(p.items, TABLE_ITEMS, 'none');
+  const R = rand(ctx, 'table');
+  const P = new Parts();
+  const t = addTable(P, R, { shape, wood, cloth, items });
+  return finish(P.build('table'), { footprint: shape === 'round' ? { r: 0.46 } : { w: t.w + 0.06, d: t.d + 0.06 }, spots: tableSpots(t.w, t.d), lights: t.lights });
+}
+
+const CHAIR_STYLES = ['wood', 'cafe'];
+
+function buildChair(p, ctx) {
+  const style = oneOf(p.style, CHAIR_STYLES, 'wood');
+  const color = colorOr(p.color, style === 'cafe' ? '#2f6a5a' : PALETTE.wood);
+  const cushion = colorOr(p.cushion, null);
+  const P = new Parts();
+  const seat = SCALE.seat;
+  let top = seat, front;
+  const dark = shade(color, -0.1);
+  if (style === 'cafe') {
+    const m = { slot: 'metal', color };
+    P.add(roundCyl(0.19, 0.035, { segments: 18, steps: 1, bevel: 0.014 }), m, { at: [0, seat - 0.035, 0] });
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * TAU + Math.PI / 4;
+      rod(P, [Math.cos(a) * 0.12, seat - 0.03, Math.sin(a) * 0.12], [Math.cos(a) * 0.17, 0, Math.sin(a) * 0.17], 0.014, m, { seg: 6 });
+    }
+    P.add(ring(0.14, 0.009, { radial: 4, tubular: 20 }), m, { at: [0, 0.07, 0] });
+    // a hooped backrest: two back legs rising into a curved band
+    for (const sx of [-1, 1]) rod(P, [sx * 0.13, seat - 0.01, -0.12], [sx * 0.15, seat + 0.36, -0.17], 0.013, m, { seg: 6 });
+    P.add(arcTube(0.2, 0.016, Math.PI * 0.15, Math.PI * 0.85, { radial: 5, segments: 14 }), m, { at: [0, seat + 0.32, -0.05], rot: [-Math.PI / 2 + 0.25, 0, 0] });
+    for (const x of [-0.06, 0.06]) rod(P, [x, seat, -0.14], [x, seat + 0.36, -0.235], 0.009, m, { seg: 5 });
+    front = 0.19;
+  } else {
+    P.add(softBox(0.4, 0.05, 0.37, 0.02), color, { at: [0, seat - 0.05, 0] });
+    for (const sx of [-1, 1]) {
+      P.add(softBox(0.05, seat - 0.05, 0.05, 0.014), dark, { at: [sx * 0.16, 0, 0.14] });
+      P.add(softBox(0.05, seat + 0.42, 0.05, 0.014), dark, { at: [sx * 0.16, 0, -0.15], rot: [-0.06, 0, 0] });
+    }
+    for (const [y, h] of [[seat + 0.16, 0.06], [seat + 0.33, 0.09]]) P.add(softBox(0.36, h, 0.035, 0.014), color, { at: [0, y, -0.15 - (y + h / 2) * 0.06 + 0.008], rot: [-0.06, 0, 0] });
+    for (const sx of [-1, 1]) P.add(sphere(0.03, 8, 6), dark, { at: [sx * 0.16, seat + 0.43, -0.15 - (seat + 0.42) * 0.06] });
+    P.add(softBox(0.32, 0.03, 0.03, 0.01), dark, { at: [0, 0.07, 0.14] });
+    front = 0.185;
+  }
+  if (cushion) {
+    const look = { slot: 'cloth', color: cushion };
+    if (style === 'cafe') P.add(roundCyl(0.17, 0.045, { segments: 16, steps: 2, bevel: 0.02 }), look, { at: [0, seat - 0.005, 0] });
+    else P.add(softBox(0.35, 0.045, 0.32, 0.02), look, { at: [0, seat - 0.005, 0.01] });
+    top += 0.04;
+  }
+  return finish(P.build('chair'), { footprint: { w: 0.42, d: 0.42 }, spots: { seat: spot([0, top, front - 0.12], 0, 'sit') } });
+}
+
+function buildStool(p, ctx) {
+  const H = num(p.height, 0.24, 0.15, 0.55);
+  const color = colorOr(p.color, PALETTE.wood);
+  const cushion = colorOr(p.cushion, null);
+  const P = new Parts();
+  const dark = shade(color, -0.12);
+  P.add(roundCyl(0.17, 0.055, { segments: 16, steps: 2, bevel: 0.02 }), color, { at: [0, H - 0.055, 0] });
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * TAU + Math.PI / 6;
+    rod(P, [Math.cos(a) * 0.09, H - 0.05, Math.sin(a) * 0.09], [Math.cos(a) * 0.15, 0, Math.sin(a) * 0.15], 0.024, dark, { seg: 7, soft: true });
+  }
+  if (H > 0.3) P.add(ring(0.12, 0.012, { radial: 4, tubular: 18 }), dark, { at: [0, H * 0.38, 0] });
+  let top = H;
+  if (cushion) { P.add(roundCyl(0.155, 0.045, { segments: 14, steps: 2, bevel: 0.02 }), { slot: 'cloth', color: cushion }, { at: [0, H - 0.005, 0] }); top += 0.04; }
+  return finish(P.build('stool'), { footprint: { r: 0.2 }, spots: { seat: spot([0, top, 0.05], 0, 'sit') } });
+}
+
+function buildParasol(p, ctx) {
+  const color = colorOr(p.color, PALETTE.cloth.teal);
+  const stripes = flag(p.stripes, true);
+  const H = num(p.height, 1.75, 1.4, 2.4);
+  const withTable = flag(p.table, false);
+  const R = rand(ctx, 'parasol');
+  const P = new Parts();
+  const cream = '#f6efe2';
+  P.add(roundCyl(0.19, 0.06, { segments: 14, steps: 1, bevel: 0.02 }), '#5d636c', { at: [0, 0, 0] });
+  P.add(roundCyl(0.06, 0.05, { segments: 10, steps: 1, bevel: 0.015 }), '#6b7079', { at: [0, 0.055, 0] });
+  P.add(cyl(0.024, H - 0.05, { segments: 10 }), '#f0ebe1', { at: [0, 0.05, 0] });
+  // canopy: eight panels, double-sided cloth, with a scalloped valance
+  const Rc = 0.98, rimY = H - 0.32;
+  const prof = [[Rc, rimY], [Rc * 0.82, rimY + 0.1], [Rc * 0.56, rimY + 0.21], [Rc * 0.3, rimY + 0.28], [0.07, rimY + 0.32], [0, rimY + 0.325]];
+  const segs = 16;
+  paint(P, lathe(prof, segs), { slot: 'cloth', color, double: true }, {}, (c, x, y, z) => {
+    const seg = Math.floor(fract(0.25 - Math.atan2(z, x) / TAU) * segs);
+    c.set(stripes ? (Math.floor(seg / 2) % 2 ? cream : color) : color);
+  }, { flat: true });
+  for (let i = 0; i < 16; i++) {
+    const a = ((i + 0.5) / 16) * TAU;
+    const wv = 2 * Rc * Math.sin(Math.PI / 16);
+    P.add(scallop(), { slot: 'cloth', color: stripes ? (Math.floor(i / 2) % 2 ? cream : color) : shade(color, -0.06) }, { at: [Math.sin(a) * Rc * Math.cos(Math.PI / 16), rimY + 0.005, Math.cos(a) * Rc * Math.cos(Math.PI / 16)], rot: [0, a, 0], scale: [wv, wv * 0.7, 1] });
+  }
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * TAU;
+    rod(P, [0, rimY + 0.06, 0], [Math.sin(a) * Rc * 0.9, rimY + 0.015, Math.cos(a) * Rc * 0.9], 0.008, '#f0ebe1', { seg: 4 });
+  }
+  P.add(sphere(0.04, 10, 7), '#f0ebe1', { at: [0, rimY + 0.36, 0] });
+  let lights = [], spots = { shade: spot([0.3, 0, 0.62], 200, 'stand') };
+  if (withTable) {
+    const t = addTable(P, R, { shape: 'round', wood: PALETTE.woodLight, items: 'none' });
+    spots = tableSpots(t.w, t.d);
+  }
+  return finish(P.build('parasol'), { footprint: { r: withTable ? 0.5 : 0.22 }, spots, lights, height: H + 0.05 });
+}
+
+/* ───────────────────────── picnic ───────────────────────── */
+
+function hamper(P, at, yaw, color = '#c99a5b') {
+  const M = xform(at, [0, yaw, 0]);
+  const w = 0.34, h = 0.2, d = 0.24;
+  const g = new THREE.BoxGeometry(w, h, d, 6, 4, 4).translate(0, h / 2, 0);
+  const dark = C(shade(color, -0.14)), light = C(shade(color, 0.04));
+  const inv = M.clone().invert(), q = new THREE.Vector3();
+  paint(P, g, color, { matrix: M }, (c, x, y, z) => {
+    q.set(x, y, z).applyMatrix4(inv);
+    const i = Math.floor((q.x / w + 0.5) * 6), j = Math.floor((q.y / h) * 4), k = Math.floor((q.z / d + 0.5) * 4);
+    c.copy((i + j + k) % 2 ? dark : light);
+  }, { flat: true });
+  for (const sz of [-1, 1]) P.add(softBox(w + 0.02, 0.03, d / 2 + 0.01, 0.012), shade(color, -0.06), { matrix: M.clone().multiply(xform([0, h, sz * d / 4], [sz * 0.08, 0, 0])) });
+  P.add(arcTube(0.1, 0.012, 0, Math.PI, { radial: 4, segments: 10 }), shade(color, -0.1), { matrix: M.clone().multiply(xform([0, h + 0.03, 0])) });
+  P.add(softBox(w + 0.025, 0.04, 0.02, 0.008), PALETTE.cloth.red, { matrix: M.clone().multiply(xform([0, h * 0.45, d / 2])) });
+}
+
+function buildPicnic(p, ctx) {
+  const color = colorOr(p.color, PALETTE.cloth.red);
+  const W = size(p.size, 1.6, 1, 3);
+  const D = W * 0.8;
+  const basket = flag(p.basket, true);
+  const food = flag(p.food, true);
+  const R = rand(ctx, 'picnic');
+  const P = new Parts();
+  const n = Math.max(4, Math.round(W / 0.2));
+  const g = new THREE.PlaneGeometry(W, D, n, Math.round(n * 0.8)).rotateX(-Math.PI / 2);
+  const pos = g.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), z = pos.getZ(i);
+    const edge = Math.max(Math.abs(x) / (W / 2), Math.abs(z) / (D / 2));
+    pos.setY(i, 0.012 + 0.008 * noise3(x * 3, 1.3, z * 3) - 0.008 * smooth(0.9, 1, edge));
+  }
+  g.computeVertexNormals();
+  const A = C(color), Mx = C(mix(color, '#f8f4ea', 0.55)), Wh = C('#f8f4ea');
+  const ci = (x) => Math.floor((x / W + 0.5) * n), cj = (z) => Math.floor((z / D + 0.5) * Math.round(n * 0.8));
+  paint(P, g, { slot: 'cloth', color, double: true }, {}, (c, x, y, z) => {
+    const a = ci(x) % 2, b = cj(z) % 2;
+    c.copy(a && b ? A : a || b ? Mx : Wh);
+  }, { flat: true });
+  if (basket) hamper(P, [W * 0.39, 0.015, -D * 0.39], 0.25 + R.float(-0.1, 0.1));
+  if (food) {
+    // a pie in the middle, plates with sandwiches and fruit, two cups of juice
+    P.add(lathe([[0, 0], [0.12, 0], [0.135, 0.03], [0.14, 0.045], [0.125, 0.05], [0, 0.052]], 18), '#e0a95c', { at: [0, 0.015, 0] });
+    P.add(new THREE.CircleGeometry(0.112, 18).rotateX(-Math.PI / 2), '#c0453f', { at: [0, 0.064, 0] });
+    for (let i = 0; i < 3; i++) P.add(softBox(0.2, 0.012, 0.022, 0.005), '#efc277', { at: [0, 0.062, (i - 1) * 0.06], rot: [0, 0, 0] });
+    for (let i = 0; i < 3; i++) P.add(softBox(0.022, 0.012, 0.2, 0.005), '#efc277', { at: [(i - 1) * 0.06, 0.066, 0] });
+    plate(P, [-W * 0.2, 0.015, D * 0.23], 'sandwich', R);
+    plate(P, [W * 0.2, 0.015, -D * 0.22], 'fruit', R);
+    for (const [x, z] of [[W * 0.2, D * 0.23], [-W * 0.2, -D * 0.23]]) {
+      P.add(lathe([[0, 0], [0.03, 0], [0.036, 0.075], [0.031, 0.076], [0.024, 0.008], [0, 0.008]], 10), '#f6f1e6', { at: [x, 0.015, z] });
+      P.add(new THREE.CircleGeometry(0.03, 10).rotateX(-Math.PI / 2), '#f4a43a', { at: [x, 0.08, z] });
+    }
+  }
+  const sx = W * 0.375, sz = D * 0.39;
+  return finish(P.build('picnic'), {
+    footprint: { w: W + 0.1, d: D + 0.1 },
+    spots: {
+      left: spot([sx, 0.02, 0], 270, 'floor'), right: spot([-sx, 0.02, 0], 90, 'floor'),
+      back: spot([0, 0.02, -sz], 0, 'floor'), front: spot([0, 0.02, sz], 180, 'floor'),
+    },
+  });
+}
+
+/* ───────────────────────── campfire ───────────────────────── */
+
+/** A log lying from a to b: bark around, light end grain. */
+function log(P, a, b, r, bark, seg = 8) {
+  const { matrix, len } = along(a, b);
+  const end = C('#e8c48e'), heart = C('#c99a5e');
+  const axis = v3(b).sub(v3(a)).normalize();
+  paint(P, cyl(r, len, { segments: seg }), bark, { matrix }, (c, x, y, z, nx, ny, nz) => {
+    if (Math.abs(axis.x * nx + axis.y * ny + axis.z * nz) > 0.9) c.copy(end);
+  }, { flat: true });
+  for (const [p0, sgn] of [[a, -1], [b, 1]]) {
+    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), axis.clone().multiplyScalar(sgn));
+    const at = v3(p0).addScaledVector(axis, sgn * 0.002);
+    P.add(new THREE.CircleGeometry(r * 0.45, 7), `#${heart.getHexString()}`, { matrix: new THREE.Matrix4().compose(at, q, new THREE.Vector3(1, 1, 1)) });
+  }
+}
+
+let flameGeo = null;
+function flameShape() {
+  flameGeo ??= lathe([[0, 0], [0.6, 0.08], [0.92, 0.28], [0.97, 0.46], [0.8, 0.66], [0.52, 0.83], [0.26, 0.95], [0.08, 1.03], [0, 1.05]], 10);
+  return flameGeo;
+}
+
+function buildCampfire(p, ctx) {
+  const lit = flag(p.lit, true);
+  const k = size(p.size, 1, 0.6, 2);
+  const R = rand(ctx, 'campfire');
+  const P = new Parts();
+  const n = 10;
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * TAU + R.float(-0.12, 0.12);
+    const r = 0.47 * k;
+    P.add(blob(0.11 * k, { detail: 1, amp: 0.2, seed: R.int(0, 999), squash: [1.25, 0.72, 1] }), shade(PALETTE.stone, R.float(-0.14, 0.04)), { at: [Math.sin(a) * r, 0.05 * k, Math.cos(a) * r], rot: [0, a, 0] });
+  }
+  P.add(blob(0.36 * k, { detail: 1, amp: 0.08, seed: 3, squash: [1, 0.08, 1] }), lit ? '#4f4440' : '#7a726b', { at: [0, 0.008, 0] });
+  const bark = lit ? '#6e4a30' : '#5a463a';
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * TAU + 0.35 + R.float(-0.1, 0.1);
+    const out = 0.36 * k, inn = 0.04 * k;
+    log(P, [Math.sin(a) * out, 0.06 * k, Math.cos(a) * out], [Math.sin(a + 0.25) * inn, 0.2 * k, Math.cos(a + 0.25) * inn], 0.055 * k, shade(bark, R.float(-0.05, 0.05)));
+  }
+  log(P, [-0.24 * k, 0.11 * k, -0.08 * k], [0.24 * k, 0.11 * k, 0.1 * k], 0.05 * k, shade(bark, 0.05));
+  const group = P.build('campfire');
+  const lights = [];
+  let tick = null;
+  if (lit) {
+    const E = new Parts();
+    for (let i = 0; i < 7; i++) {
+      const a = R.angle(), r = R.float(0.03, 0.2) * k;
+      E.add(sphere(0.035 * k, 6, 4), { slot: 'emit', color: R.pick(['#ff6a1c', '#f0481c', '#ff9a30']), emit: 0.9 }, { at: [Math.sin(a) * r, 0.04 * k, Math.cos(a) * r], scale: [1, 0.6, 1] });
+    }
+    group.add(E.build('campfire-embers'));
+    // three layers of flame tongues (outer orange, amber, a pale core), each flickering on its own
+    const layers = [
+      { color: '#ee4f1a', emit: 0.75, tongues: [[0.11, 0.03, 0.46, 0.1, 0.22], [-0.09, 0.07, 0.4, 0.095, -0.26], [-0.02, -0.11, 0.36, 0.09, 0.12], [0.02, 0.0, 0.56, 0.12, 0.0]] },
+      { color: '#ff8a1f', emit: 0.8, tongues: [[0.05, 0.03, 0.4, 0.085, 0.12], [-0.05, -0.02, 0.33, 0.08, -0.14]] },
+      { color: '#ffcf4d', emit: 0.9, tongues: [[0, 0.02, 0.24, 0.06, 0]] },
+    ];
+    const flames = layers.map(({ color, emit, tongues }, li) => {
+      const F = new Parts();
+      for (const [x, z, h, r, lean] of tongues) F.add(flameShape(), { slot: 'emit', color, emit }, { at: [x * k, 0, z * k], rot: [lean * 0.4, 0, lean], scale: [r * k, h * k, r * k] });
+      const f = F.build(`campfire-flame-${li}`);
+      f.position.y = 0.1 * k;
+      group.add(f);
+      return f;
+    });
+    // sparks: a few embers rising and fading (instanced, one draw call)
+    const S = new Parts();
+    S.add(sphere(0.012 * k, 5, 4), { slot: 'emit', color: '#ffc061' });
+    const proto = S.build('spark').children[0];
+    const sparks = new THREE.InstancedMesh(proto.geometry, proto.material, 6);
+    sparks.castShadow = false;
+    sparks.frustumCulled = false;
+    group.add(sparks);
+    const sm = new THREE.Matrix4(), sp = new THREE.Vector3(), sq = new THREE.Quaternion(), ss = new THREE.Vector3();
+    const seeds = Array.from({ length: 6 }, () => [R.float(0, 1), R.angle(), R.float(0.6, 1.1)]);
+    tick = (t) => {
+      flames.forEach((f, i) => {
+        const w = 1 + 0.06 * Math.sin(t * 11 + i * 2.1) + 0.04 * Math.sin(t * 23 + i);
+        f.scale.set(w, 1 + 0.14 * Math.sin(t * 9 + i * 1.7) + 0.07 * Math.sin(t * 17.3 + i * 3), w);
+        f.rotation.y = t * (0.6 + i * 0.3);
+        f.rotation.z = 0.05 * Math.sin(t * 3.1 + i);
+      });
+      seeds.forEach(([ph, a, sp0], i) => {
+        const u = fract(t * 0.45 * sp0 + ph);
+        sp.set(Math.sin(a + u * 3) * (0.05 + u * 0.12) * k, (0.2 + u * 0.9) * k, Math.cos(a + u * 3) * (0.05 + u * 0.12) * k);
+        ss.setScalar(Math.max(0.001, 1 - u));
+        sparks.setMatrixAt(i, sm.compose(sp, sq, ss));
+      });
+      sparks.instanceMatrix.needsUpdate = true;
+    };
+    tick(0);
+    lights.push({ ...light([0, 0.4 * k, 0], { color: '#ff9a3c', intensity: 1.3, distance: 6.5 * Math.sqrt(k), when: 'always' }), flicker: true, halo: 0.75 * k });
+  }
+  const spots = {};
+  const sr = 0.62 * k + 0.38;
+  [['front-left', 52], ['left', 104], ['back-left', 156], ['back-right', 204], ['right', 256], ['front-right', 308]].forEach(([name, deg]) => {
+    spots[name] = spot([Math.sin(deg * D2R) * sr, 0, Math.cos(deg * D2R) * sr], (deg + 180) % 360, 'floor');
+  });
+  return finish(group, { footprint: { r: 0.62 * k }, spots, lights, tick, height: 0.8 * k });
+}
+
+/* ───────────────────────── carts ───────────────────────── */
+
+const CART_GOODS = ['fruit', 'veggies', 'flowers', 'hay', 'sacks', 'crates', 'milk', 'none'];
+
+function wheel(P, at, r, { tire = '#5a463a', hub = PALETTE.woodDark, spokes = 7, color = PALETTE.wood, width = 0.06 } = {}) {
+  const [x, y, z] = at;
+  P.add(ring(r - 0.025, 0.035, { radial: 5, tubular: 18 }), color, { at, rot: [Math.PI / 2, 0, 0], scale: [1, width / 0.07, 1] });
+  P.add(ring(r - 0.004, 0.018, { radial: 4, tubular: 18 }), tire, { at, rot: [Math.PI / 2, 0, 0] });
+  P.add(roundCyl(0.06, width + 0.04, { segments: 10, steps: 1, bevel: 0.015 }), hub, { at: [x, y, z - (width + 0.04) / 2], rot: [Math.PI / 2, 0, 0] });
+  for (let i = 0; i < spokes; i++) {
+    const a = (i / spokes) * TAU;
+    plank(P, [x + Math.cos(a) * 0.05, y + Math.sin(a) * 0.05, z], [x + Math.cos(a) * (r - 0.04), y + Math.sin(a) * (r - 0.04), z], 0.03, 0.035, color, { up: [0, 0, 1] });
+  }
+}
+
+function cartGoods(P, R, goods, { at, w, d }) {
+  const [x0, y0, z0] = at;
+  if (goods === 'fruit') {
+    const fills = ['apples', 'oranges', 'apples'];
+    for (let i = 0; i < 3; i++) crateAt(P, R, [x0 + (i - 1) * (w / 3), y0, z0 + (i % 2 ? -0.06 : 0.06)], 0.36, '#c99a62', R.float(-0.1, 0.1), fills[i]);
+  } else if (goods === 'veggies') {
+    for (let i = 0; i < 9; i++) {
+      const x = x0 + ((i % 3) - 1) * w * 0.3 + R.float(-0.03, 0.03), z = z0 + (Math.floor(i / 3) - 1) * d * 0.28;
+      if (i % 3 === 1) pumpkin(P, R, [x, y0, z], 0.12);
+      else P.add(blob(0.11, { detail: 1, amp: 0.18, seed: i, squash: [1, 0.85, 1] }), shade('#8fcf6c', R.float(-0.06, 0.05)), { at: [x, y0 + 0.09, z] });
+    }
+  } else if (goods === 'flowers') {
+    const cols = ['#e9434c', '#f6cf3a', '#f49ac1', '#a57fd9', '#f8f4ea'];
+    for (let i = 0; i < 4; i++) {
+      const x = x0 + (i - 1.5) * (w / 4), z = z0 + (i % 2 ? -0.08 : 0.08);
+      pail(P, R, { at: [x, y0, z], h: 0.2, r: 0.11, tin: true, handle: false, color: R.pick(['#9fb7c9', '#c7a3c8', '#a9c9a4']) });
+      bouquet(P, R, [x, y0 + 0.2, z], cols[i % cols.length], 8, 0.12);
+    }
+  } else if (goods === 'hay') {
+    paint(P, blob(0.5, { detail: 2, amp: 0.15, seed: 4, squash: [w * 0.95, 0.42, d * 0.92] }), '#e3c46a', { at: [x0, y0 + 0.05, z0] }, (c, x, y, z) => c.lerp(C('#c9a24e'), clamp(noise3(x * 12, y * 30, z * 12) * 0.7, 0, 0.6)));
+  } else if (goods === 'sacks') {
+    for (let i = 0; i < 3; i++) sackAt(P, R, [x0 + (i - 1) * w * 0.32, y0, z0 + (i % 2 ? -0.05 : 0.07)], shade('#e2cc9c', R.float(-0.04, 0.03)), 'tied', R.angle(), 0.9, R.int(0, 999));
+    sackAt(P, R, [x0 + 0.1, y0 + 0.36, z0 - 0.02], '#e2cc9c', 'lying', 0.3, 0.85, R.int(0, 999));
+  } else if (goods === 'crates') {
+    crateAt(P, R, [x0 - w * 0.25, y0, z0], 0.4, '#c99a62', 0.1, 'closed');
+    crateAt(P, R, [x0 + w * 0.25, y0, z0 + 0.04], 0.4, '#c99a62', -0.08, 'closed');
+    crateAt(P, R, [x0 - w * 0.1, y0 + 0.43, z0], 0.38, '#c99a62', 0.2, 'apples');
+  } else if (goods === 'milk') {
+    for (let i = 0; i < 4; i++) {
+      const x = x0 + (i - 1.5) * (w / 4.3), z = z0 + (i % 2 ? -0.1 : 0.08);
+      P.add(lathe([[0, 0], [0.1, 0], [0.11, 0.02], [0.11, 0.24], [0.06, 0.3], [0.05, 0.36], [0.065, 0.37], [0.06, 0.39], [0, 0.39]], 14), { slot: 'metal', color: '#c9d0d7' }, { at: [x, y0, z] });
+      P.add(ring(0.112, 0.01, { radial: 4, tubular: 16 }), { slot: 'metal', color: '#aab3bc' }, { at: [x, y0 + 0.14, z] });
+    }
+  }
+}
+
+function pumpkin(P, R, at, r) {
+  const [x, y, z] = at;
+  const segs = 12;
+  const prof = [[0, 0], [r * 0.5, r * 0.08], [r * 0.95, r * 0.45], [r, r * 0.8], [r * 0.8, r * 1.18], [r * 0.3, r * 1.32], [0, r * 1.22]];
+  const g = lathe(prof, segs);
+  const pos = g.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const px = pos.getX(i), pz = pos.getZ(i);
+    const a = Math.atan2(pz, px);
+    const f = 1 + 0.07 * Math.cos(a * 6);
+    pos.setX(i, px * f); pos.setZ(i, pz * f);
+  }
+  g.computeVertexNormals();
+  P.add(g, shade('#f08a2e', R.float(-0.04, 0.03)), { at: [x, y, z], rot: [0, R.angle(), 0] });
+  rod(P, [x, y + r * 1.15, z], [x + r * 0.08, y + r * 1.45, z], r * 0.1, '#6b8f3a', { seg: 5 });
+}
+
+function buildCart(p, ctx) {
+  const goods = oneOf(p.goods, CART_GOODS, 'fruit');
+  const color = colorOr(p.color, '#5a8fce');
+  const wood = colorOr(p.wood, PALETTE.wood);
+  const R = rand(ctx, 'cart');
+  const P = new Parts();
+  const L = 1.34, D = 0.78, bedY = 0.46, wallH = 0.22;
+  const wr = 0.34, wx = -0.08, wz = D / 2 + 0.08;
+  // the bed: a plank floor, plank walls, a painted rail and corner posts
+  P.add(softBox(L, 0.06, D, 0.02), shade(wood, -0.05), { at: [0, bedY - 0.06, 0] });
+  for (const sz of [-1, 1]) {
+    for (let i = 0; i < 2; i++) P.add(softBox(L - 0.06, 0.085, 0.04, 0.014), shade(wood, R.float(-0.04, 0.04)), { at: [0, bedY + 0.01 + i * 0.1, sz * (D / 2 - 0.02)] });
+    P.add(softBox(L + 0.02, 0.045, 0.06, 0.016), color, { at: [0, bedY + wallH - 0.01, sz * (D / 2 - 0.02)] });
+  }
+  for (const sx of [-1, 1]) {
+    for (let i = 0; i < 2; i++) P.add(softBox(0.04, 0.085, D - 0.06, 0.014), shade(wood, R.float(-0.04, 0.04)), { at: [sx * (L / 2 - 0.02), bedY + 0.01 + i * 0.1, 0] });
+    P.add(softBox(0.06, 0.045, D + 0.02, 0.016), color, { at: [sx * (L / 2 - 0.02), bedY + wallH - 0.01, 0] });
+    for (const sz of [-1, 1]) {
+      P.add(softBox(0.07, wallH + 0.1, 0.07, 0.02), shade(wood, -0.12), { at: [sx * (L / 2 - 0.02), bedY - 0.06, sz * (D / 2 - 0.02)] });
+      P.add(sphere(0.042, 8, 6), color, { at: [sx * (L / 2 - 0.02), bedY + wallH + 0.05, sz * (D / 2 - 0.02)] });
+    }
+  }
+  // axle and two big spoked wheels
+  rod(P, [wx, wr, -wz - 0.02], [wx, wr, wz + 0.02], 0.03, PALETTE.iron, { seg: 8 });
+  for (const sz of [-1, 1]) wheel(P, [wx, wr, sz * wz], wr, { color: shade(wood, 0.04), hub: color });
+  P.add(softBox(0.16, bedY - wr, D * 0.5, 0.02), shade(wood, -0.15), { at: [wx, wr, 0] });
+  // handles to pull it by (toward +X), resting legs under the front
+  for (const sz of [-1, 1]) {
+    plank(P, [L / 2 - 0.25, bedY - 0.07, sz * 0.27], [L / 2 + 0.78, bedY - 0.02, sz * 0.27], 0.055, 0.06, wood, { up: [0, 1, 0] });
+    P.add(softBox(0.06, bedY - 0.08, 0.06, 0.016), shade(wood, -0.12), { at: [L / 2 - 0.15, 0, sz * 0.27] });
+  }
+  P.add(roundCyl(0.035, 0.66, { segments: 8, steps: 1, bevel: 0.015 }), shade(wood, -0.08), { at: [L / 2 + 0.74, bedY - 0.02, -0.33], rot: [Math.PI / 2, 0, 0] });
+  cartGoods(P, R, goods, { at: [0, bedY, 0], w: L - 0.14, d: D - 0.12 });
+  return finish(P.build('cart'), {
+    footprint: { w: L + 0.9, d: D + 0.3 },
+    spots: {
+      pull: spot([L / 2 + 0.98, 0, 0], 90, 'stand'),
+      vendor: spot([0, 0, -wz - 0.48], 0, 'stand'),
+      customer: spot([0.2, 0, wz + 0.5], 180, 'stand'),
+    },
+    height: bedY + 0.6,
+  });
+}
+
+const BARROW_FILL = ['none', 'dirt', 'hay', 'flowers', 'pumpkins', 'apples', 'firewood'];
+
+function buildWheelbarrow(p, ctx) {
+  const color = colorOr(p.color, '#5aa56a');
+  const fill = oneOf(p.contents, BARROW_FILL, 'none');
+  const R = rand(ctx, 'wheelbarrow');
+  const P = new Parts();
+  const tubY = 0.27, tubH = 0.25;
+  // the tub: tapered, with a darker rolled rim and a dark inside
+  P.add(taperBox(0.52, tubH, 0.4, 0.06, 1.32, 1.35), color, { at: [0.02, tubY, 0] });
+  const tw = 0.52 * 1.32, td = 0.4 * 1.35;
+  for (const sz of [-1, 1]) P.add(softBox(tw + 0.04, 0.04, 0.045, 0.016), shade(color, -0.12), { at: [0.02, tubY + tubH - 0.02, sz * td / 2] });
+  for (const sx of [-1, 1]) P.add(softBox(0.045, 0.04, td + 0.04, 0.016), shade(color, -0.12), { at: [0.02 + sx * tw / 2, tubY + tubH - 0.02, 0] });
+  P.add(softBox(tw - 0.06, 0.012, td - 0.06, 0.004), mix(shade(color, -0.25), '#5a4636', 0.4), { at: [0.02, tubY + tubH - 0.008, 0] });
+  // frame: two handles from the wheel back past the tub, with grips
+  const frame = PALETTE.woodDark;
+  for (const sz of [-1, 1]) {
+    plank(P, [0.62, 0.16, sz * 0.07], [-0.8, 0.5, sz * 0.22], 0.045, 0.045, frame, { up: [0, 1, 0] });
+    P.add(roundCyl(0.03, 0.14, { segments: 8, steps: 1, bevel: 0.012 }), '#d9534a', { at: [-0.74, 0.485, sz * 0.21], rot: [0, 0, Math.PI / 2 + 0.23] });
+    plank(P, [-0.3, 0.33, sz * 0.15], [-0.34, 0, sz * 0.17], 0.04, 0.04, frame, { up: [1, 0, 0] });
+    P.add(softBox(0.07, 0.025, 0.06, 0.01), frame, { at: [-0.34, 0, sz * 0.17] });
+  }
+  // the wheel
+  const wr = 0.17;
+  P.add(ring(wr - 0.035, 0.04, { radial: 6, tubular: 18 }), '#4f4c55', { at: [0.62, wr, 0], rot: [Math.PI / 2, 0, 0] });
+  P.add(roundCyl(0.105, 0.05, { segments: 12, steps: 1, bevel: 0.015 }), '#d9cfba', { at: [0.62, wr, -0.025], rot: [Math.PI / 2, 0, 0] });
+  P.add(roundCyl(0.035, 0.18, { segments: 8, steps: 1, bevel: 0.01 }), PALETTE.ironLight, { at: [0.62, wr, -0.09], rot: [Math.PI / 2, 0, 0] });
+  const top = tubY + tubH;
+  if (fill === 'dirt') P.add(blob(0.5, { detail: 2, amp: 0.15, seed: 7, squash: [0.32, 0.1, 0.25] }), '#8a6544', { at: [0.02, top, 0] });
+  else if (fill === 'hay') paint(P, blob(0.5, { detail: 2, amp: 0.18, seed: 8, squash: [0.36, 0.16, 0.28] }), '#e3c46a', { at: [0.02, top + 0.02, 0] }, (c, x, y, z) => c.lerp(C('#c9a24e'), clamp(noise3(x * 14, y * 30, z * 14) * 0.7, 0, 0.6)));
+  else if (fill === 'flowers') { for (let i = 0; i < 3; i++) bouquet(P, R, [0.02 + (i - 1) * 0.2, top - 0.03, (i % 2 ? 0.07 : -0.07)], ['#e9434c', '#f6cf3a', '#f49ac1'][i], 8, 0.12); }
+  else if (fill === 'pumpkins') { pumpkin(P, R, [-0.1, top - 0.1, 0.05], 0.15); pumpkin(P, R, [0.17, top - 0.09, -0.06], 0.13); }
+  else if (fill === 'apples') fruitHeap(P, R, 'apple', { at: [0.02, top - 0.06, 0], rx: 0.28, rz: 0.2, r: 0.06, layers: 2 });
+  else if (fill === 'firewood') { for (let i = 0; i < 6; i++) log(P, [0.02 + (i % 3 - 1) * 0.14 - 0.1, top - 0.02 + Math.floor(i / 3) * 0.09, -0.2], [0.02 + (i % 3 - 1) * 0.14 + 0.1, top - 0.02 + Math.floor(i / 3) * 0.09, 0.2], 0.05, '#7a5233', 7); }
+  return finish(P.build('wheelbarrow'), { footprint: { w: 1.6, d: 0.6 }, spots: { push: spot([-1.02, 0, 0], 90, 'stand') } });
+}
+
+/* ───────────────────────── festival strings ───────────────────────── */
+
+const FESTIVE = [PALETTE.cloth.red, PALETTE.cloth.yellow, PALETTE.cloth.blue, PALETTE.cloth.green, PALETTE.cloth.pink, PALETTE.cloth.orange];
+const LANTERN_PAPER = ['#f05a4a', '#f7c548', '#f39b54', '#f48fb1', '#f7efe0'];
+
+/** Two posts and a sagging string between their tops; returns the string's curve as a function. */
+function stringPosts(P, R, L, H, wood) {
+  for (const sx of [-1, 1]) {
+    P.add(softBox(0.09, H, 0.09, 0.022), wood, { at: [sx * L / 2, 0, 0], rot: [0, R.float(-0.2, 0.2), 0] });
+    P.add(sphere(0.05, 10, 7), shade(wood, -0.08), { at: [sx * L / 2, H + 0.03, 0] });
+    P.add(softBox(0.16, 0.05, 0.16, 0.02), shade(wood, -0.12), { at: [sx * L / 2, 0, 0] });
+  }
+  const sag = clamp(L * 0.055, 0.1, 0.75);
+  const y0 = H - 0.06;
+  return { sag, y0, at: (t) => [lerp(-L / 2, L / 2, t), y0 - sag * 4 * t * (1 - t), 0], slope: (t) => Math.atan2(-sag * 4 * (1 - 2 * t), L) };
+}
+
+/** A swinging strand: the group pivots on the line between the post tops (wind sways it). */
+function swingTick(group, phase, amount = 0.06) {
+  return (t) => {
+    const w = 0.4 + (WORLD_UNIFORMS.uWind?.value ?? 0.3);
+    group.rotation.x = Math.sin(t * 1.25 + phase) * amount * w + Math.sin(t * 2.9 + phase * 2) * amount * 0.3 * w;
+  };
+}
+
+let pennantGeo = null;
+function pennant() {
+  pennantGeo ??= extrude([[-0.1, 0], [0.1, 0], [0.012, -0.235], [-0.012, -0.235]], 0.008, { bevel: 0.004, bevelSegments: 1 });
+  return pennantGeo;
+}
+
+function buildBunting(p, ctx) {
+  const L = size(p.length, 6, 1.5, 16);
+  const colors = colorsOr(p.colors, FESTIVE);
+  const H = num(p.height, 2.3, 1.6, 3.5);
+  const wood = colorOr(p.wood, PALETTE.wood);
+  const R = rand(ctx, 'bunting');
+  const P = new Parts();
+  const S = stringPosts(P, R, L, H, wood);
+  const strand = new Parts();
+  // strand geometry is built relative to the pivot line (y0)
+  const pts = sagPoints([-L / 2, 0, 0], [L / 2, 0, 0], S.sag, Math.max(8, Math.round(L * 3)));
+  strand.add(tube(pts, 0.008, { segments: Math.max(8, Math.round(L * 3)), radial: 4 }), '#f4efe6');
+  const n = Math.max(2, Math.floor((L - 0.3) / 0.33));
+  for (let i = 0; i < n; i++) {
+    const t = (i + 0.5) / n;
+    const [x, y] = S.at(t);
+    strand.add(pennant(), { slot: 'cloth', color: colors[i % colors.length] }, { at: [x, y - S.y0 - 0.005, 0], rot: [R.float(-0.08, 0.08), 0, S.slope(t)], scale: [1.28, 1.3, 1] });
+  }
+  const group = P.build('bunting');
+  const sg = strand.build('bunting-strand');
+  sg.position.y = S.y0;
+  group.add(sg);
+  return finish(group, {
+    footprint: { w: L + 0.2, d: 0.3 },
+    spots: { under: spot([0, 0, 0.35], 0, 'stand'), 'left-post': spot([L / 2, 0, 0.3], 0, 'lean'), 'right-post': spot([-L / 2, 0, 0.3], 0, 'lean') },
+    tick: swingTick(sg, R.float(0, 6), 0.07),
+    height: H + 0.08,
+  });
+}
+
+let paperGeo = null;
+function paperLantern() {
+  if (paperGeo) return paperGeo;
+  const prof = [];
+  for (let i = 0; i <= 8; i++) {
+    const t = i / 8, y = -0.13 + t * 0.26;
+    const r = 0.125 * Math.sin(Math.PI * (0.08 + t * 0.84)) + (i % 2 ? -0.004 : 0.003);
+    prof.push([Math.max(0.02, r), y]);
+  }
+  paperGeo = lathe([[0, -0.132], ...prof, [0, 0.132]], 10);
+  return paperGeo;
+}
+
+function buildLanterns(p, ctx) {
+  const L = size(p.length, 6, 1.5, 16);
+  const colors = colorsOr(p.colors, LANTERN_PAPER);
+  const H = num(p.height, 2.4, 1.6, 3.5);
+  const lit = oneOf(p.lit, ['night', 'always', 'never'], 'night');
+  const wood = colorOr(p.wood, PALETTE.woodDark);
+  const R = rand(ctx, 'lanterns');
+  const P = new Parts();
+  const S = stringPosts(P, R, L, H, wood);
+  const strand = new Parts();
+  const pts = sagPoints([-L / 2, 0, 0], [L / 2, 0, 0], S.sag, Math.max(8, Math.round(L * 3)));
+  strand.add(tube(pts, 0.008, { segments: Math.max(8, Math.round(L * 3)), radial: 4 }), '#5a4a3e');
+  const n = Math.max(2, Math.round((L - 0.4) / 0.78));
+  const cap = '#4a3a32';
+  const paperLook = (c) => (lit === 'never' ? { slot: 'cloth', color: c }
+    : lit === 'always' ? { slot: 'emit', color: shade(c, 0.05), emit: 0.9 }
+      : { slot: 'lamp', color: c, glow: mix(shade(c, 0, { sat: 0.15 }), PALETTE.warmLight, 0.3), glowAmount: 1.35 });
+  const lights = [];
+  for (let i = 0; i < n; i++) {
+    const t = (i + 0.5) / n;
+    const [x, y] = S.at(t);
+    const ls = 1.22;
+    const yl = y - S.y0 - 0.24;
+    const c = colors[i % colors.length];
+    strand.add(cyl(0.006, 0.08, { segments: 4 }), cap, { at: [x, yl + 0.155, 0] });
+    paint(strand, paperLantern(), paperLook(c), { at: [x, yl, 0], rot: [0, R.angle(), 0], scale: ls }, (col, px, py) => {
+      if (Math.floor((py - yl + 0.13 * ls) / ((0.26 * ls) / 8)) % 2) col.multiplyScalar(0.93);
+    }, { flat: true });
+    for (const sg of [-1, 1]) strand.add(cyl(0.06, 0.036, { segments: 8 }), cap, { at: [x, yl + sg * 0.156 - 0.018, 0] });
+    strand.add(cone(0.024, 0.08, 5).rotateX(Math.PI), shade(c, -0.15), { at: [x, yl - 0.175, 0] });
+  }
+  if (lit !== 'never') {
+    const nl = L > 9 ? 3 : 2;
+    for (let j = 0; j < nl; j++) {
+      const t = (j + 0.5) / nl;
+      const [x, y] = S.at(t);
+      lights.push({ ...light([x, y - 0.26, 0], { intensity: 0.8, distance: 5, when: lit === 'always' ? 'always' : 'night', color: '#ffc27a' }), flicker: false, halo: 0.6 });
+    }
+  }
+  const group = P.build('lanterns');
+  const sg = strand.build('lanterns-strand');
+  sg.position.y = S.y0;
+  group.add(sg);
+  return finish(group, {
+    footprint: { w: L + 0.2, d: 0.3 },
+    spots: { under: spot([0, 0, 0.35], 0, 'stand'), 'left-post': spot([L / 2, 0, 0.3], 0, 'lean'), 'right-post': spot([-L / 2, 0, 0.3], 0, 'lean') },
+    lights,
+    tick: swingTick(sg, R.float(0, 6), 0.05),
+    height: H + 0.08,
+  });
+}
+
+/* ───────────────────────── flagpole ───────────────────────── */
+
+const EMBLEMS = ['leaf', 'star', 'circle', 'stripe', 'none'];
+const flagTextures = new Map();
+function flagTexture(color, emblem) {
+  const key = `${color}|${emblem}`;
+  if (flagTextures.has(key)) return flagTextures.get(key);
+  const W = 256, H = 168;
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const g = cv.getContext('2d');
+  g.fillStyle = color;
+  g.fillRect(0, 0, W, H);
+  g.fillStyle = shade(color, -0.1);
+  g.fillRect(0, 0, 16, H);
+  const ink = new THREE.Color(color).getHSL({}).l > 0.72 ? '#d9534a' : '#fbf4e4';
+  g.fillStyle = ink;
+  const cx = W * 0.54, cy = H / 2;
+  if (emblem === 'leaf') {
+    g.beginPath();
+    g.moveTo(cx - 44, cy + 34);
+    g.bezierCurveTo(cx - 52, cy - 30, cx + 10, cy - 52, cx + 48, cy - 42);
+    g.bezierCurveTo(cx + 46, cy + 4, cx + 10, cy + 44, cx - 44, cy + 34);
+    g.fill();
+    g.strokeStyle = color;
+    g.lineWidth = 6;
+    g.lineCap = 'round';
+    g.beginPath();
+    g.moveTo(cx - 34, cy + 26);
+    g.quadraticCurveTo(cx + 2, cy - 4, cx + 32, cy - 30);
+    g.stroke();
+  } else if (emblem === 'star') {
+    g.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const a = -Math.PI / 2 + (i * Math.PI) / 5, r = i % 2 ? 22 : 52;
+      g[i ? 'lineTo' : 'moveTo'](cx + Math.cos(a) * r, cy + 4 + Math.sin(a) * r);
+    }
+    g.closePath();
+    g.fill();
+  } else if (emblem === 'circle') {
+    g.beginPath(); g.arc(cx, cy, 46, 0, TAU); g.fill();
+  } else if (emblem === 'stripe') {
+    g.fillRect(16, cy - 22, W, 44);
+  }
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  flagTextures.set(key, tex);
+  return tex;
+}
+
+function buildFlagpole(p, ctx) {
+  const color = colorOr(p.color, PALETTE.cloth.blue);
+  const emblem = oneOf(p.emblem, EMBLEMS, 'leaf');
+  const H = num(p.height, 3.4, 2, 5);
+  const pole = colorOr(p.pole, '#eae5da');
+  const P = new Parts();
+  P.add(softBox(0.46, 0.16, 0.46, 0.04), PALETTE.stone, { at: [0, 0, 0] });
+  P.add(softBox(0.34, 0.12, 0.34, 0.03), shade(PALETTE.stone, 0.08), { at: [0, 0.16, 0] });
+  P.add(cyl(0.042, H - 0.28, { top: 0.03, segments: 12 }), { slot: 'metal', color: pole }, { at: [0, 0.27, 0] });
+  P.add(roundCyl(0.06, 0.05, { segments: 10, steps: 1, bevel: 0.015 }), { slot: 'metal', color: shade(pole, -0.1) }, { at: [0, 0.27, 0] });
+  P.add(sphere(0.065, 12, 8), { slot: 'metal', color: PALETTE.gold }, { at: [0, H + 0.04, 0] });
+  // halyard rope down the pole to a little cleat
+  rod(P, [0.045, H - 0.06, 0.012], [0.045, 1.05, 0.012], 0.005, '#d8cfbf', { seg: 3 });
+  P.add(softBox(0.03, 0.1, 0.03, 0.01), PALETTE.iron, { at: [0.045, 1.0, 0.0] });
+  const fw = 1.0, fh = 0.66;
+  const flagGeo = new THREE.PlaneGeometry(fw, fh, 16, 6).translate(fw / 2, -fh / 2, 0);
+  P.add(flagGeo, flagMaterial(flagTexture(color, emblem)), { at: [0.035, H - 0.08, 0] });
+  return finish(P.build('flagpole'), { footprint: { r: 0.3 }, spots: { front: spot([0, 0, 0.8], 180, 'stand') }, height: H + 0.1 });
+}
+
+/* ───────────────────────── statue ───────────────────────── */
+
+const STATUE_VARIANTS = ['figure', 'bell', 'obelisk', 'globe'];
+const FINISHES = { bronze: ['#b98a52', 'metal'], patina: ['#74a99a', 'solid'], stone: ['#d4cdc0', 'solid'], marble: ['#eeeae2', 'solid'], gold: ['#e2b24a', 'metal'] };
+
+function buildStatue(p, ctx) {
+  const variant = oneOf(p.variant, STATUE_VARIANTS, 'figure');
+  const fin = oneOf(p.finish, Object.keys(FINISHES), 'bronze');
+  const plinthColor = colorOr(p.stone, PALETTE.stoneLight);
+  const plaque = textOr(p.plaque, '', 20);
+  const R = rand(ctx, 'statue');
+  const P = new Parts();
+  const [fc, slot] = FINISHES[fin];
+  const look = (c = fc) => ({ slot, color: c });
+  const dark = shade(plinthColor, -0.08);
+  // plinth: a wide step to sit on, a block with moldings
+  P.add(softBox(1.24, 0.3, 1.24, 0.05), dark, { at: [0, 0, 0] });
+  P.add(softBox(0.84, 0.07, 0.84, 0.025), plinthColor, { at: [0, 0.3, 0] });
+  P.add(softBox(0.72, 0.56, 0.72, 0.03), plinthColor, { at: [0, 0.34, 0] });
+  P.add(softBox(0.86, 0.08, 0.86, 0.03), shade(plinthColor, 0.05), { at: [0, 0.9, 0] });
+  const pw = 0.46, ph = 0.2;
+  P.add(softBox(pw, ph, 0.025, 0.012), { slot: 'metal', color: '#c9a24e' }, { at: [0, 0.52, 0.36] });
+  if (plaque) P.add(new THREE.PlaneGeometry(pw - 0.05, ph - 0.05), label(plaque, { bg: '#d8b35c', fg: '#4a3a22', width: Math.round((160 * (pw - 0.05)) / (ph - 0.05)), height: 160 }), { at: [0, 0.62, 0.3735] });
+  const y0 = 0.98;
+  if (variant === 'figure') {
+    // a stylized chibi hero waving from the plinth
+    const f = look();
+    for (const sx of [-1, 1]) {
+      P.add(sphere(0.075, 10, 7), f, { at: [sx * 0.085, y0 + 0.04, 0.03], scale: [1, 0.6, 1.35] });
+      P.add(roundCyl(0.055, 0.22, { segments: 10, steps: 1, bevel: 0.03 }), f, { at: [sx * 0.085, y0 + 0.03, 0] });
+    }
+    P.add(lathe([[0, 0], [0.16, 0], [0.19, 0.04], [0.19, 0.12], [0.17, 0.26], [0.13, 0.34], [0.07, 0.38], [0, 0.38]], 14), f, { at: [0, y0 + 0.2, 0] });
+    P.add(ring(0.17, 0.025, { radial: 5, tubular: 18 }), look(shade(fc, -0.06)), { at: [0, y0 + 0.3, 0] });
+    // left arm waving up, right arm holding a book
+    rod(P, [0.16, y0 + 0.5, 0], [0.32, y0 + 0.74, 0.05], 0.045, f, { seg: 8, soft: true });
+    P.add(sphere(0.055, 9, 6), f, { at: [0.33, y0 + 0.78, 0.05] });
+    rod(P, [-0.16, y0 + 0.5, 0], [-0.21, y0 + 0.32, 0.08], 0.045, f, { seg: 8, soft: true });
+    P.add(sphere(0.05, 8, 6), f, { at: [-0.21, y0 + 0.3, 0.1] });
+    P.add(softBox(0.06, 0.18, 0.14, 0.012), look(shade(fc, -0.08)), { at: [-0.24, y0 + 0.22, 0.12], rot: [0, 0, 0.2] });
+    P.add(sphere(0.07, 9, 6), f, { at: [0, y0 + 0.6, 0], scale: [1.4, 0.6, 1] });
+    // head with a soft hair cap and a little cape-like collar
+    const hy = y0 + 0.86;
+    P.add(sphere(0.22, 16, 12), f, { at: [0, hy, 0] });
+    P.add(sphere(0.235, 14, 10), look(shade(fc, -0.05)), { at: [0, hy + 0.045, -0.025], scale: [1, 0.82, 1] });
+    for (const sx of [-1, 1]) P.add(sphere(0.045, 8, 6), f, { at: [sx * 0.215, hy - 0.02, 0] });
+    P.add(sphere(0.055, 8, 6), look(shade(fc, -0.05)), { at: [0.07, hy + 0.24, -0.03], scale: [1, 0.7, 1.4], rot: [0.3, 0, -0.4] });
+    for (const sx of [-1, 1]) P.add(sphere(0.022, 7, 5), look(shade(fc, -0.18)), { at: [sx * 0.075, hy - 0.01, 0.2], scale: [1, 1.3, 0.6] });
+  } else if (variant === 'bell') {
+    const wood = PALETTE.woodDark;
+    for (const sx of [-1, 1]) P.add(softBox(0.08, 0.88, 0.08, 0.02), wood, { at: [sx * 0.27, y0, 0] });
+    P.add(softBox(0.7, 0.08, 0.12, 0.02), wood, { at: [0, y0 + 0.86, 0] });
+    for (const sd of [-1, 1]) P.add(softBox(0.82, 0.04, 0.3, 0.015), PALETTE.roofRed, { at: [0, y0 + 1.02 - 0.06, sd * 0.12], rot: [sd * 0.55, 0, 0] });
+    P.add(roundCyl(0.03, 0.84, { segments: 8, steps: 1, bevel: 0.012 }), shade(PALETTE.roofRed, -0.15), { at: [-0.42, y0 + 1.04, 0], rot: [0, 0, -Math.PI / 2] });
+    const bell = lathe([[0, 0.38], [0.06, 0.38], [0.09, 0.34], [0.11, 0.24], [0.14, 0.12], [0.2, 0.04], [0.21, 0], [0.17, 0.01], [0.13, 0.08], [0.09, 0.2], [0.06, 0.3], [0, 0.33]], 18);
+    P.add(bell, look(), { at: [0, y0 + 0.4, 0] });
+    P.add(ring(0.205, 0.012, { radial: 4, tubular: 20 }), look(shade(fc, -0.1)), { at: [0, y0 + 0.44, 0] });
+    P.add(arcTube(0.04, 0.012, 0, Math.PI, { radial: 4, segments: 8 }), look(), { at: [0, y0 + 0.79, 0] });
+    P.add(sphere(0.05, 8, 6), look(shade(fc, -0.15)), { at: [0, y0 + 0.43, 0] });
+  } else if (variant === 'obelisk') {
+    P.add(cyl(0.2, 1.4, { top: 0.12, segments: 4 }), look(), { at: [0, y0, 0], rot: [0, Math.PI / 4, 0] });
+    P.add(cone(0.12 * Math.SQRT1_2 * Math.SQRT2, 0.2, 4), { slot: 'metal', color: PALETTE.gold }, { at: [0, y0 + 1.4, 0], rot: [0, Math.PI / 4, 0] });
+    P.add(softBox(0.36, 0.05, 0.36, 0.015), look(shade(fc, -0.06)), { at: [0, y0, 0] });
+  } else {
+    // a globe on a stand inside a meridian ring
+    P.add(lathe([[0, 0], [0.16, 0], [0.17, 0.03], [0.07, 0.07], [0.04, 0.2], [0.08, 0.26], [0, 0.26]], 14), look(), { at: [0, y0, 0] });
+    const gy = y0 + 0.56;
+    const ocean = C('#4f86c6'), land = C('#7cc067'), sand = C('#e9d39a');
+    const seed = R.int(0, 999);
+    const globe = sphere(0.3, 22, 16).rotateZ(0.4);
+    paint(P, globe, { slot: 'solid', color: '#4f86c6' }, { at: [0, gy, 0] }, (c, x, y, z) => {
+      const n = noise3((x) * 4.2 + seed, (y - gy) * 4.2, z * 4.2) + 0.25 * noise3(x * 11, (y - gy) * 11, z * 11 + seed);
+      c.copy(ocean).lerp(sand, smooth(0.06, 0.12, n)).lerp(land, smooth(0.14, 0.2, n));
+    });
+    P.add(ring(0.36, 0.018, { radial: 5, tubular: 32 }), { slot: 'metal', color: PALETTE.gold }, { at: [0, gy, 0], rot: [0, 0, Math.PI / 2 - 0.4] });
+    for (const s of [-1, 1]) P.add(sphere(0.03, 8, 6), { slot: 'metal', color: PALETTE.gold }, { at: [s * Math.sin(0.4) * 0.36, gy + s * Math.cos(0.4) * 0.36, 0] });
+    rod(P, [0, y0 + 0.24, 0], [Math.sin(0.4) * -0.36, gy - Math.cos(0.4) * 0.36, 0], 0.02, { slot: 'metal', color: PALETTE.gold }, { seg: 6 });
+  }
+  const top = { figure: y0 + 1.12, bell: y0 + 1.1, obelisk: y0 + 1.6, globe: y0 + 0.92 }[variant];
+  return finish(P.build('statue'), {
+    footprint: { w: 1.3, d: 1.3 },
+    spots: { front: spot([0, 0, 1.12], 180, 'stand'), 'sit-left': spot([0.3, 0.3, 0.5], 0, 'sit'), 'sit-right': spot([-0.3, 0.3, 0.5], 0, 'sit') },
+    height: top,
+  });
+}
+
+/* ───────────────────────── farm things ───────────────────────── */
+
+const HAY = '#e6c66c';
+const HAY_SHAPES = ['square', 'round', 'stack'];
+
+/** A rounded, finely subdivided box (so straw streaks can be painted on it). */
+function strawBox(w, h, d, r) {
+  const g = new THREE.BoxGeometry(w, h, d, 10, 5, 6);
+  const pos = g.attributes.position;
+  const v = new THREE.Vector3(), q = new THREE.Vector3();
+  const hx = w / 2 - r, hy = h / 2 - r, hz = d / 2 - r;
+  for (let i = 0; i < pos.count; i++) {
+    v.fromBufferAttribute(pos, i);
+    q.set(clamp(v.x, -hx, hx), clamp(v.y, -hy, hy), clamp(v.z, -hz, hz));
+    const dir = v.clone().sub(q);
+    if (dir.lengthSq() > 1e-10) v.copy(q).addScaledVector(dir.normalize(), r);
+    pos.setXYZ(i, v.x, v.y + h / 2, v.z);
+  }
+  g.deleteAttribute('normal');
+  const m = mergeVerticesSafe(g);
+  m.computeVertexNormals();
+  return m;
+}
+function mergeVerticesSafe(g) {
+  // weld the box's split faces so the rounded edges shade smoothly
+  const pos = g.attributes.position;
+  const map = new Map(), index = [], verts = [];
+  const idx = g.index ? g.index.array : null;
+  const count = idx ? idx.length : pos.count;
+  for (let i = 0; i < count; i++) {
+    const vi = idx ? idx[i] : i;
+    const key = `${pos.getX(vi).toFixed(4)},${pos.getY(vi).toFixed(4)},${pos.getZ(vi).toFixed(4)}`;
+    let n = map.get(key);
+    if (n === undefined) { n = verts.length / 3; map.set(key, n); verts.push(pos.getX(vi), pos.getY(vi), pos.getZ(vi)); }
+    index.push(n);
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  out.setIndex(index);
+  return out;
+}
+
+function hayBale(P, R, at, yaw, color) {
+  const M = xform(at, [0, yaw, 0]);
+  const inv = M.clone().invert(), q = new THREE.Vector3();
+  const seed = R.int(0, 999);
+  const dark = C(shade(color, -0.12)), light = C(shade(color, 0.07));
+  paint(P, strawBox(0.72, 0.42, 0.46, 0.07), color, { matrix: M }, (c, x, y, z) => {
+    q.set(x, y, z).applyMatrix4(inv);
+    const n = noise3(seed, q.y * 26, q.z * 26) * 0.7 + noise3(q.x * 3, q.y * 40 + seed, q.z * 40) * 0.5;
+    c.lerp(n > 0 ? light : dark, Math.min(1, Math.abs(n) * 1.4));
+  });
+  for (const x of [-0.2, 0.2]) P.add(softBox(0.035, 0.44, 0.48, 0.015), '#b7894c', { matrix: M.clone().multiply(xform([x, -0.01, 0])) });
+}
+
+function buildHaybale(p, ctx) {
+  const shape = oneOf(p.shape, HAY_SHAPES, 'square');
+  const color = colorOr(p.color, HAY);
+  const R = rand(ctx, 'haybale');
+  const P = new Parts();
+  let spots, footprint;
+  if (shape === 'round') {
+    const r = 0.46, len = 0.82;
+    const prof = [];
+    for (let i = 0; i <= 5; i++) prof.push([r * (i / 5) * 0.93, 0]);
+    prof.push([r - 0.02, 0.01], [r, 0.05]);
+    for (let i = 1; i <= 5; i++) prof.push([r, 0.05 + (len - 0.1) * (i / 5)]);
+    prof.push([r - 0.02, len - 0.01], [r * 0.93, len]);
+    for (let i = 4; i >= 0; i--) prof.push([r * (i / 5) * 0.93, len]);
+    const seed = R.int(0, 999);
+    const dark = C(shade(color, -0.13)), light = C(shade(color, 0.06));
+    paint(P, lathe(prof, 24), color, { at: [-len / 2, r, 0], rot: [0, 0, -Math.PI / 2] }, (c, x, y, z, nx) => {
+      if (Math.abs(nx) > 0.7) {
+        const rr = Math.hypot(y - r, z);
+        c.lerp(Math.sin(rr * 70) > 0 ? light : dark, 0.45);
+      } else {
+        const n = noise3(seed, y * 18, z * 18);
+        c.lerp(n > 0 ? light : dark, Math.min(1, Math.abs(n) * 1.6));
+      }
+    });
+    for (const x of [-0.2, 0.2]) P.add(ring(r + 0.004, 0.014, { radial: 4, tubular: 28 }), '#b7894c', { at: [x, r, 0], rot: [0, 0, Math.PI / 2] });
+    spots = { lean: spot([0, 0, r + 0.2], 0, 'lean') };
+    footprint = { w: len + 0.1, d: 2 * r + 0.05 };
+  } else if (shape === 'stack') {
+    hayBale(P, R, [-0.38, 0, 0.02], R.float(-0.05, 0.05), color);
+    hayBale(P, R, [0.38, 0, -0.01], R.float(-0.05, 0.05), shade(color, -0.02));
+    hayBale(P, R, [0.02, 0.42, -0.04], R.float(-0.12, 0.12), shade(color, 0.02));
+    spots = { sit: spot([-0.58, 0.42, 0.11], 0, 'sit'), sit2: spot([0.58, 0.42, 0.1], 0, 'sit'), top: spot([0.02, 0.84, 0.07], 0, 'sit') };
+    footprint = { w: 1.55, d: 0.55 };
+  } else {
+    hayBale(P, R, [0, 0, 0], R.float(-0.04, 0.04), color);
+    spots = { sit: spot([0, 0.42, 0.11], 0, 'sit') };
+    footprint = { w: 0.78, d: 0.52 };
+  }
+  return finish(P.build('haybale'), { footprint, spots });
+}
+
+function buildWoodpile(p, ctx) {
+  const L = size(p.length, 1.3, 0.6, 3);
+  const block = flag(p.block, true);
+  const roof = flag(p.roof, false);
+  const R = rand(ctx, 'woodpile');
+  const P = new Parts();
+  const depth = 0.42;
+  const rows = 4;
+  const per = Math.max(2, Math.round(L / 0.17));
+  for (let row = 0; row < rows; row++) {
+    const n = per - (row % 2);
+    for (let i = 0; i < n; i++) {
+      const r = R.float(0.068, 0.085);
+      const x = -L / 2 + (L / per) * (i + 0.5 + (row % 2) * 0.5);
+      const y = 0.075 + row * 0.142 + R.float(-0.005, 0.005);
+      const z = R.float(-0.025, 0.025);
+      log(P, [x, y, z - depth / 2], [x, y, z + depth / 2], r, shade('#7a5233', R.float(-0.06, 0.06)), 9);
+    }
+  }
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) P.add(softBox(0.055, 0.72, 0.055, 0.015), PALETTE.woodDark, { at: [sx * (L / 2 + 0.035), 0, sz * 0.15] });
+  if (roof) {
+    for (const sx of [-1, 1]) {
+      P.add(softBox(0.07, 1.0, 0.07, 0.02), PALETTE.woodDark, { at: [sx * (L / 2 + 0.12), 0, -0.36] });
+      P.add(softBox(0.07, 0.82, 0.07, 0.02), PALETTE.woodDark, { at: [sx * (L / 2 + 0.12), 0, 0.36] });
+    }
+    const slope = Math.atan2(0.18, 0.8);
+    for (let i = 0; i < 4; i++) P.add(softBox((L + 0.46) / 4 - 0.01, 0.04, 0.98, 0.015), shade(PALETTE.woodGrey, R.float(-0.05, 0.05)), { at: [-(L + 0.46) / 2 + (i + 0.5) * ((L + 0.46) / 4), 0.91, 0], rot: [slope, 0, 0] });
+  }
+  let spots = { front: spot([0, 0, depth / 2 + 0.5], 180, 'stand') };
+  let w = L + 0.2;
+  if (block) {
+    const bx = L / 2 + 0.55, bz = 0.25;
+    const bark = '#7a5233';
+    const sprof = [[0.2, 0], [0.19, 0.04], [0.18, 0.26], [0.17, 0.3]];
+    for (let i = 4; i >= 0; i--) sprof.push([0.17 * (i / 5), 0.3]);
+    paint(P, lathe(sprof, 14), bark, { at: [bx, 0, bz] }, (c, x, y, z, nx, ny) => {
+      if (ny > 0.7) { const rr = Math.hypot(x - bx, z - bz); c.set(fract(rr * 28) < 0.5 ? '#e2bd85' : '#d3a86d'); }
+    }, { flat: true });
+    // an axe stuck in the block
+    const M = xform([bx + 0.02, 0.3, bz], [0, -0.5, -0.5]);
+    P.add(softBox(0.035, 0.42, 0.03, 0.012), '#c99a5e', { matrix: M.clone().multiply(xform([0, 0.0, 0])) });
+    P.add(softBox(0.11, 0.075, 0.02, 0.008), { slot: 'metal', color: '#aeb6bf' }, { matrix: M.clone().multiply(xform([0.04, -0.02, 0])) });
+    log(P, [bx - 0.3, 0.05, bz + 0.25], [bx - 0.1, 0.05, bz + 0.33], 0.05, '#7a5233', 7);
+    spots.chop = spot([bx, 0, bz + 0.55], 180, 'stand');
+    w += 1.0;
+  }
+  return finish(P.build('woodpile'), { footprint: { w, d: roof ? 1.0 : 0.6 }, spots, height: roof ? 1.0 : 0.62 });
+}
+
+const HEADS = ['auto', 'sack', 'pumpkin'];
+
+function buildScarecrow(p, ctx) {
+  const shirt = colorOr(p.color, '#6f9fd8');
+  let head = oneOf(p.head, HEADS, 'auto');
+  if (head === 'auto') head = seasonOf(ctx) === 'autumn' ? 'pumpkin' : 'sack';
+  const hat = flag(p.hat, true);
+  const crow = flag(p.crow, true);
+  const R = rand(ctx, 'scarecrow');
+  const P = new Parts();
+  const wood = PALETTE.wood;
+  P.add(softBox(0.08, 1.4, 0.08, 0.02), wood, { at: [0, 0, -0.02] });
+  P.add(softBox(1.12, 0.07, 0.07, 0.02), wood, { at: [0, 1.12, -0.02] });
+  // a shirt with patches, sleeves along the crossbar, straw at the cuffs and hem
+  const cloth = { slot: 'cloth', color: shirt };
+  P.add(clothLathe([[0.2, 0], [0.235, 0.04], [0.22, 0.2], [0.21, 0.32], [0.23, 0.42], [0.16, 0.5], [0.06, 0.53], [0, 0.53]], 12, 5, { amp: 0.05 }), cloth, { at: [0, 0.68, 0], scale: [1, 1, 0.72] });
+  for (const sx of [-1, 1]) {
+    rod(P, [sx * 0.15, 1.15, -0.02], [sx * 0.5, 1.13, -0.02], 0.075, cloth, { seg: 10, soft: true, top: 0.06 });
+    for (let i = 0; i < 4; i++) P.add(sphere(0.03, 6, 4), shade(HAY, R.float(-0.06, 0.04)), { at: [sx * (0.56 + R.float(0, 0.03)), 1.13 + R.float(-0.035, 0.035), -0.02 + R.float(-0.035, 0.035)], scale: [1.9, 0.7, 0.8], rot: [R.float(-0.4, 0.4), 0, sx * R.float(-0.4, 0.4)] });
+  }
+  for (let i = 0; i < 9; i++) {
+    const a = (i / 9) * TAU;
+    P.add(cone(0.025, 0.12, 5).rotateX(Math.PI), shade(HAY, R.float(-0.06, 0.04)), { at: [Math.cos(a) * 0.16, 0.7, Math.sin(a) * 0.12], rot: [Math.sin(a) * 0.25, 0, -Math.cos(a) * 0.25] });
+  }
+  P.add(softBox(0.12, 0.12, 0.02, 0.01), { slot: 'cloth', color: '#f2c94c' }, { at: [0.08, 0.86, 0.15], rot: [0, 0.2, 0.2] });
+  P.add(softBox(0.09, 0.09, 0.02, 0.008), { slot: 'cloth', color: '#d9534a' }, { at: [-0.1, 0.98, 0.15], rot: [0, -0.2, -0.15] });
+  for (let i = 0; i < 3; i++) P.add(sphere(0.016, 6, 4), '#f4efe6', { at: [0, 0.82 + i * 0.1, 0.165] });
+  // head
+  const hy = 1.4;
+  if (head === 'pumpkin') {
+    pumpkin(P, R, [0, hy - 0.17, 0], 0.17);
+  } else {
+    P.add(clothLathe([[0, -0.17], [0.11, -0.15], [0.17, -0.06], [0.175, 0.02], [0.15, 0.11], [0.08, 0.165], [0, 0.18]], 14, 9, { amp: 0.04 }), { slot: 'cloth', color: '#efdcb2' }, { at: [0, hy, 0] });
+    P.add(ring(0.06, 0.016, { radial: 4, tubular: 12 }), '#a8865a', { at: [0, hy - 0.18, 0] });
+  }
+  const fz = head === 'pumpkin' ? 0.165 : 0.168, fy = head === 'pumpkin' ? hy - 0.02 : hy;
+  for (const sx of [-1, 1]) P.add(sphere(0.026, 8, 6), '#3a3440', { at: [sx * 0.06, fy + 0.03, fz - 0.01], scale: [1, 1, 0.6] });
+  for (let i = 0; i < 5; i++) {
+    const a = -0.75 + (i / 4) * 1.5;
+    P.add(softBox(0.03, 0.012, 0.014, 0.004), '#4a3a32', { at: [Math.sin(a) * 0.07, fy - 0.07 + (1 - Math.cos(a)) * 0.045, fz - 0.012 - Math.abs(a) * 0.02], rot: [0, -a * 0.6, a * 0.9] });
+  }
+  for (const sx of [-1, 1]) P.add(sphere(0.022, 6, 4), '#f19bb7', { at: [sx * 0.11, fy - 0.02, fz - 0.035], scale: [1, 0.7, 0.4] });
+  if (hat) {
+    const hTop = head === 'pumpkin' ? hy + 0.08 : hy + 0.12;
+    P.add(roundCyl(0.3, 0.025, { segments: 18, steps: 1, bevel: 0.01 }), HAY, { at: [0, hTop, 0], rot: [0.12, 0, 0.06] });
+    P.add(lathe([[0.15, 0], [0.155, 0.08], [0.13, 0.14], [0.06, 0.165], [0, 0.17]], 14), HAY, { at: [0, hTop + 0.015, 0], rot: [0.12, 0, 0.06] });
+    P.add(lathe([[0.157, 0], [0.16, 0.04], [0.157, 0.045]], 14), PALETTE.cloth.red, { at: [0, hTop + 0.025, 0], rot: [0.12, 0, 0.06] });
+  }
+  if (crow) {
+    const cx = 0.38, cy = 1.16;
+    const ink = '#3d3a48';
+    P.add(sphere(0.06, 9, 6), ink, { at: [cx, cy + 0.07, 0], scale: [1.25, 1, 0.9] });
+    P.add(sphere(0.042, 8, 6), ink, { at: [cx + 0.06, cy + 0.13, 0] });
+    P.add(cone(0.015, 0.045, 5), '#f2c94c', { at: [cx + 0.1, cy + 0.125, 0], rot: [0, 0, -Math.PI / 2] });
+    P.add(sphere(0.008, 5, 4), '#f4efe6', { at: [cx + 0.08, cy + 0.14, 0.03] });
+    P.add(extrude([[0, 0], [-0.08, 0.03], [-0.08, -0.02]], 0.01, { bevel: 0.006, bevelSegments: 1 }), ink, { at: [cx - 0.06, cy + 0.07, 0] });
+  }
+  return finish(P.build('scarecrow'), { footprint: { r: 0.3 }, spots: { front: spot([0, 0, 0.85], 180, 'stand') }, height: 1.75 });
 }
 
 /* ───────────────────────── catalog ───────────────────────── */
@@ -1744,7 +2835,7 @@ export const VILLAGE = {
     params: {
       style: { default: 'tied', options: SACK_STYLE, about: 'tied, open, or lying on its side' },
       count: { default: 1, min: 1, max: 3, about: 'how many' },
-      color: { default: '#d9c18f', type: 'color', about: 'cloth color' },
+      color: { default: '#e2cc9c', type: 'color', about: 'cloth color' },
     },
     examples: [{}, { style: 'open' }, { count: 3 }, { style: 'lying', count: 3 }, { color: '#c9b49a', count: 2 }],
     build: buildSack,
@@ -1838,5 +2929,191 @@ export const VILLAGE = {
     },
     examples: [{}, { style: 'rail' }, { style: 'stone' }, { style: 'iron' }, { gate: true, length: 4 }, { style: 'rail', gate: true, length: 4 }, { style: 'stone', gate: true, length: 4.2 }, { style: 'iron', gate: true, length: 4, color: '#2f6a5a' }],
     build: buildFence,
+  },
+
+  table: {
+    label: 'Table',
+    about: 'A wooden table at 0.36: round on a pedestal, square or long on legs, with an optional cloth and things on top (tea, a meal, flowers, a little lantern).',
+    params: {
+      shape: { default: 'round', options: TABLE_SHAPES, about: 'round, square or long' },
+      items: { default: 'none', options: TABLE_ITEMS, about: 'what is on the table' },
+      cloth: { default: '', type: 'color', about: 'tablecloth color (empty for none)' },
+      color: { default: PALETTE.woodLight, type: 'color', about: 'wood color' },
+    },
+    examples: [{}, { shape: 'square', items: 'tea' }, { shape: 'long', items: 'meal', cloth: '#f4efe6' }, { items: 'flowers', cloth: PALETTE.cloth.red }, { items: 'lantern', color: PALETTE.woodDark }],
+    build: buildTable,
+  },
+
+  chair: {
+    label: 'Chair',
+    about: 'A chair with a 0.2 seat: a ladder-back wooden chair or a hooped iron cafe chair, with an optional cushion.',
+    params: {
+      style: { default: 'wood', options: CHAIR_STYLES, about: 'wooden or cafe' },
+      color: { default: '', type: 'color', about: 'paint color (empty for the style\'s own)' },
+      cushion: { default: '', type: 'color', about: 'cushion color (empty for none)' },
+    },
+    examples: [{}, { style: 'cafe' }, { cushion: PALETTE.cloth.red }, { style: 'cafe', color: '#f4efe6', cushion: PALETTE.cloth.yellow }, { color: '#7fa7c9' }],
+    build: buildChair,
+  },
+
+  stool: {
+    label: 'Stool',
+    about: 'A round wooden stool on three splayed legs, low or bar height, with an optional cushion.',
+    params: {
+      height: { default: 0.24, min: 0.15, max: 0.55, about: 'seat height' },
+      color: { default: PALETTE.wood, type: 'color', about: 'wood color' },
+      cushion: { default: '', type: 'color', about: 'cushion color (empty for none)' },
+    },
+    examples: [{}, { height: 0.45 }, { cushion: PALETTE.cloth.green, color: PALETTE.woodLight }],
+    build: buildStool,
+  },
+
+  parasol: {
+    label: 'Parasol',
+    about: 'A cafe umbrella on a weighted base, made to stand over a table (place it at the table\'s spot, or set table to bring one).',
+    params: {
+      color: { default: PALETTE.cloth.teal, type: 'color', about: 'canopy color' },
+      stripes: { default: true, about: 'striped panels' },
+      height: { default: 1.75, min: 1.4, max: 2.4, about: 'height to the top' },
+      table: { default: false, about: 'with a round table under it' },
+    },
+    examples: [{}, { table: true, color: PALETTE.cloth.red }, { stripes: false, color: PALETTE.cloth.yellow }, { color: PALETTE.cloth.blue, height: 2 }],
+    build: buildParasol,
+  },
+
+  picnic: {
+    label: 'Picnic',
+    about: 'A checked picnic blanket with a wicker hamper, a pie, plates and cups. Four floor spots on the blanket face the middle.',
+    params: {
+      color: { default: PALETTE.cloth.red, type: 'color', about: 'check color' },
+      size: { default: 1.6, min: 1, max: 3, about: 'blanket width' },
+      basket: { default: true, about: 'with a hamper' },
+      food: { default: true, about: 'with food and drinks' },
+    },
+    examples: [{}, { color: PALETTE.cloth.blue, size: 2 }, { color: PALETTE.cloth.green, food: false }],
+    build: buildPicnic,
+  },
+
+  campfire: {
+    label: 'Campfire',
+    about: 'A ring of stones around crossed logs with flickering flames, rising sparks and a warm light (always on). Six floor spots around it face the fire, leaving the front open for the camera.',
+    params: {
+      lit: { default: true, about: 'burning, or cold ashes' },
+      size: { default: 1, min: 0.6, max: 2, about: 'scale' },
+    },
+    examples: [{}, { lit: false }, { size: 1.4 }],
+    build: buildCampfire,
+  },
+
+  cart: {
+    label: 'Market cart',
+    about: 'A wooden hand cart with two big spoked wheels and handles toward +X, loaded with goods. Pull it from the handles; sell from its sides.',
+    params: {
+      goods: { default: 'fruit', options: CART_GOODS, about: 'the load' },
+      color: { default: '#5a8fce', type: 'color', about: 'painted rail color' },
+      wood: { default: PALETTE.wood, type: 'color', about: 'wood color' },
+    },
+    examples: [{}, { goods: 'veggies', color: PALETTE.cloth.green }, { goods: 'flowers', color: PALETTE.cloth.pink }, { goods: 'hay', color: PALETTE.woodRed }, { goods: 'sacks', color: '#7a5233' }, { goods: 'milk', color: PALETTE.cloth.teal }, { goods: 'none' }],
+    build: buildCart,
+  },
+
+  wheelbarrow: {
+    label: 'Wheelbarrow',
+    about: 'A painted wheelbarrow (wheel toward +X), empty or carrying dirt, hay, flowers, pumpkins, apples or firewood.',
+    params: {
+      contents: { default: 'none', options: BARROW_FILL, about: 'the load' },
+      color: { default: '#5aa56a', type: 'color', about: 'tub color' },
+    },
+    examples: [{}, { contents: 'dirt', color: PALETTE.cloth.red }, { contents: 'flowers' }, { contents: 'pumpkins', color: '#4f86c6' }, { contents: 'hay', color: '#ee8c3e' }, { contents: 'firewood', color: '#8d6fc0' }],
+    build: buildWheelbarrow,
+  },
+
+  bunting: {
+    label: 'Bunting',
+    about: 'A string of triangle pennants between two posts for festivals; it sways in the wind.',
+    params: {
+      length: { default: 6, min: 1.5, max: 16, about: 'distance between the posts' },
+      colors: { default: FESTIVE, about: 'pennant colors in order (a list)' },
+      height: { default: 2.3, min: 1.6, max: 3.5, about: 'post height' },
+      wood: { default: PALETTE.wood, type: 'color', about: 'post color' },
+    },
+    examples: [{}, { length: 3.5, colors: ['#f4efe6', '#4f86c6'] }, { length: 9, colors: ['red', 'yellow', 'green'], height: 2.8 }],
+    build: buildBunting,
+  },
+
+  lanterns: {
+    label: 'Lantern string',
+    about: 'Round paper lanterns hanging on a string between two posts; they glow at night (warm lights along the string) and sway in the wind.',
+    params: {
+      length: { default: 6, min: 1.5, max: 16, about: 'distance between the posts' },
+      colors: { default: LANTERN_PAPER, about: 'paper colors in order (a list)' },
+      lit: { default: 'night', options: ['night', 'always', 'never'], about: 'when they glow' },
+      height: { default: 2.4, min: 1.6, max: 3.5, about: 'post height' },
+      wood: { default: PALETTE.woodDark, type: 'color', about: 'post color' },
+    },
+    examples: [{}, { length: 4, colors: ['#f05a4a'] }, { length: 9, lit: 'always', colors: ['#f7efe0', '#f7c548'] }],
+    build: buildLanterns,
+  },
+
+  flagpole: {
+    label: 'Flagpole',
+    about: 'A tall pole on a stone base with a gold ball on top and a cloth flag waving in the wind, with an emblem.',
+    params: {
+      color: { default: PALETTE.cloth.blue, type: 'color', about: 'flag color' },
+      emblem: { default: 'leaf', options: EMBLEMS, about: 'the mark on the flag' },
+      height: { default: 3.4, min: 2, max: 5, about: 'pole height' },
+      pole: { default: '#eae5da', type: 'color', about: 'pole color' },
+    },
+    examples: [{}, { color: PALETTE.cloth.red, emblem: 'star' }, { color: PALETTE.cloth.green, emblem: 'circle', height: 2.6 }, { color: '#f4efe6', emblem: 'stripe' }],
+    build: buildFlagpole,
+  },
+
+  statue: {
+    label: 'Statue',
+    about: 'A monument on a stone plinth with a plaque: a waving chibi figure, a bell under a little roof, an obelisk or a globe. Sit on the plinth step.',
+    params: {
+      variant: { default: 'figure', options: STATUE_VARIANTS, about: 'what stands on the plinth' },
+      finish: { default: 'bronze', options: Object.keys(FINISHES), about: 'material' },
+      plaque: { default: '', about: 'text on the plaque' },
+      stone: { default: PALETTE.stoneLight, type: 'color', about: 'plinth color' },
+    },
+    examples: [{}, { variant: 'bell' }, { variant: 'obelisk', finish: 'marble' }, { variant: 'globe' }, { finish: 'patina', plaque: 'Founder' }, { variant: 'figure', finish: 'gold', stone: '#9aa6b5' }],
+    build: buildStatue,
+  },
+
+  haybale: {
+    label: 'Hay bale',
+    about: 'Straw bales: a square bale to sit on, a big round bale lying on its side, or a stack of three for festival seating.',
+    params: {
+      shape: { default: 'square', options: HAY_SHAPES, about: 'square, round or a stack' },
+      color: { default: HAY, type: 'color', about: 'straw color' },
+    },
+    examples: [{}, { shape: 'round' }, { shape: 'stack' }],
+    build: buildHaybale,
+  },
+
+  woodpile: {
+    label: 'Woodpile',
+    about: 'Split logs stacked between stakes, with a chopping block and an axe beside them, optionally under a little lean-to roof.',
+    params: {
+      length: { default: 1.3, min: 0.6, max: 3, about: 'length of the stack' },
+      block: { default: true, about: 'a chopping block with an axe' },
+      roof: { default: false, about: 'a lean-to roof over the stack' },
+    },
+    examples: [{}, { roof: true, block: false }, { length: 2.2, roof: true }],
+    build: buildWoodpile,
+  },
+
+  scarecrow: {
+    label: 'Scarecrow',
+    about: 'A friendly scarecrow on a post: a patched shirt stuffed with straw, a stitched sack head (a pumpkin in autumn), a straw hat and a crow on its arm.',
+    params: {
+      color: { default: '#6f9fd8', type: 'color', about: 'shirt color' },
+      head: { default: 'auto', options: HEADS, about: 'sack, pumpkin, or auto (pumpkin in autumn)' },
+      hat: { default: true, about: 'straw hat' },
+      crow: { default: true, about: 'a crow perched on the arm' },
+    },
+    examples: [{}, { head: 'pumpkin', color: '#d9534a' }, { color: '#5aa56a', hat: false, crow: false }],
+    build: buildScarecrow,
   },
 };

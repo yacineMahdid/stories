@@ -146,7 +146,7 @@
         { "who": "shape:mira", "at": [-2.5, 10.2], "facing": "bridge", "do": "Idle", "feel": "surprised", "hold": "held-book" }
       ],
       "camera": [
-        { "shot": "wide", "on": ["shape:hattie", "shape:mira", "bridge"], "from": 210, "label": "The mill", "hold": 4 },
+        { "shot": "wide", "on": ["shape:hattie", "shape:mira", "mill"], "label": "The mill", "hold": 4 },
         { "shot": "two", "on": ["shape:hattie", "shape:mira"], "label": "Hattie and Mira" }
       ]
     },
@@ -165,7 +165,7 @@
         { "who": "shape:bruno", "at": [-1.3, 9.6], "facing": "bridge", "do": "Point", "feel": "shocked" }
       ],
       "camera": [
-        { "shot": "wide", "on": ["shape:hattie", "shape:bruno", "bridge"], "from": 225, "label": "The bridge goes", "hold": 4, "move": "push" },
+        { "shot": "wide", "on": ["shape:hattie", "shape:bruno", "bridge"], "label": "The bridge goes", "hold": 4, "move": "push" },
         { "shot": "close", "on": "shape:hattie", "label": "Hattie" }
       ]
     },
@@ -178,8 +178,8 @@
         { "who": "shape:mira", "at": [-2.6, 10.6], "facing": "bridge", "do": "Think", "feel": "thinking" }
       ],
       "camera": [
-        { "shot": "wide", "on": ["shape:hattie", "shape:mira", "bridge"], "from": 210, "label": "In the fog" },
-        { "shot": "medium", "on": ["shape:hattie", "shape:mira"], "label": "What now?" }
+        { "shot": "medium", "on": ["shape:hattie", "shape:mira"], "label": "In the fog" },
+        { "shot": "wide", "on": ["shape:hattie", "shape:mira", "bridge"], "label": "The broken bridge" }
       ]
     },
 
@@ -212,7 +212,7 @@
         { "who": "shape:mira", "at": [-2.4, 10.2], "facing": "shape:bruno", "do": "Clap", "feel": "happy" }
       ],
       "camera": [
-        { "shot": "wide", "on": ["shape:bruno", "shape:hattie", "shape:mira"], "from": 185, "label": "The new bridge" },
+        { "shot": "wide", "on": ["shape:bruno", "shape:hattie", "shape:mira"], "label": "The new bridge" },
         { "shot": "low", "on": "shape:bruno", "label": "Bruno", "from": 175 }
       ]
     },

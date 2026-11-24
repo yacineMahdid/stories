@@ -651,8 +651,10 @@ export class Director {
     // departures from the intended framing cost a little, so they only win when they help.
     const flat = off.clone().setY(0);
     const rise = off.y;
-    for (const step of [0, 8, -8, 16, -16, 24, -24, 36, -36, 50, -50, 65, -65, 80, -80]) {
-      if (Math.abs(step) > maxSwing) continue;
+    const steps = [0, 8, -8, 16, -16, 24, -24, 36, -36, 50, -50, 65, -65, 80, -80, 100, -100, 125, -125, 150, -150, 180];
+    for (const step of steps) {
+      // Past the allowed swing only when every view so far is from inside something (a roof, a canopy).
+      if (Math.abs(step) > maxSwing && bestScore < 3) continue;
       for (const [k, up] of [[1, 0], [0.75, 0], [1, 0.8], [0.75, 0.8]]) {
         if (!step && k === 1 && !up) continue;
         const o = flat.clone().multiplyScalar(k).applyAxisAngle(new THREE.Vector3(0, 1, 0), step * D2R).setY(rise * k + up);

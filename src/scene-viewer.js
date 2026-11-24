@@ -290,6 +290,15 @@ stage.onFrame = (() => {
     view.index = page;
     await go(page, { fade: false });
     if (q.get('shot')) { director.shot(Number(q.get('shot')) - 1); renderControls(director.state); }
+    // cam=px,py,pz,tx,ty,tz puts the camera anywhere (world units), for inspecting a set.
+    const cam = q.get('cam')?.split(',').map(Number);
+    if (cam?.length === 6 && cam.every(Number.isFinite)) {
+      director.userCamera = true;
+      stage.camera.position.set(cam[0], cam[1], cam[2]);
+      stage.controls.target.set(cam[3], cam[4], cam[5]);
+      stage.controls.update();
+      stage.focus(stage.controls.target.clone().setY(0), 30);
+    }
     window.viewer = { stage, world, director, go, view, ready: true, check: async () => (await import('./world/check.js')).checkStory(world) };
     if (q.get('still') === '1') {
       for (let i = 0; i < 4; i++) stage.step(1 / 30);
