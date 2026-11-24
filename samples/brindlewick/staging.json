@@ -96,7 +96,7 @@
         { "id": "fishrack", "kind": "fishrack", "at": [-6.5, -4.5], "facing": 30 },
         { "id": "pier-crates", "kind": "crate", "at": [1.6, -1.8] },
         { "id": "pier-barrel", "kind": "barrel", "at": [2.4, -1.2] },
-        { "id": "palm1", "kind": "tree", "at": [-10, -5], "variant": "palm" },
+        { "id": "palm1", "kind": "tree", "at": [-8.5, -2.2], "variant": "palm" },
         { "id": "palm2", "kind": "tree", "at": [7, -6], "variant": "palm" },
         { "kind": "scatter", "of": "shells", "area": { "at": [0, -2], "size": [24, 6] }, "count": 8, "onPaths": true },
         { "id": "driftwood", "kind": "driftwood", "at": [-2.5, -3.2], "facing": 30 }

@@ -463,7 +463,7 @@ export class Director {
       if (member) {
         const root = member.character.root;
         const h = (member.character.spec.height ?? 1) * (member.entry.pose === 'lie' ? 0.4 : 1);
-        out.push({ center: root.position.clone().add(new THREE.Vector3(0, h * 0.5, 0)), head: root.position.clone().add(new THREE.Vector3(0, h * 0.72, 0)), radius: 0.4 * h, yaw: root.rotation.y, height: h });
+        out.push({ center: root.position.clone().add(new THREE.Vector3(0, h * 0.5, 0)), head: root.position.clone().add(new THREE.Vector3(0, h * 0.72, 0)), radius: 0.4 * h, yaw: root.rotation.y, height: h, character: true });
         continue;
       }
       const object = this.set.objects.get(ref);
@@ -637,6 +637,9 @@ export class Director {
         if (b.clone().expandByScalar(0.35).containsPoint(p)) { score += 3; continue; }
         const r = rectOf(corners(b), cam);
         if (r.near > nearest - 0.15) continue;
+        // A big thing close to the lens (a roof, a canopy) spoils the frame even beside the cast.
+        const fx = Math.min(r.x1, 1) - Math.max(r.x0, -1), fy = Math.min(r.y1, 1) - Math.max(r.y0, -1);
+        if (fx > 0 && fy > 0 && r.near < nearest * 0.6) score += Math.max(0, (fx * fy) / 4 - 0.06) * 1.6;
         const ox = Math.min(r.x1, sr.x1) - Math.max(r.x0, sr.x0);
         const oy = Math.min(r.y1, sr.y1) - Math.max(r.y0, sr.y0);
         if (ox <= 0 || oy <= 0) continue;
@@ -644,22 +647,35 @@ export class Director {
       }
       return score;
     };
+    // Seeing the back of the cast costs a little: a clear view of their backs can still beat a
+    // cluttered view of their faces.
+    const faces = subs.filter((s) => s.character);
+    const backs = (p) => {
+      if (!faces.length) return 0;
+      let b = 0;
+      for (const s of faces) {
+        const dx = p.x - s.center.x, dz = p.z - s.center.z;
+        const d = Math.hypot(dx, dz) || 1;
+        b += (1 - (Math.sin(s.yaw) * dx + Math.cos(s.yaw) * dz) / d) / 2;
+      }
+      return (b / faces.length) * 0.45;
+    };
     const off = pos.clone().sub(target);
-    let best = pos, bestScore = occlusion(pos);
-    if (bestScore < 0.02) return pos;
-    // Try swinging around the subjects, coming a little closer, and rising a little; small
+    let best = pos, bestScore = occlusion(pos) + backs(pos);
+    if (bestScore - backs(pos) < 0.02) return pos;
+    // Try swinging around the subjects, coming closer or backing off, and rising; small
     // departures from the intended framing cost a little, so they only win when they help.
     const flat = off.clone().setY(0);
     const rise = off.y;
     const steps = [0, 8, -8, 16, -16, 24, -24, 36, -36, 50, -50, 65, -65, 80, -80, 100, -100, 125, -125, 150, -150, 180];
     for (const step of steps) {
-      // Past the allowed swing only when every view so far is from inside something (a roof, a canopy).
-      if (Math.abs(step) > maxSwing && bestScore < 3) continue;
-      for (const [k, up] of [[1, 0], [0.75, 0], [1, 0.8], [0.75, 0.8]]) {
+      // Beyond the allowed swing only while every view so far is badly blocked.
+      if (Math.abs(step) > maxSwing && bestScore < 0.6) continue;
+      for (const [k, up] of [[1, 0], [0.75, 0], [1, 0.8], [0.75, 0.8], [1.2, 1.6], [0.9, 2.4]]) {
         if (!step && k === 1 && !up) continue;
         const o = flat.clone().multiplyScalar(k).applyAxisAngle(new THREE.Vector3(0, 1, 0), step * D2R).setY(rise * k + up);
         const p = target.clone().add(o);
-        const score = occlusion(p) + Math.abs(step) * 0.002 + (1 - k) * 0.12 + up * 0.08;
+        const score = occlusion(p) + backs(p) + Math.abs(step) * 0.0015 + Math.abs(1 - k) * 0.12 + up * 0.06;
         if (window.DEBUG_FRAMING) console.log('framing', step, k, up, score.toFixed(2));
         if (score < bestScore - 0.03) { best = p; bestScore = score; }
       }

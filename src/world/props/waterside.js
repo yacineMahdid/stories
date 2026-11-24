@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
-  Parts, finish, spot, light, roundBox, roundCyl, cyl, cone, sphere, lathe, blob, tube, extrude, ring, xform, material,
+  Parts, finish, spot, light, roundBox, box, roundCyl, cyl, cone, sphere, lathe, blob, tube, extrude, ring, xform, material,
   PALETTE, SEASONS, shade, mix, rng, noise3,
 } from '../kit.js';
 
@@ -261,7 +261,7 @@ function petalCup(r, h, petals = 8, { rows = 4, per = 4, open = 1, tipLift = 0.3
 }
 
 /** A lily pad: a flat disc with a notch, lying on y = 0. */
-function padGeo(r, notch = 0.5, seg = 20) {
+function padGeo(r, notch = 0.5, seg = 14) {
   const pts = [[0, 0]];
   for (let i = 0; i <= seg; i++) {
     const a = notch / 2 + (i / seg) * (TAU - notch);
@@ -350,9 +350,9 @@ function addLily(parts, at, color, { scale = 1, bud = false } = {}) {
     return;
   }
   ringOf(8, 0.075, 0.034, 0.22, 0, 0.0);
-  ringOf(8, 0.062, 0.03, 0.62, Math.PI / 8, 0.012);
-  ringOf(5, 0.045, 0.024, 1.05, 0.3, 0.024);
-  parts.add(sphere(0.026, 10, 6), '#f4c542', { at: [cx, cy + 0.04 * scale, cz], scale: [scale, scale * 0.55, scale] });
+  ringOf(7, 0.062, 0.031, 0.62, Math.PI / 7, 0.012);
+  ringOf(4, 0.045, 0.026, 1.05, 0.3, 0.024);
+  parts.add(sphere(0.026, 8, 5), '#f4c542', { at: [cx, cy + 0.04 * scale, cz], scale: [scale, scale * 0.55, scale] });
 }
 
 /* ───────────────────────── boats ───────────────────────── */
@@ -463,7 +463,7 @@ function addHull(parts, h, { hull, bottom, stripe, rail, inside, weathered = fal
       const t = (i / 12) * 0.985;
       pts.push([side * (h.half(t) + 0.004), h.topY(t) - 0.01, h.zOf(t)]);
     }
-    parts.add(taper(pts, [0.024, 0.021], { segments: 22, radial: 7 }), rail);
+    parts.add(taper(pts, [0.024, 0.021], { segments: 16, radial: 6 }), rail);
   }
   // a little deck in the bow, between the rails
   const deck = [];
@@ -502,7 +502,7 @@ function addHull(parts, h, { hull, bottom, stripe, rail, inside, weathered = fal
       const hw = h.insideHalf(t, y) - 0.008;
       pts.push([-Math.sign(s) * hw, y, h.zOf(t)]);
     }
-    parts.add(taper(pts, [0.013, 0.013], { segments: 16, radial: 5, caps: false }), shade(inside, -0.1));
+    parts.add(taper(pts, [0.013, 0.013], { segments: 12, radial: 4, caps: false }), shade(inside, -0.1));
   }
 }
 
@@ -681,14 +681,16 @@ export const WATERSIDE = {
       // end board across the front
       parts.add(roundBox(W + 0.06, 0.11, 0.04, 0.016, 1), pal.trim, { at: [0, top - plankT - 0.085, L + 0.012] });
       // posts in pairs, sticking up as bollards with round caps
-      const bays = Math.max(1, Math.round(L / 1.35));
+      const bays = Math.max(1, Math.round(L / (L > 6 ? 1.6 : 1.35)));
       const postZ = [];
       for (let i = 0; i <= bays; i++) postZ.push(lerp(0.25, L - 0.12, i / bays));
+      const postGeo = lathe([[0, -1.25], [0.072, -1.25], [0.07, 0.17], [0.066, 0.19], [0, 0.19]], 10);
+      const capGeo = lathe([[0, 0], [0.072, 0], [0.08, 0.012], [0.078, 0.034], [0.06, 0.052], [0, 0.056]], 10);
       for (const z of postZ) {
         for (const s of [1, -1]) {
           const x = s * (W / 2 + 0.06);
-          parts.add(roundCyl(0.072, 1.45, { top: 0.068, bevel: 0.03, segments: 12, steps: 2 }), pal.post, { at: [x, -1.25, z] });
-          parts.add(roundCyl(0.078, 0.05, { bevel: 0.022, segments: 12, steps: 2 }), pal.cap, { at: [x, 0.19, z] });
+          parts.add(postGeo, pal.post, { at: [x, 0, z] });
+          parts.add(capGeo, pal.cap, { at: [x, 0.185, z] });
         }
         // a cross beam under the deck between the pair
         parts.add(roundBox(W + 0.1, 0.07, 0.07, 0.02, 1), pal.frame, { at: [0, -0.16, z] });
@@ -786,16 +788,16 @@ export const WATERSIDE = {
         const z = h.zOf(t), hw = h.insideHalf(t, y) - 0.004;
         const broken = wreck && k === 1;
         boat.add(roundBox(hw * 2, 0.035, 0.17, 0.014, 1), seatCol, { at: [0, y - 0.035 - (broken ? 0.07 : 0), z], rot: broken ? [0.05, 0, 0.3] : undefined });
-        if (!broken) boat.add(roundBox(0.06, Math.max(0.02, y - 0.035 - h.keelY(t) - 0.03), 0.05, 0.015, 1), shade(seatCol, -0.08), { at: [0, h.keelY(t) + 0.03, z] });
+        if (!broken) boat.add(box(0.05, Math.max(0.02, y - 0.035 - h.keelY(t) - 0.03), 0.045), shade(seatCol, -0.08), { at: [0, h.keelY(t) + 0.03, z] });
         seatTops.push([z, y]);
       });
       // floor boards
       const fy = h.keelY(0.45) + h.th + 0.004;
-      for (const dx of [-0.09, 0, 0.09]) boat.add(roundBox(0.08, 0.016, 0.7, 0.006, 1), shade(inside, -0.06), { at: [dx, fy, h.zOf(0.45)] });
+      for (const dx of [-0.09, 0, 0.09]) boat.add(box(0.075, 0.016, 0.7), shade(inside, -0.06), { at: [dx, fy, h.zOf(0.45)] });
       // oarlocks on the gunwale at the middle seat
       const zMid = h.zOf(0.5), yTop = h.topY(0.5);
       for (const s of [1, -1]) {
-        boat.add(ring(0.03, 0.009, { radial: 5, tubular: 10, arc: Math.PI }), { slot: 'metal', color: '#9aa3ab' }, { at: [s * h.half(0.5), yTop + 0.045, zMid], rot: [Math.PI / 2, 0, Math.PI / 2] });
+        boat.add(ring(0.03, 0.009, { radial: 4, tubular: 8, arc: Math.PI }), { slot: 'metal', color: '#9aa3ab' }, { at: [s * h.half(0.5), yTop + 0.045, zMid], rot: [Math.PI / 2, 0, Math.PI / 2] });
         boat.add(roundCyl(0.012, 0.03, { bevel: 0.004, segments: 6, steps: 1 }), { slot: 'metal', color: '#9aa3ab' }, { at: [s * h.half(0.5), yTop - 0.01, zMid] });
       }
       // a mooring ring on the bow
@@ -826,11 +828,11 @@ export const WATERSIDE = {
         const [hx, hy, hz, hr] = hole;
         const tH = (hz + h.L / 2) / h.L;
         const sideX = hx * (h.insideHalf(tH, hy) + h.th);
-        wp.add(blob(hr, { detail: 2, amp: 0.28, freq: 2.4, seed: 5, squash: [0.12, 0.62, 1] }), '#3a2f27', { at: [sideX + hx * 0.004, hy, hz] });
+        wp.add(blob(hr, { detail: 1, amp: 0.28, freq: 2.4, seed: 5, squash: [0.12, 0.62, 1] }), '#3a2f27', { at: [sideX + hx * 0.004, hy, hz] });
         for (let i = 0; i < 6; i++) {
           const a = (i / 6) * TAU + r.float(-0.25, 0.25);
           const len = r.float(0.06, 0.11);
-          wp.add(roundBox(len, 0.012, 0.03, 0.005, 1), '#b2a895', { at: [sideX + hx * 0.01, hy + Math.sin(a) * hr * 0.6, hz + Math.cos(a) * hr * 0.95], rot: [0, hx * r.float(0.1, 0.5), a + r.float(-0.4, 0.4)] });
+          wp.add(box(len, 0.012, 0.03), '#b2a895', { at: [sideX + hx * 0.01, hy + Math.sin(a) * hr * 0.6, hz + Math.cos(a) * hr * 0.95], rot: [0, hx * r.float(0.1, 0.5), a + r.float(-0.4, 0.4)] });
         }
         const weed = { slot: 'foliage', color: '#5d8f4c', sway: 0.25 };
         for (let i = 0; i < 6; i++) {
@@ -838,13 +840,13 @@ export const WATERSIDE = {
           const s = i % 2 ? 1 : -1;
           const x0 = s * (h.half(t) + 0.02), y0 = h.topY(t) - 0.01, z0 = h.zOf(t);
           const len = r.float(0.12, 0.24);
-          wp.add(taper([[x0, y0, z0], [x0 + s * 0.04, y0 - len * 0.4, z0 + 0.02], [x0 + s * 0.035, y0 - len, z0 - 0.01]], (u) => 0.016 * (1 - u * 0.6), { segments: 8, radial: 5 }), { ...weed, color: shade(weed.color, r.float(-0.05, 0.05)) });
+          wp.add(taper([[x0, y0, z0], [x0 + s * 0.04, y0 - len * 0.4, z0 + 0.02], [x0 + s * 0.035, y0 - len, z0 - 0.01]], (u) => 0.016 * (1 - u * 0.6), { segments: 6, radial: 4, caps: false }), { ...weed, color: shade(weed.color, r.float(-0.05, 0.05)) });
         }
-        for (let i = 0; i < 14; i++) {
+        for (let i = 0; i < 9; i++) {
           const t = r.float(0.08, 0.9), s = r.sign();
           const y = r.float(-0.05, 0.03);
           const hw = h.insideHalf(t, y) + h.th + 0.004;
-          wp.add(sphere(r.float(0.012, 0.022), 6, 4), '#d9d3c4', { at: [s * hw, y, h.zOf(t)], scale: [0.6, 1, 1] });
+          wp.add(sphere(r.float(0.013, 0.022), 5, 3), '#d9d3c4', { at: [s * hw, y, h.zOf(t)], scale: [0.6, 1, 1] });
         }
         adopt(outer, wp.build('wreck'));
       }
@@ -1438,7 +1440,7 @@ export const WATERSIDE = {
           for (let i = 0; i < 4; i++) for (let k = 0; k < 7; k++) {
             const x = -W / 2 + 0.11 + i * ((W - 0.22) / 3) + (k % 2 ? 0.08 : 0), z = -L / 2 + 0.14 + k * ((L - 0.28) / 6);
             if (Math.abs(x) > W / 2 - 0.06) continue;
-            parts.add(cyl(0.035, T + 0.004, { segments: 10 }), cloth(col2), { at: [x, 0, z] });
+            parts.add(cyl(0.035, T + 0.004, { segments: 8 }), cloth(col2), { at: [x, 0, z] });
           }
         }
       }
@@ -1446,7 +1448,7 @@ export const WATERSIDE = {
       for (const sz of [1, -1]) {
         for (let i = 0; i < 9; i++) {
           const x = -W / 2 + 0.05 + (i * (W - 0.1)) / 8;
-          parts.add(roundBox(0.018, 0.006, 0.05, 0.003, 1), cloth(col2 === col ? shade(col, 0.1) : col2), { at: [x, 0.001, sz * (L / 2 + 0.02)] });
+          parts.add(box(0.018, 0.006, 0.05), cloth(col2 === col ? shade(col, 0.1) : col2), { at: [x, 0.001, sz * (L / 2 + 0.02)] });
         }
       }
       return finish(parts.build('towel'), {
@@ -1463,13 +1465,13 @@ export const WATERSIDE = {
     label: 'Fish drying rack',
     about: 'A rustic drying rack of lashed poles with a fishing net draped over one end and a row of fish hanging to dry, and a basket underneath.',
     params: {
-      fish: { default: 5, min: 0, max: 8, about: 'how many fish hang from the bar' },
+      fish: { default: 5, min: 0, max: 6, about: 'how many fish hang from the bar' },
       net: { default: true, about: 'a net draped over the bar' },
       color: { default: 'teal', type: 'color', about: 'net color' },
     },
-    examples: [{}, { fish: 3, color: 'sky' }, { net: false, fish: 8 }],
+    examples: [{}, { fish: 3, color: 'sky' }, { net: false, fish: 6 }],
     build(p, ctx) {
-      const nFish = int(p.fish, 5, 0, 8), withNet = flag(p.net, true);
+      const nFish = int(p.fish, 5, 0, 6), withNet = flag(p.net, true);
       const netCol = colorOr(p.color, NAMED.teal);
       const r = rand(ctx, 'rack');
       const parts = new Parts();
@@ -1478,12 +1480,12 @@ export const WATERSIDE = {
       // two lashed A-frames and the bar across them
       for (const sx of [1, -1]) {
         const x = sx * X;
-        parts.add(stick([x, -0.05, 0.34], [x, top + 0.14, -0.08], 0.032, { segments: 8 }), pole);
-        parts.add(stick([x, -0.05, -0.34], [x, top + 0.14, 0.08], 0.032, { segments: 8 }), pole);
-        parts.add(ring(0.045, 0.014, { radial: 5, tubular: 12 }), rope, { at: [x, top - 0.02, 0], rot: [0, 0, Math.PI / 2] });
+        parts.add(stick([x, -0.05, 0.34], [x, top + 0.14, -0.08], 0.032, { segments: 7 }), pole);
+        parts.add(stick([x, -0.05, -0.34], [x, top + 0.14, 0.08], 0.032, { segments: 7 }), pole);
+        parts.add(ring(0.045, 0.014, { radial: 4, tubular: 10 }), rope, { at: [x, top - 0.02, 0], rot: [0, 0, Math.PI / 2] });
         parts.add(stick([x, 0.32, 0.25], [x, 0.32, -0.25], 0.018, { segments: 6 }), pole);
       }
-      parts.add(taper([[-X - 0.16, top + 0.02, 0], [0, top + 0.035, 0.01], [X + 0.16, top + 0.02, 0]], [0.04, 0.036], { segments: 10, radial: 8 }), PALETTE.woodDark);
+      parts.add(taper([[-X - 0.16, top + 0.02, 0], [0, top + 0.035, 0.01], [X + 0.16, top + 0.02, 0]], [0.04, 0.036], { segments: 6, radial: 7 }), PALETTE.woodDark);
       // fish hanging by their tails
       const fishCols = ['#8fb0c6', '#9dbbcb', '#d19c86', '#a6bfae'];
       for (let i = 0; i < nFish; i++) {
@@ -1491,9 +1493,9 @@ export const WATERSIDE = {
         const len = r.float(0.24, 0.3), y0 = top - 0.02;
         const col = r.pick(fishCols);
         const lean = r.float(-0.08, 0.08);
-        parts.add(stick([x, y0, 0], [x, y0 - 0.06, 0], 0.006, { segments: 4 }), rope);
+        parts.add(cyl(0.006, 0.06, { segments: 4 }), rope, { at: [x, y0 - 0.06, 0] });
         const cy = y0 - 0.1 - len / 2;
-        addPainted(parts, sphere(1, 10, 8), col, { at: [x, cy, 0], scale: [0.06, len / 2, 0.032], rot: [0, 0, lean] }, (c, px, py) => {
+        addPainted(parts, sphere(1, 8, 5), col, { at: [x, cy, 0], scale: [0.06, len / 2, 0.032], rot: [0, 0, lean] }, (c, px, py) => {
           if (px > 0.15) c.lerp(C('#f1f2ee'), 0.7);
           else if (px < -0.45) c.offsetHSL(0, 0.04, -0.08);
           if (py < -0.75) c.offsetHSL(0, 0, -0.04);
@@ -1501,14 +1503,11 @@ export const WATERSIDE = {
         // tail at the top, a fin on the back
         parts.add(extrude([[0, 0], [0.055, 0.06], [0.02, 0.05], [0, 0.04], [-0.02, 0.05], [-0.055, 0.06]], 0.008, { bevel: 0.005, bevelSegments: 1 }), shade(col, -0.06), { at: [x + Math.sin(-lean) * len * 0.45, cy + len / 2 - 0.022, 0], rot: [0, 0, lean] });
         parts.add(extrude([[0, 0], [-0.03, 0.02], [-0.036, 0.07], [0, 0.08]], 0.006, { bevel: 0.004, bevelSegments: 1 }), shade(col, -0.08), { at: [x - 0.05, cy - 0.04, 0], rot: [0, 0, lean] });
-        for (const sz of [1, -1]) {
-          parts.add(sphere(0.012, 8, 6), '#fbfaf5', { at: [x - 0.012, cy - len / 2 + 0.05, sz * 0.026], scale: [1, 1, 0.5] });
-          parts.add(sphere(0.007, 6, 4), '#2f3436', { at: [x - 0.014, cy - len / 2 + 0.048, sz * 0.031], scale: [1, 1, 0.5] });
-        }
+        for (const sz of [1, -1]) parts.add(sphere(0.011, 5, 3), '#2f3436', { at: [x - 0.012, cy - len / 2 + 0.05, sz * 0.027], scale: [1, 1, 0.5] });
       }
       // the net, draped over the bar: knotted cords over a sheer cloth, cork floats on the hem
       if (withNet) {
-        const NX = 8, NZ = 10;
+        const NX = 6, NZ = 10;
         const hangOf = (u) => 0.62 + 0.1 * Math.sin(u * 4.2) + 0.06 * Math.sin(u * 11 + 1);
         const at = (u, v) => {
           const x = lerp(-X + 0.08, -0.06, u), s = v * 2 - 1;
@@ -1521,27 +1520,27 @@ export const WATERSIDE = {
         for (let i = 0; i <= NX; i++) { const row = []; for (let j = 0; j <= NZ; j++) row.push(at(i / NX, j / NZ)); rows.push(row); }
         parts.add(loft(rows), { slot: 'cloth', color: mix(netCol, '#f4f1e8', 0.35), double: true, transparent: true, opacity: 0.4 });
         const cord = { slot: 'cloth', color: shade(netCol, -0.12) };
-        for (let i = 0; i <= 6; i++) {
-          const u = i / 6, pts = [];
+        for (let i = 0; i <= 5; i++) {
+          const u = i / 5, pts = [];
           for (let j = 0; j <= 10; j++) pts.push(at(u, j / 10));
-          parts.add(tube(pts, 0.007, { segments: 14, radial: 3 }), cord);
+          parts.add(tube(pts, 0.007, { segments: 7, radial: 3 }), cord);
         }
-        for (const v of [0.02, 0.14, 0.3, 0.7, 0.86, 0.98]) {
+        for (const v of [0.04, 0.24, 0.76, 0.96]) {
           const pts = [];
           for (let i = 0; i <= 6; i++) pts.push(at(i / 6, v));
-          parts.add(tube(pts, 0.007, { segments: 10, radial: 3 }), cord);
+          parts.add(tube(pts, 0.007, { segments: 7, radial: 3 }), cord);
         }
         for (let i = 0; i <= 4; i++) {
           const u = i / 4;
           const [x, y, z] = at(u, 1);
-          parts.add(sphere(0.032, 8, 6), '#e9a54a', { at: [x, y - 0.01, z], scale: [1, 0.8, 0.8] });
+          parts.add(sphere(0.032, 6, 4), '#e9a54a', { at: [x, y - 0.01, z], scale: [1, 0.8, 0.8] });
         }
       }
       // a woven basket below
-      addPainted(parts, lathe([[0, 0], [0.15, 0], [0.18, 0.04], [0.19, 0.13], [0.17, 0.14], [0.16, 0.03], [0, 0.03]], 16), PALETTE.thatch, { at: [0.45, 0, 0.12] }, (c, x, y) => {
+      addPainted(parts, lathe([[0, 0], [0.15, 0], [0.18, 0.04], [0.19, 0.13], [0.17, 0.14], [0.16, 0.03], [0, 0.03]], 14), PALETTE.thatch, { at: [0.45, 0, 0.12] }, (c, x, y) => {
         if (Math.floor(y / 0.025) % 2) c.offsetHSL(0, 0, -0.06);
       });
-      parts.add(ring(0.185, 0.014, { radial: 5, tubular: 18 }), shade(PALETTE.thatch, -0.12), { at: [0.45, 0.135, 0.12] });
+      parts.add(ring(0.185, 0.014, { radial: 4, tubular: 16 }), shade(PALETTE.thatch, -0.12), { at: [0.45, 0.135, 0.12] });
       return finish(parts.build('fishrack'), {
         footprint: { w: 2.1, d: 0.8 },
         spots: { front: spot([0.2, 0, 0.8], 180, 'stand') },
@@ -1572,7 +1571,7 @@ export const WATERSIDE = {
       for (const sz of [1, -1]) parts.add(sphere(0.011, 6, 4), frame, { at: [0, capY, sz * 0.058] });
       parts.add(lathe([[0, 0], [0.062, 0], [0.058, 0.012], [0.032, 0.03], [0.012, 0.04], [0, 0.042]], 14), frame, { at: [0, capY - 0.004, 0] });
       parts.add(sphere(0.012, 8, 6), frame, { at: [0, capY + 0.043, 0] });
-      const glass = lit === 'never' ? { slot: 'glass', color: '#dfe4dc', glowAmount: 0 } : lit === 'always' ? { slot: 'emit', color: '#ffe2a8', emit: 1.6 } : { slot: 'lamp', color: '#fff1cf' };
+      const glass = lit === 'never' ? { slot: 'glass', color: '#dfe4dc', glowAmount: 0 } : lit === 'always' ? { slot: 'emit', color: '#ffe2a8', emit: 1.0 } : { slot: 'lamp', color: '#fff1cf' };
       parts.add(roundCyl(0.046, 0.082, { top: 0.05, bevel: 0.016, segments: 14, steps: 2 }), glass, { at: [0, capY - 0.086, 0] });
       if (lit !== 'never') parts.add(cone(0.012, 0.03, 8), { slot: 'emit', color: '#ffc45a', emit: 1.2 }, { at: [0, capY - 0.06, 0] });
       for (let i = 0; i < 4; i++) {
@@ -1948,10 +1947,10 @@ export const WATERSIDE = {
     params: {
       flame: { default: 'orange', options: ['orange', 'blue', 'green'], about: 'flame color' },
     },
-    examples: [{}, { clip: 'Walk' }, { flame: 'blue' }, { clip: 'Carry' }],
+    examples: [{}, { clip: 'Walk' }, { flame: 'blue' }, { flame: 'green', clip: 'Run' }],
     build(p, ctx) {
       const kind = oneOf(p.flame, ['orange', 'blue', 'green'], 'orange');
-      const [outer, inner, glow] = { orange: ['#ff7b22', '#ffe066', '#ffb04a'], blue: ['#3f86ff', '#d2f2ff', '#8cc4ff'], green: ['#3cc65e', '#eaffb8', '#9ff0a0'] }[kind];
+      const [outer, inner, glow] = { orange: ['#ff8a1f', '#ffcf4d', '#ffb04a'], blue: ['#3f86ff', '#c8eeff', '#8cc4ff'], green: ['#36c25a', '#e2ffa8', '#9ff0a0'] }[kind];
       const parts = new Parts();
       const d = new THREE.Vector3(-0.35, 0.7, 0.62).normalize();
       const at = (k) => d.clone().multiplyScalar(k).toArray();
@@ -1964,8 +1963,8 @@ export const WATERSIDE = {
       flameG.position.set(...at(0.345));
       const fp = new Parts();
       const tear = (h, w) => lathe([[0, 0], [w * 0.6, h * 0.04], [w, h * 0.22], [w * 0.92, h * 0.42], [w * 0.62, h * 0.66], [w * 0.28, h * 0.86], [0, h]], 12);
-      const fire = (c, x, y) => c.copy(C(inner)).lerp(C(outer), clamp(y / 0.1, 0, 1)).lerp(C(shade(outer, -0.06, { hue: -0.02 })), clamp((y - 0.1) / 0.08, 0, 1));
-      const fl = { slot: 'emit', color: outer, emit: 1.15 };
+      const fire = (c, x, y) => c.copy(C(inner)).lerp(C(outer), clamp(y / 0.09, 0, 1)).lerp(C(kind === 'orange' ? '#ee4f1a' : shade(outer, -0.08)), clamp((y - 0.09) / 0.09, 0, 1));
+      const fl = { slot: 'emit', color: outer, emit: 0.85 };
       addPainted(fp, tear(0.19, 0.05), fl, { at: [0, -0.01, 0] }, fire);
       addPainted(fp, tear(0.1, 0.026), fl, { at: [0.04, 0.0, 0.012], rot: [0, 0, -0.4] }, fire);
       addPainted(fp, tear(0.085, 0.022), fl, { at: [-0.038, 0.0, -0.014], rot: [0, 0, 0.45] }, fire);
@@ -1993,7 +1992,7 @@ export const WATERSIDE = {
     params: {
       color: { default: 'red', type: 'color', about: 'collar and grip color' },
     },
-    examples: [{}, { clip: 'Walk' }, { color: 'green' }, { color: 'blue', clip: 'Carry' }],
+    examples: [{}, { clip: 'Walk' }, { color: 'green' }, { color: 'blue', clip: 'Run' }],
     build(p) {
       const col = colorOr(p.color, NAMED.red);
       const parts = new Parts();
@@ -2054,7 +2053,7 @@ export const WATERSIDE = {
     params: {
       color: { default: 'red', type: 'color', about: 'painted band on the handle' },
     },
-    examples: [{}, { clip: 'Walk' }, { color: 'blue' }, { color: 'green', clip: 'Carry' }],
+    examples: [{}, { clip: 'Walk' }, { color: 'blue' }, { color: 'green', clip: 'Run' }],
     build(p) {
       const col = colorOr(p.color, NAMED.red);
       const parts = new Parts();

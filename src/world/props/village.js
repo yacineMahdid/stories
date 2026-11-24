@@ -387,45 +387,46 @@ const FRUIT = {
   lemon: ['#f6d84a', '#efc93c'], plum: ['#8e5ab5', '#7a4aa0'], peach: ['#f7a98a', '#f08f78'],
 };
 
-/** A heap of round fruit (spheres) filling an ellipse of rx × rz at height y. */
+/**
+ * A heap of round fruit filling an rx × rz area at height y: a bottom grid and a second layer
+ * nestled in its gaps. `tilt` follows a tray tilted toward +Z.
+ */
 function fruitHeap(P, R, kind, { at = [0, 0, 0], rx = 0.15, rz = 0.12, r = 0.05, layers = 2, tilt = 0 } = {}) {
   const [c0, c1] = FRUIT[kind] ?? FRUIT.apple;
-  const g = sphere(r, 8, 6);
-  let n = 0;
-  for (let layer = 0; layer < layers; layer++) {
-    const shrink = 1 - layer * 0.42;
-    const cols = Math.max(1, Math.round((rx * 2 * shrink) / (r * 1.85)));
-    const rows = Math.max(1, Math.round((rz * 2 * shrink) / (r * 1.85)));
-    for (let i = 0; i < cols; i++) {
-      for (let j = 0; j < rows; j++) {
-        const u = cols === 1 ? 0 : (i / (cols - 1) - 0.5) * 2;
-        const v = rows === 1 ? 0 : (j / (rows - 1) - 0.5) * 2;
-        if (u * u + v * v > 1.35) continue;
-        const x = at[0] + u * (rx * shrink - r * 0.8) + R.float(-0.008, 0.008);
-        const z = at[2] + v * (rz * shrink - r * 0.8) + R.float(-0.008, 0.008);
-        const y = at[1] + r * 0.85 + layer * r * 1.45 - (z - at[2]) * Math.tan(tilt);
-        P.add(g, shade(n++ % 3 ? c0 : c1, R.float(-0.04, 0.04)), { at: [x, y, z], scale: R.float(0.9, 1.08) });
-      }
-    }
+  const g = sphere(r, 8, 5);
+  const cols = Math.max(1, Math.round((rx * 2) / (r * 1.9)));
+  const rows = Math.max(1, Math.round((rz * 2) / (r * 1.9)));
+  const sx = cols > 1 ? (rx * 2 - r * 1.9) / (cols - 1) : 0, sz = rows > 1 ? (rz * 2 - r * 1.9) / (rows - 1) : 0;
+  let n = 0, top = null;
+  const put = (x, y, z) => {
+    const yy = y - (z - at[2]) * Math.tan(tilt);
+    P.add(g, shade(n++ % 3 ? c0 : c1, R.float(-0.04, 0.04)), { at: [x + R.float(-0.006, 0.006), yy, z + R.float(-0.006, 0.006)], scale: R.float(0.92, 1.06) });
+    if (!top || yy > top[1]) top = [x, yy, z];
+  };
+  for (let i = 0; i < cols; i++) for (let j = 0; j < rows; j++) put(at[0] - (cols - 1) * sx / 2 + i * sx, at[1] + r * 0.85, at[2] - (rows - 1) * sz / 2 + j * sz);
+  if (layers > 1) {
+    const c2 = Math.max(1, cols - 1), r2 = Math.max(1, rows - 1);
+    for (let i = 0; i < c2; i++) for (let j = 0; j < r2; j++) put(at[0] - (c2 - 1) * sx / 2 + i * sx, at[1] + r * 0.85 + r * 1.25, at[2] - (r2 - 1) * sz / 2 + j * sz);
   }
-  if (kind === 'apple' || kind === 'pear') {
+  if ((kind === 'apple' || kind === 'pear') && top) {
     // a stem and a leaf on the top fruit
-    const ty = at[1] + r * (layers === 1 ? 1.7 : 3.15);
-    P.add(cyl(0.006, 0.03, { segments: 4 }), PALETTE.woodDark, { at: [at[0], ty, at[2]] });
-    P.add(sphere(0.02, 6, 4), { slot: 'foliage', color: '#62b356' }, { at: [at[0] + 0.018, ty + 0.022, at[2]], scale: [1.4, 0.4, 0.8], rot: [0, 0, 0.5] });
+    P.add(cyl(r * 0.11, r * 0.55, { segments: 4 }), PALETTE.woodDark, { at: [top[0], top[1] + r * 0.85, top[2]] });
+    P.add(sphere(r * 0.38, 6, 4), { slot: 'foliage', color: '#62b356' }, { at: [top[0] + r * 0.35, top[1] + r * 1.25, top[2]], scale: [1.4, 0.4, 0.8], rot: [0, 0, 0.5] });
   }
 }
 
 /** A small wooden bucket or tin pail (used by the bucket prop and the flower stall). */
-function pail(P, R, { at = [0, 0, 0], h = 0.28, r = 0.15, tin = false, color = null, handle = true } = {}) {
+function pail(P, R, { at = [0, 0, 0], h = 0.28, r = 0.15, tin = false, color = null, handle = true, plain = false } = {}) {
   const [x0, y0, z0] = at;
   const body = color ?? (tin ? '#c9d0d7' : PALETTE.woodLight);
   const rb = r * 0.8;
   const prof = [[0, 0], [rb - 0.012, 0], [rb, 0.012], [r, h - 0.01], [r - 0.006, h], [r - 0.022, h], [r - 0.024, h - 0.02], [rb - 0.02, 0.03], [0, 0.03]];
   if (tin) {
-    P.add(lathe(prof, 16), { slot: 'metal', color: body }, { at });
-    P.add(ring(r + 0.002, 0.009, { radial: 5, tubular: 18 }), { slot: 'metal', color: shade(body, 0.06) }, { at: [x0, y0 + h - 0.004, z0] });
-    for (const t of [0.25]) P.add(ring(lerp(rb, r, t) + 0.004, 0.006, { radial: 4, tubular: 18 }), { slot: 'metal', color: shade(body, -0.06) }, { at: [x0, y0 + h * t, z0] });
+    P.add(lathe(prof, plain ? 12 : 16), { slot: 'metal', color: body }, { at });
+    if (!plain) {
+      P.add(ring(r + 0.002, 0.009, { radial: 5, tubular: 18 }), { slot: 'metal', color: shade(body, 0.06) }, { at: [x0, y0 + h - 0.004, z0] });
+      P.add(ring(lerp(rb, r, 0.25) + 0.004, 0.006, { radial: 4, tubular: 18 }), { slot: 'metal', color: shade(body, -0.06) }, { at: [x0, y0 + h * 0.25, z0] });
+    }
   } else {
     paint(P, lathe(prof, 12), body, { at }, staves(body, { cx: x0, cz: z0, n: 12, y0, y1: y0 + h, seed: R.int(0, 999) }), { flat: true });
     for (const t of [0.2, 0.78]) {
@@ -570,7 +571,7 @@ function buildFountain(p, ctx) {
     const y0 = y - 0.03 * k;
     const prof = [[0.09 * k, 0], [r * 0.45, 0.05 * k], [r * 0.8, 0.13 * k], [r * 0.97, 0.19 * k], [r + 0.035 * k, 0.23 * k], [r + 0.045 * k, 0.27 * k],
       [r + 0.025 * k, 0.3 * k], [r - 0.03 * k, 0.305 * k], [r - 0.06 * k, 0.28 * k], [r - 0.08 * k, 0.23 * k], [0, 0.2 * k]];
-    paint(P, lathe(prof, 32), stone, { at: [0, y0, 0] }, (c, x, yy) => { if (yy > y0 + 0.24 * k) c.set(cap); });
+    paint(P, lathe(prof, 26), stone, { at: [0, y0, 0] }, (c, x, yy) => { if (yy > y0 + 0.24 * k) c.set(cap); });
     bowls.push({ r, y: y0 + 0.262 * k, lip: y0 + 0.3 * k });
     y = y0 + 0.2 * k;
   };
@@ -616,9 +617,9 @@ function buildFountain(p, ctx) {
       const yb = i > 0 ? bowls[i - 1].y : wl;
       const r0 = b.r + 0.04 * k, y0 = b.lip - 0.012 * k, drop = y0 - yb;
       const prof = [[r0 - 0.01 * k, y0 + 0.012 * k], [r0 + 0.03 * k, y0 - 0.005], [r0 + 0.06 * k, y0 - drop * 0.12], [r0 + 0.08 * k, y0 - drop * 0.4], [r0 + 0.095 * k, y0 - drop * 0.75], [r0 + 0.1 * k, yb - 0.01]];
-      P.add(lathe(prof, 32), fall);
+      P.add(lathe(prof, 26), fall);
       const rl = r0 + 0.1 * k;
-      foam.add(lathe([[rl + 0.08 * k, 0], [rl + 0.03 * k, 0.03 * k], [rl - 0.03 * k, 0.03 * k], [rl - 0.07 * k, 0]], 28), fm, { at: [0, yb - 0.006, 0] });
+      foam.add(lathe([[rl + 0.08 * k, 0], [rl + 0.03 * k, 0.03 * k], [rl - 0.03 * k, 0.03 * k], [rl - 0.07 * k, 0]], 22), fm, { at: [0, yb - 0.006, 0] });
     }
     // a slim jet from the spout, opening into a little umbrella that falls back around it
     const jh = 0.18 * kf, drop = topY - landY, jr = tiers ? 1 : 1.5;
@@ -749,7 +750,7 @@ function awning(P, { w, len, n, color, cream, at, slope = 0, bow = 0.06, puff = 
 let scallopGeo = null;
 /** A half-disc valance tab (1 wide), hanging down from y = 0. */
 function scallop() {
-  scallopGeo ??= extrude(Array.from({ length: 9 }, (_, j) => { const a = Math.PI + (j / 8) * Math.PI; return [Math.cos(a) * 0.5, Math.sin(a) * 0.5]; }), 0.018, { bevel: 0.008, bevelSegments: 1, curveSegments: 1 });
+  scallopGeo ??= extrude(Array.from({ length: 9 }, (_, j) => { const a = Math.PI + (j / 8) * Math.PI; return [Math.cos(a) * 0.5, Math.sin(a) * 0.5]; }), 0.022, { bevel: 0 });
   return scallopGeo;
 }
 
@@ -788,12 +789,12 @@ function goodsOn(P, R, goods, { at = [0, 0, 0], w = 1.4, d = 0.45 } = {}) {
     }
     for (let i = 0; i < 2; i++) P.add(sphere(0.035, 7, 5), '#f6d84a', { at: [cx + (i ? 0.35 : -0.42) * w, y + 0.09, cz + d * 0.28], scale: [1, 0.85, 1.25] });
   } else if (goods === 'flowers') {
-    const n = clamp(Math.round(w / 0.36), 2, 6);
+    const n = clamp(Math.round(w / 0.4), 2, 6);
     const cols = ['#e9434c', '#f6cf3a', '#f49ac1', '#a57fd9', '#f8f4ea', '#f39a48'];
     for (let i = 0; i < n; i++) {
       const x = cx - w / 2 + (i + 0.5) * (w / n);
       const z = cz + (i % 2 ? -0.06 : 0.05);
-      pail(P, R, { at: [x, y, z], h: 0.17, r: 0.1, tin: true, color: R.pick(['#9fb7c9', '#c7a3c8', '#a9c9a4', '#d9b98c']), handle: false });
+      pail(P, R, { at: [x, y, z], h: 0.17, r: 0.1, tin: true, color: R.pick(['#9fb7c9', '#c7a3c8', '#a9c9a4', '#d9b98c']), handle: false, plain: true });
       bouquet(P, R, [x, y + 0.17, z], cols[(i * 2 + R.int(0, 1)) % cols.length], 7, 0.1);
     }
   } else if (goods === 'bread') {
@@ -849,8 +850,8 @@ function bouquet(P, R, at, color, n = 7, spread = 0.1) {
     const r = i === 0 ? 0 : spread * R.float(0.45, 0.8);
     const c = shade(color, R.float(-0.05, 0.05));
     const bx = x0 + Math.cos(a) * r, bz = z0 + Math.sin(a) * r, by = y0 + spread * 0.8 + R.float(0, 0.05) - r * 0.4;
-    P.add(sphere(0.034, 7, 5), { slot: 'foliage', color: c }, { at: [bx, by, bz], scale: [1, 0.8, 1] });
-    P.add(sphere(0.013, 5, 4), { slot: 'foliage', color: '#f6d34a' }, { at: [bx, by + 0.026, bz] });
+    P.add(sphere(0.034, 6, 4), { slot: 'foliage', color: c }, { at: [bx, by, bz], scale: [1, 0.8, 1] });
+    P.add(sphere(0.013, 4, 3), { slot: 'foliage', color: '#f6d34a' }, { at: [bx, by + 0.026, bz] });
   }
 }
 
@@ -1019,18 +1020,24 @@ function stackLayout(count, s, R) {
 
 const CRATE_FILL = ['closed', 'empty', 'apples', 'oranges', 'cabbages', 'fish', 'straw'];
 
-function crateAt(P, R, at, S, wood, yaw, fill) {
+function crateAt(P, R, at, S, wood, yaw, fill, { lite = false } = {}) {
   const M = xform(at, [0, yaw, 0]);
   const add = (g, look, local) => P.add(g, look, { matrix: local ? M.clone().multiply(local) : M });
   const dark = shade(wood, -0.25), post = shade(wood, -0.1);
-  add(box(S - 0.04, S - 0.02, S - 0.04), dark, xform([0, 0.01, 0]));
   const t = S * 0.14;
-  for (const sx of [-1, 1]) for (const sz of [-1, 1]) add(softBox(t, S, t, t * 0.28), post, xform([sx * (S / 2 - t / 2), 0, sz * (S / 2 - t / 2)]));
-  const ph = S * 0.37;
-  for (let side = 0; side < 4; side++) {
-    const rot = new THREE.Matrix4().makeRotationY((side * Math.PI) / 2);
-    for (const y of [S * 0.07, S * 0.55]) {
-      add(softBox(S - 2 * t + 0.012, ph, S * 0.07, 0.01), shade(wood, R.float(-0.05, 0.04)), rot.clone().multiply(xform([0, y, S / 2 - S * 0.045])));
+  if (lite) {
+    // a cheap crate for loads: a plank-colored body with a darker band and rim
+    add(softBox(S, S * 0.97, S, 0.02), shade(wood, R.float(-0.04, 0.03)));
+    add(softBox(S + 0.01, S * 0.1, S + 0.01, 0.012), post, xform([0, S * 0.45, 0]));
+  } else {
+    add(box(S - 0.04, S - 0.02, S - 0.04), dark, xform([0, 0.01, 0]));
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) add(softBox(t, S, t, t * 0.28), post, xform([sx * (S / 2 - t / 2), 0, sz * (S / 2 - t / 2)]));
+    const ph = S * 0.37;
+    for (let side = 0; side < 4; side++) {
+      const rot = new THREE.Matrix4().makeRotationY((side * Math.PI) / 2);
+      for (const y of [S * 0.07, S * 0.55]) {
+        add(softBox(S - 2 * t + 0.012, ph, S * 0.07, 0.01), shade(wood, R.float(-0.05, 0.04)), rot.clone().multiply(xform([0, y, S / 2 - S * 0.045])));
+      }
     }
   }
   const top = S;
@@ -1039,6 +1046,7 @@ function crateAt(P, R, at, S, wood, yaw, fill) {
     return top + S * 0.04;
   }
   const inner = S - 2 * t;
+  if (lite && fill !== 'closed') add(softBox(S - 0.03, 0.012, S - 0.03, 0.004), shade(wood, -0.3), xform([0, S * 0.97 - 0.004, 0]));
   if (fill === 'empty') {
     add(box(S - 0.05, 0.01, S - 0.05), shade(wood, -0.32), xform([0, S * 0.2, 0]));
     return top;
@@ -1064,7 +1072,7 @@ function crateAt(P, R, at, S, wood, yaw, fill) {
       P.add(blob(S * 0.17, { detail: 1, amp: 0.18, seed: i + 3, squash: [1, 0.85, 1] }), shade('#8fcf6c', R.float(-0.05, 0.05)), { at: [q.x, q.y, q.z] });
     }
   } else {
-    fruitHeap(P, R, kind, { at: [pos.x, pos.y, pos.z], rx: inner / 2, rz: inner / 2, r: S * 0.13, layers: 2 });
+    fruitHeap(P, R, kind, { at: [pos.x, pos.y, pos.z], rx: inner / 2, rz: inner / 2, r: S * 0.16, layers: 2 });
   }
   return top;
 }
@@ -1206,6 +1214,12 @@ const POT_PLANTS = ['tulip', 'daisy', 'rose', 'sunflower', 'lavender', 'fern', '
 const POT_BLOOM = { tulip: '#e9434c', daisy: '#f8f4ea', rose: '#f49ac1', sunflower: '#f6cf3a', lavender: '#a57fd9', fern: '#62b356', cactus: '#f49ac1', none: '#f8f4ea' };
 const LEAF = '#5aa458';
 
+let petal = null;
+/** One soft daisy petal pointing along +X from the flower's center. */
+function petalGeo() {
+  petal ??= sphere(0.02, 5, 3).scale(1.3, 0.3, 0.6).translate(0.03, 0, 0);
+  return petal;
+}
 let daisyGeo = null;
 function daisyHead() {
   if (daisyGeo) return daisyGeo;
@@ -1252,8 +1266,9 @@ function plant(P, R, kind, at, color, k = 1, season = 'summer') {
     for (let i = 0; i < 6; i++) {
       const a = (i / 6) * TAU + R.float(-0.2, 0.2), r = i === 0 ? 0 : 0.065 * k;
       const top = stem(x0 + Math.cos(a) * r * 0.5, z0 + Math.sin(a) * r * 0.5, (0.13 + R.float(0, 0.05)) * k, [Math.cos(a) * r * 0.5, Math.sin(a) * r * 0.5]);
-      P.add(daisyHead(), { slot: 'foliage', color }, { at: top, rot: [R.float(-0.3, 0.3), R.angle(), R.float(-0.3, 0.3)], scale: k * 1.25 });
-      P.add(sphere(0.02, 7, 5), { slot: 'foliage', color: '#f6c93a' }, { at: [top[0], top[1] + 0.01 * k, top[2]], scale: [k, 0.6 * k, k] });
+      const H = xform(top, [R.float(-0.3, 0.3), R.angle(), R.float(-0.3, 0.3)], k * 1.25);
+      for (let j = 0; j < 8; j++) P.add(petalGeo(), { slot: 'foliage', color }, { matrix: H.clone().multiply(xform([0, 0, 0], [0, (j / 8) * TAU, 0])) });
+      P.add(sphere(0.017, 6, 4), { slot: 'foliage', color: '#f6c93a' }, { matrix: H.clone().multiply(xform([0, 0.008, 0], [0, 0, 0], [1, 0.6, 1])) });
     }
   } else if (kind === 'rose') {
     P.add(blob(0.11 * k, { detail: 2, amp: 0.16, seed: R.int(0, 99), squash: [1, 0.85, 1] }), { slot: 'foliage', color: '#4f9a4c' }, { at: [x0, y0 + 0.09 * k, z0] });
@@ -1549,7 +1564,7 @@ function picket() {
   const pts = [[-w / 2, 0], [w / 2, 0], [w / 2, h - 0.05]];
   for (let i = 1; i < 6; i++) { const a = (i / 6) * Math.PI; pts.push([Math.cos(a) * w / 2, h - 0.05 + Math.sin(a) * 0.05]); }
   pts.push([-w / 2, h - 0.05]);
-  picketGeo = extrude(pts, 0.024, { bevel: 0.006, bevelSegments: 1 });
+  picketGeo = extrude(pts, 0.026, { bevel: 0 });
   return picketGeo;
 }
 
@@ -1574,9 +1589,8 @@ function fenceSection(P, R, style, color, x0, x1, opts = {}) {
     const n = Math.max(1, Math.round(len / 0.1));
     for (let i = 0; i < n; i++) {
       const x = x0 + (i + 0.5) * (len / n);
-      P.add(cyl(0.012, 0.5, { segments: 6 }), color, { at: [x, 0.1, 0] });
-      P.add(cone(0.024, 0.06, 6), color, { at: [x, 0.6, 0] });
-      P.add(sphere(0.02, 6, 4), color, { at: [x, 0.6, 0] });
+      P.add(cyl(0.012, 0.5, { segments: 5 }), color, { at: [x, 0.1, 0] });
+      P.add(sphere(0.022, 5, 4), color, { at: [x, 0.6, 0], scale: [1, 1.3, 1] });
     }
   }
 }
@@ -1584,14 +1598,14 @@ function fenceSection(P, R, style, color, x0, x1, opts = {}) {
 function fencePost(P, R, style, color, x, { tall = 0 } = {}) {
   if (style === 'picket') {
     P.add(softBox(0.09, 0.6 + tall, 0.09, 0.022), shade(color, -0.03), { at: [x, 0, -0.01] });
-    P.add(sphere(0.055, 10, 7), shade(color, -0.03), { at: [x, 0.62 + tall, -0.01], scale: [1, 0.8, 1] });
+    P.add(sphere(0.055, 8, 6), shade(color, -0.03), { at: [x, 0.62 + tall, -0.01], scale: [1, 0.8, 1] });
   } else if (style === 'rail') {
     const h = 0.6 + tall + R.float(-0.03, 0.03);
     P.add(softBox(0.1, h, 0.1, 0.028), shade(color, R.float(-0.12, -0.04)), { at: [x, 0, 0], rot: [R.float(-0.03, 0.03), R.float(-0.2, 0.2), R.float(-0.03, 0.03)] });
   } else if (style === 'iron') {
     P.add(softBox(0.16, 0.66 + tall, 0.18, 0.03), PALETTE.stone, { at: [x, 0, 0] });
     P.add(softBox(0.2, 0.05, 0.22, 0.02), shade(PALETTE.stone, 0.08), { at: [x, 0.66 + tall, 0] });
-    P.add(sphere(0.05, 10, 7), color, { at: [x, 0.74 + tall, 0] });
+    P.add(sphere(0.05, 8, 6), color, { at: [x, 0.74 + tall, 0] });
   }
 }
 
@@ -1646,7 +1660,7 @@ function fenceGate(P, R, style, color, gw) {
 }
 
 function buildFence(p, ctx) {
-  const L = size(p.length, 3, 0.6, 12);
+  const L = size(p.length, 3, 0.6, 10);
   const style = oneOf(p.style, FENCE_STYLES, 'picket');
   const color = colorOr(p.color, FENCE_COLOR[style]);
   const gate = flag(p.gate, false) && L >= 1.7;
@@ -1810,7 +1824,7 @@ function addTable(P, R, { shape = 'round', wood = PALETTE.woodLight, cloth = nul
   } else if (items === 'lantern') {
     tableLantern(P, [x0, y, z0]);
   }
-  return { top, w, d, lights: items === 'lantern' ? [light([x0, y + 0.08, z0], { intensity: 0.6, distance: 4 })] : [] };
+  return { top, w, d, lights: items === 'lantern' ? [{ ...light([x0, y + 0.2, z0], { intensity: 0.32, distance: 3.5 }), halo: 0.45 }] : [] };
 }
 
 function tableSpots(w, d, at = [0, 0, 0]) {
@@ -2104,10 +2118,10 @@ function wheel(P, at, r, { tire = '#5a463a', hub = PALETTE.woodDark, spokes = 7,
   const [x, y, z] = at;
   P.add(ring(r - 0.025, 0.035, { radial: 5, tubular: 18 }), color, { at, rot: [Math.PI / 2, 0, 0], scale: [1, width / 0.07, 1] });
   P.add(ring(r - 0.004, 0.018, { radial: 4, tubular: 18 }), tire, { at, rot: [Math.PI / 2, 0, 0] });
-  P.add(roundCyl(0.06, width + 0.04, { segments: 10, steps: 1, bevel: 0.015 }), hub, { at: [x, y, z - (width + 0.04) / 2], rot: [Math.PI / 2, 0, 0] });
+  P.add(cyl(0.06, width + 0.04, { segments: 10 }), hub, { at: [x, y, z - (width + 0.04) / 2], rot: [Math.PI / 2, 0, 0] });
   for (let i = 0; i < spokes; i++) {
     const a = (i / spokes) * TAU;
-    plank(P, [x + Math.cos(a) * 0.05, y + Math.sin(a) * 0.05, z], [x + Math.cos(a) * (r - 0.04), y + Math.sin(a) * (r - 0.04), z], 0.03, 0.035, color, { up: [0, 0, 1] });
+    rod(P, [x + Math.cos(a) * 0.05, y + Math.sin(a) * 0.05, z], [x + Math.cos(a) * (r - 0.03), y + Math.sin(a) * (r - 0.03), z], 0.017, color, { seg: 5 });
   }
 }
 
@@ -2115,7 +2129,7 @@ function cartGoods(P, R, goods, { at, w, d }) {
   const [x0, y0, z0] = at;
   if (goods === 'fruit') {
     const fills = ['apples', 'oranges', 'apples'];
-    for (let i = 0; i < 3; i++) crateAt(P, R, [x0 + (i - 1) * (w / 3), y0, z0 + (i % 2 ? -0.06 : 0.06)], 0.36, '#c99a62', R.float(-0.1, 0.1), fills[i]);
+    for (let i = 0; i < 3; i++) crateAt(P, R, [x0 + (i - 1) * (w / 3), y0, z0 + (i % 2 ? -0.06 : 0.06)], 0.36, '#c99a62', R.float(-0.1, 0.1), fills[i], { lite: true });
   } else if (goods === 'veggies') {
     for (let i = 0; i < 9; i++) {
       const x = x0 + ((i % 3) - 1) * w * 0.3 + R.float(-0.03, 0.03), z = z0 + (Math.floor(i / 3) - 1) * d * 0.28;
@@ -2126,7 +2140,7 @@ function cartGoods(P, R, goods, { at, w, d }) {
     const cols = ['#e9434c', '#f6cf3a', '#f49ac1', '#a57fd9', '#f8f4ea'];
     for (let i = 0; i < 4; i++) {
       const x = x0 + (i - 1.5) * (w / 4), z = z0 + (i % 2 ? -0.08 : 0.08);
-      pail(P, R, { at: [x, y0, z], h: 0.2, r: 0.11, tin: true, handle: false, color: R.pick(['#9fb7c9', '#c7a3c8', '#a9c9a4']) });
+      pail(P, R, { at: [x, y0, z], h: 0.2, r: 0.11, tin: true, handle: false, plain: true, color: R.pick(['#9fb7c9', '#c7a3c8', '#a9c9a4']) });
       bouquet(P, R, [x, y0 + 0.2, z], cols[i % cols.length], 8, 0.12);
     }
   } else if (goods === 'hay') {
@@ -2922,7 +2936,7 @@ export const VILLAGE = {
     label: 'Fence',
     about: 'A straight fence run along local X (centered): white pickets, a rustic rail fence, a dry-stone wall or wrought iron on a stone base, with an optional gate in the middle.',
     params: {
-      length: { default: 3, min: 0.6, max: 12, about: 'run length (posts about every 0.6)' },
+      length: { default: 3, min: 0.6, max: 10, about: 'run length (posts about every 0.6)' },
       style: { default: 'picket', options: FENCE_STYLES, about: 'look' },
       color: { default: '', type: 'color', about: 'paint or stone color (empty for the style\'s own)' },
       gate: { default: false, about: 'a gate in the middle (runs of 1.7 or longer)' },
