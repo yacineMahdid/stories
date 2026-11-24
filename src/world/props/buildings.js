@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import {
   Parts, finish, spot, light, roundBox, box, roundCyl, cyl, cone, sphere, lathe, blob, ring, xform,
-  PALETTE, SCALE, seasonal, shade, mix, noise3, signMaterial, WORLD_UNIFORMS,
+  PALETTE, SCALE, seasonal, shade, mix, noise3, signMaterial, rng, WORLD_UNIFORMS,
 } from '../kit.js';
 
 // Prop family: buildings. Cottages, mills, barns, towers, bridges and walls in a chunky,
@@ -43,6 +43,14 @@ function textOr(v, fallback = '') {
   return typeof v === 'string' ? v.trim().slice(0, 32) : fallback;
 }
 function seasonOf(ctx) { return ['spring', 'summer', 'autumn', 'winter'].includes(ctx?.season) ? ctx.season : 'summer'; }
+/**
+ * A separate seeded stream for one aspect of a prop ('deco' for flowers and moss, 'anim' for
+ * animation phases). Season-dependent draws come from these, never from ctx.rng, so the layout
+ * of a prop is the same in every season.
+ */
+function stream(ctx, tag) { return rng(`${ctx?.seed ?? ctx?.id ?? 1}:${tag}`); }
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const TAU = Math.PI * 2;
 
 /* ───────────────────────── geometry helpers ───────────────────────── */
 
@@ -358,7 +366,7 @@ function doorParts(o) {
 }
 
 /** Puffs of chimney smoke: a few soft spheres that rise, grow and shrink away (cheap transforms only). */
-function smokePuffs(group, at, { count = 4, scale = 1 } = {}) {
+function smokePuffs(group, at, { count = 4, scale = 1, phase = 0 } = {}) {
   const cluster = new Parts();
   const look = { slot: 'clear', color: '#eef0f2', rough: 0.95, opacity: 0.6 };
   cluster.add(sphere(0.15 * scale, 10, 8), look);
@@ -375,10 +383,11 @@ function smokePuffs(group, at, { count = 4, scale = 1 } = {}) {
     group.add(m);
     puffs.push(m);
   }
-  return (t) => {
+  return (time) => {
+    const t = time + phase;
     const wind = WORLD_UNIFORMS.uWind.value;
     puffs.forEach((m, i) => {
-      const ph = (t * 0.2 + i / count) % 1;
+      const ph = (((t * 0.2 + i / count) % 1) + 1) % 1;
       m.position.set(at[0] + ph * (0.3 + wind * 0.9) + Math.sin(t * 1.3 + i) * 0.04, at[1] + ph * 1.6 * scale, at[2] + Math.sin(t * 0.7 + i * 2) * 0.05);
       const s = Math.sin(Math.min(ph * 1.1, 1) * Math.PI) * (0.55 + ph * 1.2);
       m.scale.setScalar(Math.max(s, 0.001));
@@ -506,9 +515,47 @@ function addRoof(P, { style, W, D, y0, rise, over = 0.42, overX = 0.34, t = 0.27
   };
 }
 
+/**
+ * A shop sign standing on the front slope of a roof just above the eave, as on AC shops: the
+ * board leans back a little, its foot rests on the roof and two struts brace it to the slope.
+ * It moves up the slope until the roof behind it no longer cuts through the board (round roofs
+ * are steep at the eave).
+ */
+function roofSign(P, roof, { text, w, h = 0.46, frame = PALETTE.woodDark, lean = 0.2 }) {
+  const bw = w + 0.14, bh = h + 0.14, th = 0.08;
+  const sl = Math.sin(lean), cl = Math.cos(lean);
+  const top = (z) => Math.max(roof.topAt(0, z), roof.topAt(bw / 2, z), roof.topAt(-bw / 2, z));
+  let zf = roof.eaveZ - 0.16, yf = top(zf) - 0.03;
+  for (let k = 0; k < 40; k++) {
+    yf = top(zf) - 0.03;
+    let clear = true;
+    // the front face must stay above the roof from just over the foot, the back face higher up
+    for (let s = 0.08; s <= bh + 1e-6 && clear; s += 0.04) {
+      if (yf + s * cl < top(zf - s * sl) + 0.02) clear = false;
+      if (s >= 0.34 && yf + s * cl - th * sl < top(zf - s * sl - th * cl)) clear = false;
+    }
+    if (clear) break;
+    zf -= 0.04;
+  }
+  const board = new Parts();
+  board.add(roundBox(bw, bh, th, 0.04, 1), frame, { at: [0, -bh / 2, -th / 2] });
+  board.add(new THREE.PlaneGeometry(w, h), signMaterial(text, { bg: '#f7ecd2', fg: '#6a3f22', border: '#b7864e', borderWidth: 8, font: 'bold 92px Georgia, "Times New Roman", serif' }), { at: [0, 0, 0.002] });
+  P.merge(board, xform([0, yf + (bh / 2) * cl, zf - (bh / 2) * sl], [-lean, 0, 0]));
+  // struts from the back of the board down to the roof just behind it (never climbing the slope)
+  const s = bh * 0.55;
+  const zb = zf - s * sl - th * cl, yb = yf + s * cl - th * sl;
+  let reach = 0.42;
+  while (reach > 0.14 && top(zb - reach) > yb - 0.04) reach -= 0.04;
+  for (const sx of [-1, 1]) {
+    const x = sx * Math.min(0.34 * w, w / 2 - 0.12);
+    rod(P, [x, yb, zb + 0.02], [x, top(zb - reach) - 0.03, zb - reach], 0.028, METAL(), { seg: 6 });
+  }
+  return { foot: [zf, yf], top: yf + bh * cl };
+}
+
 /* ───────────────────────── house ───────────────────────── */
 
-const HOUSE_SIZES = { small: [2.7, 2.4], medium: [3.3, 2.8], large: [4.2, 3.2] };
+const HOUSE_SIZES ={ small: [2.7, 2.4], medium: [3.3, 2.8], large: [4.2, 3.2] };
 const STATES = ['intact', 'boarded', 'ruined', 'burnt'];
 
 /**
@@ -705,15 +752,23 @@ const HOUSE = {
       if (stories === 2) P.add(roundBox(W + 0.07, 0.11, D + 0.07, 0.04, 1), trim, { at: [0, 1.86, 0] });
     }
 
-    // front layout: door, windows, display window
+    // front layout: door, windows, display window. A shop has its door at the left with room
+    // for a lantern beside it (or for a porch, whose canopy must stop short of the awning).
     let doorX = 0;
     const frontWins = [];
     let display = null;
+    let porchR = null;
     const ww = sizeName === 'large' ? 0.62 : 0.5, wh = winShape === 'round' ? ww : 0.62;
     if (awning) {
-      doorX = -(W / 2 - 0.7);
-      const left = doorX + 0.46 + 0.32, right = W / 2 - 0.34;
-      display = { x: (left + right) / 2, w: Math.max(0.6, right - left - 0.16) };
+      doorX = porch ? -(W / 2 - 0.75) : -(W / 2 - 0.95);
+      const dr = W / 2 - 0.42;
+      let dl = doorX + 0.86;
+      if (porch) {
+        porchR = clamp(dr - 0.6 - 0.43, doorX + 0.55, doorX + 0.9);
+        dl = porchR + 0.43;
+      }
+      const w = Math.max(0.6, dr - dl);
+      display = { x: porch ? dl + w / 2 : (dl + dr) / 2, w };
     } else if (W < 3) {
       doorX = -0.4;
       frontWins.push(0.66);
@@ -721,8 +776,9 @@ const HOUSE = {
       const x = sizeName === 'large' ? W / 2 - 0.95 : W / 2 - 0.72;
       frontWins.push(-x, x);
     }
+    const aw = display ? display.w + 0.36 : 0;
     // the lantern goes on the wall beside the door where there is room, else it hangs from the eave
-    const obstacles = [...frontWins.map((x) => [x - ww / 2 - 0.075, x + ww / 2 + 0.075]), ...(display ? [[display.x - display.w / 2 - 0.075, display.x + display.w / 2 + 0.075]] : [])];
+    const obstacles = [...frontWins.map((x) => [x - ww / 2 - 0.075, x + ww / 2 + 0.075]), ...(display ? [[display.x - aw / 2 - 0.06, display.x + aw / 2 + 0.06]] : [])];
     let leftEdge = -W / 2 + 0.14, rightEdge = W / 2 - 0.14;
     const doorL = doorX - 0.46, doorR = doorX + 0.46;
     for (const [a, b] of obstacles) { if (b <= doorL) leftEdge = Math.max(leftEdge, b); if (a >= doorR) rightEdge = Math.min(rightEdge, a); }
@@ -732,7 +788,7 @@ const HOUSE = {
       : { x: doorX + (spaceR >= spaceL ? 0.62 : -0.62), hang: true };
     const winY = 1.05;
     const doorState = state === 'boarded' ? 'boarded' : wrecked ? 'missing' : 'closed';
-    const winOpts = { w: ww, h: wh, shape: winShape, frame: trim, glass, season, rand, boarded: state === 'boarded' };
+    const winOpts = { w: ww, h: wh, shape: winShape, frame: trim, glass, season, rand: stream(ctx, 'deco'), boarded: state === 'boarded' };
     const frontWin = windowParts({ ...winOpts, shutters, flowerbox });
     const upperWin = windowParts({ ...winOpts, shutters });
     const sideWin = windowParts({ ...winOpts, shutters: null, w: Math.min(ww, 0.5) });
@@ -831,18 +887,20 @@ const HOUSE = {
         P.add(roundBox(0.58, 0.14, 0.58, 0.045, 1), PALETTE.stoneLight, { at: [cx, topY - 0.02, cz] });
         P.add(box(0.3, 0.02, 0.3), HOLE, { at: [cx, topY + 0.11, cz] });
         for (const yy of [0.3, 0.58]) P.add(box(0.47, 0.035, 0.47), shade(brick, -0.08), { at: [cx, topY - yy, cz] });
-        if (smoke) puffs = smokePuffs(group, [cx, topY + 0.28, cz]);
+        if (smoke) puffs = smokePuffs(group, [cx, topY + 0.28, cz], { phase: stream(ctx, 'anim').float(0, 5) });
       }
     }
 
     // porch: deck, posts, railing and a little canopy tucked under the eave
     let porchSpot = null;
     let porchLamp = null;
+    let porchSpan = null;
+    const deck = 0.16;
     if (porch) {
-      let pa = Math.max(-W / 2 + 0.06, doorX - 1.15), pb = Math.min(W / 2 - 0.06, doorX + 1.15);
-      if (display) pb = Math.min(pb, display.x - display.w / 2 - 0.12);
-      const pw = Math.max(1.1, pb - pa), pd = 1.0, px = (pa + pb) / 2;
-      const deck = 0.16, front = c + pd + 0.12;
+      const pa = Math.max(-W / 2 + 0.06, doorX - 1.15), pb = porchR ?? Math.min(W / 2 - 0.06, doorX + 1.15);
+      const pw = pb - pa, pd = 1.0, px = (pa + pb) / 2;
+      const front = c + pd + 0.12;
+      porchSpan = [pa, pb];
       P.add(roundBox(pw, deck, pd, 0.03, 1), PALETTE.wood, { at: [px, 0, c + pd / 2] });
       for (let i = 1; i < 5; i++) P.add(box(pw - 0.04, 0.012, 0.014), PALETTE.woodDark, { at: [px, deck - 0.008, c + (i * pd) / 5] });
       P.add(roundBox(0.8, 0.08, 0.3, 0.025, 1), PALETTE.woodDark, { at: [px, 0, c + pd + 0.14] });
@@ -858,19 +916,26 @@ const HOUSE = {
       }
       plank(P, [px, yAt(c) - 0.05, c - 0.02], [px, y1 - 0.05, front], pw + 0.3, 0.1, roofC, { up: [0, 1, s], r: 0.035 });
       plank(P, [px - pw / 2 - 0.15, y1 - 0.06, front], [px + pw / 2 + 0.15, y1 - 0.06, front], 0.07, 0.12, trim);
-      porchSpot = spot([px + pw / 2 - 0.4, deck, c + pd * 0.55], 0, 'stand');
-      const lz = c + 0.55;
-      porchLamp = [doorX, yAt(lz) - 0.38, lz];
+      // the porch spot stands beside the door on the roomier side, at least 0.6 from the door spot
+      const roomL = doorX - pa, roomR = pb - doorX;
+      const side = roomR >= roomL ? 1 : -1;
+      const dx = clamp(Math.max(roomL, roomR) - 0.34, 0.3, 0.7);
+      const pz = dx >= 0.6 ? c + 0.5 : Math.min(c + 0.4 + Math.sqrt(0.36 - dx * dx), c + pd - 0.2);
+      porchSpot = spot([doorX + side * dx, deck, pz], 0, 'stand');
+      // the lamp hangs just under the canopy near the wall on the other side of the door, clear of heads
+      const lz = c + 0.26;
+      const lroom = side > 0 ? roomL : roomR;
+      const lx = doorX - side * clamp(lroom - 0.16, 0.3, 0.45);
+      porchLamp = [lx, yAt(lz) - 0.22, lz];
       if (state === 'intact') {
-        rod(P, [doorX, porchLamp[1] + 0.1, lz], [doorX, yAt(lz) - 0.08, lz], 0.012, METAL(), { seg: 6 });
+        rod(P, [lx, porchLamp[1] + 0.1, lz], [lx, yAt(lz) - 0.06, lz], 0.014, METAL(), { seg: 6 });
         P.add(sphere(0.1, 12, 10), lit ? LAMP : { slot: 'glass', color: '#e9e2cf', glowAmount: 0 }, { at: porchLamp });
-        P.add(cone(0.11, 0.07, 12), METAL(), { at: [doorX, porchLamp[1] + 0.06, lz] });
+        P.add(cone(0.11, 0.07, 12), METAL(), { at: [lx, porchLamp[1] + 0.06, lz] });
       }
     }
 
     // awning over the display window: stripes with a scalloped valance and iron brackets
     if (display && !wrecked) {
-      const aw = display.w + 0.36;
       const n = Math.max(5, Math.round(aw / 0.2)) | 1;
       const sw = aw / n;
       const yTop = 1.7, yLow = 1.42, out = 0.64;
@@ -892,16 +957,9 @@ const HOUSE = {
       for (const sx of [-1, 1]) rod(P, [display.x + sx * aw / 2, yLow - 0.35, c + 0.02], [display.x + sx * aw / 2, yLow + 0.01, c + out - 0.02], 0.018, METAL(), { seg: 6 });
     }
 
-    // sign board standing on the front eave
+    // shop sign standing on the roof just above the front eave, clear of the awning and the door
     if (sign && !wrecked) {
-      const sw = Math.min(W * 0.58, 1.9), sh = 0.46;
-      const sy = (roof.eaveTop + roof.eaveBottom) / 2 + sh * 0.42;
-      const sz = roof.eaveZ + 0.06;
-      const board = new Parts();
-      board.add(roundBox(sw + 0.14, sh + 0.14, 0.08, 0.04, 1), state === 'boarded' ? PALETTE.woodGrey : PALETTE.woodDark, { at: [0, -(sh + 0.14) / 2, -0.04] });
-      board.add(new THREE.PlaneGeometry(sw, sh), signMaterial(sign, { bg: '#f7ecd2', fg: '#6a3f22', border: '#b7864e', borderWidth: 8, font: 'bold 92px Georgia, "Times New Roman", serif' }), { at: [0, 0, 0.002] });
-      P.merge(board, xform([0, sy, sz], [-0.18, 0, 0]));
-      for (const sx of [-1, 1]) rod(P, [sx * sw * 0.32, sy - 0.22, sz - 0.3], [sx * sw * 0.32, sy - 0.12, sz - 0.02], 0.03, METAL(), { seg: 6 });
+      roofSign(P, roof, { text: sign, w: Math.min(W * 0.58, 1.9), frame: state === 'boarded' ? PALETTE.woodGrey : PALETTE.woodDark });
     }
 
     // a warm lantern by the door, and one lit window
@@ -929,11 +987,20 @@ const HOUSE = {
     }
 
     group.add(P.build('house'));
-    const spots = {
-      door: spot([doorX, porch ? 0.16 : 0.09, porch ? c + 0.4 : c + 0.28], 0, 'stand'),
-      porch: porchSpot ?? spot([doorX + (display ? 1.25 : 1.05), 0, c + 1.0], 0, 'stand'),
-      window: spot([frontWins.length ? frontWins[frontWins.length - 1] : display ? display.x : 0.8, 0, c + 0.62], 180, 'stand'),
-    };
+    const doorSpot = spot([doorX, porch ? deck : 0.09, porch ? c + 0.4 : c + 0.28], 0, 'stand');
+    // the window spot looks in at a front window; on a porch it stands on the deck clear of the
+    // railings and the other spots, or else at a side window
+    const taken = [doorSpot, porchSpot].filter(Boolean).map((s) => [s.at[0], s.at[2]]);
+    let windowSpot = null;
+    for (const x of display ? [display.x] : [...frontWins].reverse()) {
+      if (!porchSpan || x < porchSpan[0] - 0.3 || x > porchSpan[1] + 0.3) { windowSpot = spot([x, 0, c + 0.62], 180, 'stand'); break; }
+      const sx = clamp(x, porchSpan[0] + 0.36, porchSpan[1] - 0.36);
+      if (taken.every(([qx, qz]) => Math.hypot(sx - qx, c + 0.62 - qz) >= 0.55)) { windowSpot = spot([sx, deck, c + 0.62], 180, 'stand'); break; }
+    }
+    windowSpot ??= spot([W / 2 + 0.62, 0, sideZ], -90, 'stand');
+    // without a porch, the porch spot waits in front of the house on the side away from the window
+    porchSpot ??= spot([doorX + (windowSpot.at[0] > doorX ? -1.05 : 1.05), 0, c + 1.0], 0, 'stand');
+    const spots = { door: doorSpot, porch: porchSpot, window: windowSpot };
     return finish(group, {
       footprint: { w: W + 0.8, d: D + (porch ? 2.8 : 1.4) },
       spots,
@@ -955,7 +1022,7 @@ function facetLathe(profile, segments = 8) {
 }
 
 /** A flag hanging from `at` along +X in a few segments that wave in the wind. */
-function wavingFlag(group, at, { w = 0.7, h = 0.42, color = PALETTE.cloth.red, stripe = null, segs = 4 } = {}) {
+function wavingFlag(group, at, { w = 0.7, h = 0.42, color = PALETTE.cloth.red, stripe = null, segs = 4, phase = 0 } = {}) {
   const root = new THREE.Group();
   root.position.set(at[0], at[1], at[2]);
   group.add(root);
@@ -973,7 +1040,8 @@ function wavingFlag(group, at, { w = 0.7, h = 0.42, color = PALETTE.cloth.red, s
     nodes.push(node);
     parent = node;
   }
-  return (t) => {
+  return (time) => {
+    const t = time + phase;
     const wind = 0.45 + WORLD_UNIFORMS.uWind.value;
     nodes.forEach((n, i) => { n.rotation.y = Math.sin(t * 3.4 - i * 0.95) * (0.16 + 0.06 * i) * wind; });
     root.rotation.y = Math.sin(t * 0.6) * 0.15 * wind;
@@ -2017,22 +2085,27 @@ const HALL = {
     P.add(roundBox(W + 0.18, 0.16, D + 0.18, 0.05, 1), trim, { at: [0, H - 0.12, 0] });
     // the roof
     const roof = addRoof(P, { style: 'hip', W, D, y0: H, rise: 1.35, color: roofC, trim, walls, over: 0.45 });
-    // the clock tower bay in the middle of the front
-    const tw = 1.9, tz = c + 0.42, topY = roof.ridge + 1.9;
+    // the clock tower bay in the middle of the front: it stands proud of the eave, so the roof
+    // runs into its sides, and a cornice band wraps it at eave height
+    const tw = 2.1, tz = c + 0.62, topY = roof.ridge + 1.9;
+    const zL = tz + 0.45; // front of the landing before the doors
+    P.add(roundBox(tw + 0.3, base, zL - (c - 0.1), 0.06, 1), stone, { at: [0, 0, (zL + c - 0.1) / 2] });
     P.add(roundBox(tw, topY - base, tw, 0.06, 2), walls, { at: [0, base, tz - tw / 2] });
     for (const sx of [-1, 1]) P.add(roundBox(0.2, topY - base - 0.1, 0.2, 0.05, 1), trim, { at: [sx * (tw / 2 - 0.06), base, tz - 0.06] });
-    // steps up to the doors
-    for (let k = 0; k < 3; k++) P.add(roundBox(2.6 - k * 0.25, base - k * 0.12, 0.42, 0.04, 1), shade(stone, -0.03 * k), { at: [0, 0, tz + 0.62 - k * 0.3] });
+    P.add(roundBox(tw + 0.18, 0.16, tz - c + 0.29, 0.04, 1), trim, { at: [0, H - 0.12, (tz + 0.09 + c - 0.2) / 2] });
+    // two steps rising to the landing, which is flush with the plinth
+    P.add(roundBox(2.45, base * 2 / 3, 0.42, 0.04, 1), shade(stone, -0.03), { at: [0, 0, zL + 0.1] });
+    P.add(roundBox(2.75, base / 3, 0.42, 0.04, 1), shade(stone, -0.06), { at: [0, 0, zL + 0.4] });
     // double doors under an arch
     const dd = doorParts({ color: doorC, frame: trim, arch: true, glass: 'lit', w: 1.3, h: 1.95 });
     P.merge(dd, xform([0, base, tz]));
     P.add(roundBox(0.035, 1.6, 0.03, 0.01, 1), shade(doorC, -0.15), { at: [0, base + 0.05, tz + 0.12] });
     P.add(sphere(0.05, 8, 6), METAL(PALETTE.gold), { at: [-0.12, base + 0.9, tz + 0.15] });
-    // name plaque
+    // name plaque between the door arch and the window over it
     if (sign) {
       const sw = 1.5, sh = 0.36;
-      P.add(roundBox(sw + 0.12, sh + 0.12, 0.08, 0.04, 1), PALETTE.gold, { at: [0, base + 2.42, tz] });
-      P.add(new THREE.PlaneGeometry(sw, sh), signMaterial(sign, { bg: '#fbf3df', fg: '#4f3a26', border: '#c99b44', borderWidth: 8, font: 'bold 84px Georgia, "Times New Roman", serif' }), { at: [0, base + 2.48 + sh / 2, tz + 0.085] });
+      P.add(roundBox(sw + 0.12, sh + 0.12, 0.08, 0.04, 1), PALETTE.gold, { at: [0, base + 2.22, tz] });
+      P.add(new THREE.PlaneGeometry(sw, sh), signMaterial(sign, { bg: '#fbf3df', fg: '#4f3a26', border: '#c99b44', borderWidth: 8, font: 'bold 84px Georgia, "Times New Roman", serif' }), { at: [0, base + 2.28 + sh / 2, tz + 0.085] });
     }
     // belfry: arched openings, a cornice, clock faces on three sides
     const by = roof.ridge - 0.25;
@@ -2048,10 +2121,11 @@ const HALL = {
     P.add(spire, roofC, { at: [0, topY + 0.02, tz - tw / 2] });
     P.add(sphere(0.13, 12, 10), METAL(PALETTE.gold), { at: [0, topY + 2.02, tz - tw / 2] });
     rod(P, [0, topY + 2.05, tz - tw / 2], [0, topY + 3.0, tz - tw / 2], 0.025, METAL(PALETTE.ironLight), { seg: 6 });
-    const wave = wavingFlag(group, [0.025, topY + 2.95, tz - tw / 2], { w: 0.8, h: 0.48, color: flagC, stripe: PALETTE.cloth.white });
+    const wave = wavingFlag(group, [0.025, topY + 2.95, tz - tw / 2], { w: 0.8, h: 0.48, color: flagC, stripe: PALETTE.cloth.white, phase: stream(ctx, 'anim').float(0, TAU) });
     // tall arched windows on both floors of each wing
-    const win = windowParts({ w: 0.6, h: 1.0, shape: 'arch', frame: trim, glass: 'lit', season, rand, flowerbox: false });
-    const winBox = windowParts({ w: 0.6, h: 1.0, shape: 'arch', frame: trim, glass: 'lit', season, rand, flowerbox: true });
+    const deco = stream(ctx, 'deco');
+    const win = windowParts({ w: 0.6, h: 1.0, shape: 'arch', frame: trim, glass: 'lit', season, rand: deco, flowerbox: false });
+    const winBox = windowParts({ w: 0.6, h: 1.0, shape: 'arch', frame: trim, glass: 'lit', season, rand: deco, flowerbox: true });
     for (const sx of [-1, 1]) {
       for (const x of [1.75, 2.95]) {
         P.merge(winBox, xform([sx * x, base + 1.0, c]));
@@ -2061,31 +2135,31 @@ const HALL = {
       P.merge(win, xform([sx * W / 2, base + 2.75, 0], [0, sx * Math.PI / 2, 0]));
     }
     for (const x of [-2.2, 2.2]) P.merge(win, xform([x, base + 1.9, -c], [0, Math.PI, 0]));
-    P.merge(windowParts({ w: 0.46, h: 0.62, shape: 'arch', frame: trim, glass: 'lit', sill: true }), xform([0, base + 3.32, tz]));
+    P.merge(windowParts({ w: 0.46, h: 0.62, shape: 'arch', frame: trim, glass: 'lit', sill: false }), xform([0, base + 3.14, tz]));
     // lanterns flanking the doors, round planters with seasonal flowers
     const lights = [];
     for (const sx of [-1, 1]) {
-      wallLantern(P, [sx * 0.68, base + 1.55, tz], true);
-      lights.push(light([sx * 0.68, base + 1.5, tz + 0.4], { intensity: 1.0, distance: 5 }));
-      const px = sx * 1.85, pz = c + 0.75;
+      wallLantern(P, [sx * 0.82, base + 1.55, tz], true);
+      lights.push(light([sx * 0.82, base + 1.5, tz + 0.4], { intensity: 1.0, distance: 5 }));
+      const px = sx * 2.0, pz = c + 0.95;
       P.add(roundCyl(0.42, 0.42, { top: 0.48, bevel: 0.05, segments: 18, steps: 1 }), stone, { at: [px, 0, pz] });
       P.add(cyl(0.42, 0.03, { segments: 16 }), PALETTE.dirt, { at: [px, 0.42, pz] });
       const leaf = season === 'winter' ? '#6f7f5f' : seasonal(PALETTE.leaf, season);
       P.add(blob(0.36, { detail: 1, amp: 0.1, seed: sx + 4, squash: [1.05, 0.7, 1.05] }), { slot: 'foliage', color: leaf }, { at: [px, 0.6, pz] });
-      const cols = flowerColors(season, rand);
+      const cols = flowerColors(season, deco);
       for (let k = 0; cols.length && k < 8; k++) {
-        const a = (k / 8) * Math.PI * 2 + rand.float(0, 0.4), rr = rand.float(0.12, 0.3);
-        P.add(sphere(0.062, 6, 4), { slot: 'foliage', color: cols[k % cols.length] }, { at: [px + Math.sin(a) * rr, 0.74 + rand.float(-0.04, 0.06) - rr * 0.25, pz + Math.cos(a) * rr] });
+        const a = (k / 8) * Math.PI * 2 + deco.float(0, 0.4), rr = deco.float(0.12, 0.3);
+        P.add(sphere(0.062, 6, 4), { slot: 'foliage', color: cols[k % cols.length] }, { at: [px + Math.sin(a) * rr, 0.74 + deco.float(-0.04, 0.06) - rr * 0.25, pz + Math.cos(a) * rr] });
       }
     }
     group.add(P.build('hall'));
     return finish(group, {
-      footprint: { w: W + 0.8, d: D + 3.2 },
+      footprint: { w: W + 0.8, d: D + 3.6 },
       spots: {
-        door: spot([0, base, tz + 0.42], 0, 'stand'),
-        steps: spot([0, 0, tz + 1.25], 0, 'stand'),
-        left: spot([-2.6, 0, c + 1.3], 0, 'stand'),
-        right: spot([2.6, 0, c + 1.3], 0, 'stand'),
+        door: spot([0, base, tz + 0.25], 0, 'stand'),
+        steps: spot([0, 0, zL + 0.95], 0, 'stand'),
+        left: spot([-2.75, 0, c + 1.5], 0, 'stand'),
+        right: spot([2.75, 0, c + 1.5], 0, 'stand'),
       },
       lights,
       tick: wave,
