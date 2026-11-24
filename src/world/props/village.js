@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import {
   Parts, finish, spot, light, box, roundCyl, cyl, cone, sphere, lathe, blob, tube, extrude, ring, xform,
-  material, patchMaterial, PALETTE, SCALE, SEASONS, shade, mix, rng, noise3, signMaterial, waterMaterial, WORLD_UNIFORMS,
+  material, patchMaterial, PALETTE, SCALE, SEASONS, shade, mix, rng, noise3, signMaterial, waterMaterial, WORLD_UNIFORMS, boundsOf,
 } from '../kit.js';
 
 // Prop family: village (street furniture and small props). See ../kit.js for the conventions:
@@ -150,16 +150,40 @@ function softBox(w, h, d, c = 0.02) {
   return g;
 }
 
-/** A soft box whose top is scaled by (tx, tz): tubs, troughs, tapered plinths. */
-function taperBox(w, h, d, c, tx = 1, tz = tx) {
-  const g = softBox(w, h, d, c);
-  const p = g.attributes.position;
+/**
+ * A soft box whose top is scaled by (tx, tz): tubs, troughs, tapered plinths. softBox's blended
+ * normals are carried through the taper (inverse transpose of its Jacobian), so the edges stay soft.
+ * `open` drops the top face (a tub's mouth).
+ */
+function taperBox(w, h, d, c, tx = 1, tz = tx, { open = false } = {}) {
+  let g = softBox(w, h, d, c);
+  const p = g.attributes.position, n = g.attributes.normal;
+  const kx = (tx - 1) / Math.max(h, 1e-3), kz = (tz - 1) / Math.max(h, 1e-3);
   for (let i = 0; i < p.count; i++) {
-    const t = p.getY(i) / h;
-    p.setX(i, p.getX(i) * lerp(1, tx, t));
-    p.setZ(i, p.getZ(i) * lerp(1, tz, t));
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    const sx = 1 + kx * y, sz = 1 + kz * y;
+    p.setX(i, x * sx);
+    p.setZ(i, z * sz);
+    const ax = n.getX(i), ay = n.getY(i), az = n.getZ(i);
+    const nx = ax / sx, nz = az / sz, ny = ay - (x * kx * ax) / sx - (z * kz * az) / sz;
+    const l = Math.hypot(nx, ny, nz) || 1;
+    n.setXYZ(i, nx / l, ny / l, nz / l);
   }
-  g.computeVertexNormals();
+  if (open) {
+    // keep every triangle that is not part of the flat top face
+    const keep = [];
+    for (let i = 0; i < p.count; i += 3) {
+      if (n.getY(i) > 0.999 && n.getY(i + 1) > 0.999 && n.getY(i + 2) > 0.999) continue;
+      keep.push(i);
+    }
+    const pos = new Float32Array(keep.length * 9), nor = new Float32Array(keep.length * 9);
+    keep.forEach((i, k) => {
+      for (let j = 0; j < 9; j++) { pos[k * 9 + j] = p.array[i * 3 + j]; nor[k * 9 + j] = n.array[i * 3 + j]; }
+    });
+    g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  }
   return g;
 }
 
@@ -292,27 +316,31 @@ function staves(base, { cx = 0, cz = 0, n = 14, y0 = 0, y1 = 1, seed = 0 } = {})
 /* ───────────────────────── shared materials ───────────────────────── */
 
 let fallMat = null;
-/** Falling water: soft white streaks scrolling down (the texture offset moves in a tick). */
+/**
+ * Falling water: bright white streaks over a see-through pale aqua (the map's offset scrolls in a
+ * tick), fading out toward the bottom of each sheet (a static alpha map on the same uv: v is 0 at
+ * the lip and 1 at the splash). No emissive: at night it is lit like everything else.
+ */
 function fallMaterial() {
   if (fallMat) return fallMat;
   const W = 128, H = 256;
   const cv = document.createElement('canvas');
   cv.width = W; cv.height = H;
   const g = cv.getContext('2d');
-  g.fillStyle = 'rgba(214,240,250,0.32)';
+  g.fillStyle = 'rgba(178,224,240,0.42)';
   g.fillRect(0, 0, W, H);
   const r = rng('village-falling-water');
-  g.filter = 'blur(1.2px)';
-  // soft vertical streaks, each fading in and out along its length; drawn wrapped so it tiles
-  for (let i = 0; i < 120; i++) {
-    const x = r.float(0, W), y = r.float(0, H), w = r.float(1.5, 5), h = r.float(30, 150);
-    const a = r.float(0.35, 0.85);
+  g.filter = 'blur(1.3px)';
+  // vertical streaks, each fading in and out along its length; drawn wrapped so it tiles
+  for (let i = 0; i < 70; i++) {
+    const x = r.float(0, W), y = r.float(0, H), w = r.float(3, 9), h = r.float(50, 180);
+    const a = r.float(0.6, 1);
     for (const dx of [0, -W, W]) {
-      for (const dy of [0, -H]) {
+      for (const dy of [0, -H, H]) {
         const grad = g.createLinearGradient(0, y + dy, 0, y + dy + h);
         grad.addColorStop(0, 'rgba(255,255,255,0)');
-        grad.addColorStop(0.3, `rgba(255,255,255,${a.toFixed(2)})`);
-        grad.addColorStop(0.75, `rgba(250,254,255,${(a * 0.8).toFixed(2)})`);
+        grad.addColorStop(0.2, `rgba(255,255,255,${a.toFixed(2)})`);
+        grad.addColorStop(0.8, `rgba(250,254,255,${(a * 0.9).toFixed(2)})`);
         grad.addColorStop(1, 'rgba(255,255,255,0)');
         g.fillStyle = grad;
         g.fillRect(x + dx, y + dy, w, h);
@@ -322,14 +350,44 @@ function fallMaterial() {
   const tex = new THREE.CanvasTexture(cv);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.colorSpace = THREE.SRGBColorSpace;
-  tex.repeat.set(4, 1);
+  // alpha along the sheet (canvas top = v 1 = the bottom of the sheet)
+  const ac = document.createElement('canvas');
+  ac.width = 4; ac.height = 64;
+  const ag = ac.getContext('2d');
+  const fade = ag.createLinearGradient(0, 0, 0, 64);
+  fade.addColorStop(0, 'rgb(60,60,60)');
+  fade.addColorStop(0.35, 'rgb(175,175,175)');
+  fade.addColorStop(1, 'rgb(250,250,250)');
+  ag.fillStyle = fade;
+  ag.fillRect(0, 0, 4, 64);
+  const alpha = new THREE.CanvasTexture(ac);
   fallMat = new THREE.MeshStandardMaterial({
-    name: 'village-falling-water', map: tex, color: '#eefaff', emissive: '#6fb3c8', emissiveIntensity: 0.22,
-    vertexColors: true, transparent: true, opacity: 0.8, roughness: 0.1, metalness: 0, depthWrite: false, side: THREE.DoubleSide,
+    name: 'village-falling-water', map: tex, alphaMap: alpha, color: '#ffffff',
+    vertexColors: true, transparent: true, opacity: 0.95, roughness: 0.15, metalness: 0, depthWrite: false, side: THREE.DoubleSide,
   });
   fallMat.userData.slot = 'water';
   fallMat.userData.castShadow = false;
   return fallMat;
+}
+
+let domeGeo = null;
+/** A unit hemisphere (21 triangles): foam splashes. */
+function foamDome() {
+  domeGeo ??= new THREE.SphereGeometry(1, 7, 2, 0, TAU, 0, Math.PI / 2);
+  return domeGeo;
+}
+
+/**
+ * A strip of falling water: a lathe of `profile` from angle phi0 over dphi, its u scaled to world
+ * units (one texture repeat per 0.6) so narrow and wide strips show the same streaks.
+ */
+function curtainGeo(profile, phi0, dphi, segs = 2) {
+  const g = new THREE.LatheGeometry(profile.map(([r, y]) => new THREE.Vector2(Math.max(r, 0), y)), segs, phi0, dphi);
+  const uv = g.attributes.uv;
+  const rMid = profile.reduce((a, [r]) => a + r, 0) / profile.length;
+  const k = (dphi * rMid) / 0.6;
+  for (let i = 0; i < uv.count; i++) uv.setX(i, uv.getX(i) * k + phi0 * 0.83);
+  return g;
 }
 
 const flagMats = new Map();
@@ -363,9 +421,37 @@ function flagMaterial(map = null) {
   return m;
 }
 
-/** A painted label (signs, boards, plaques): text on a board-colored background. */
+/**
+ * A painted label (signs, boards, plaques): text on a board-colored background. The label fills
+ * its whole canvas (square corners): the board or frame behind it gives the rounded shape, and a
+ * rounded canvas would leave transparent corners that render as black specks on the opaque sign.
+ */
 function label(text, { bg = '#f2e2bf', fg = '#5a3a22', border = null, width = 512, height = 140, font = 'bold 80px Georgia, "Times New Roman", serif' } = {}) {
-  return signMaterial(text, { bg, fg, border: border ?? bg, borderWidth: border ? 8 : 0, width, height, font, radius: 18 });
+  return signMaterial(text, { bg, fg, border: border ?? bg, borderWidth: border ? 8 : 0, width, height, font, radius: 0 });
+}
+
+/**
+ * Center a finished group on its bounds: shifts the meshes, spots and lights so the origin is the
+ * middle of the footprint, and returns that footprint ({ w, d } of the bounds plus `pad`).
+ */
+function recenter(group, { spots = {}, lights = [], pad = 0.1 } = {}) {
+  const b = boundsOf(group);
+  if (b.isEmpty()) return { r: 0.3 };
+  const cx = (b.min.x + b.max.x) / 2, cz = (b.min.z + b.max.z) / 2;
+  for (const c of group.children) { c.position.x -= cx; c.position.z -= cz; }
+  for (const s of Object.values(spots)) s.at = [s.at[0] - cx, s.at[1], s.at[2] - cz];
+  for (const l of lights) l.at = [l.at[0] - cx, l.at[1], l.at[2] - cz];
+  return { w: b.max.x - b.min.x + pad, d: b.max.z - b.min.z + pad };
+}
+
+/**
+ * Glowing and see-through pieces (fire, falling water) must not darken anything: the stage uses
+ * VSM shadows, where every shadow *receiver* is also drawn into the shadow map. Turn receiving
+ * off on meshes whose material casts no shadow, so they leave no shadow either.
+ */
+function noShadows(group, test = (m) => m.material?.userData?.castShadow === false) {
+  group.traverse((o) => { if (o.isMesh && test(o)) { o.castShadow = false; o.receiveShadow = false; } });
+  return group;
 }
 
 /** A water surface disc (kit water material) with a deep center and lighter edges. */
@@ -389,27 +475,32 @@ const FRUIT = {
  * A heap of round fruit filling an rx × rz area at height y: a bottom grid and a second layer
  * nestled in its gaps. `tilt` follows a tray tilted toward +Z.
  */
-function fruitHeap(P, R, kind, { at = [0, 0, 0], rx = 0.15, rz = 0.12, r = 0.05, layers = 2, tilt = 0 } = {}) {
+function fruitHeap(P, R, kind, { at = [0, 0, 0], rx = 0.15, rz = 0.12, r = 0.05, layers = 2, tilt = 0, max = 9 } = {}) {
   const [c0, c1] = FRUIT[kind] ?? FRUIT.apple;
-  const g = sphere(r, 8, 5);
-  const cols = clamp(Math.round((rx * 2) / (r * 1.9)), 1, 3);
-  const rows = clamp(Math.round((rz * 2) / (r * 1.9)), 1, 3);
+  const g = sphere(r, 6, 4);
+  let cols = clamp(Math.round((rx * 2) / (r * 1.9)), 1, 3);
+  let rows = clamp(Math.round((rz * 2) / (r * 1.9)), 1, 3);
+  // at most `max` fruit: a full bottom layer first (dropping rows or columns only if it alone is
+  // too many), then as much of the nestled top layer as fits, the most central (and back) first
+  while (cols * rows > max && (rows > 1 || cols > 1)) { if (rows >= cols) rows--; else cols--; }
   const sx = cols > 1 ? (rx * 2 - r * 1.9) / (cols - 1) : 0, sz = rows > 1 ? (rz * 2 - r * 1.9) / (rows - 1) : 0;
   let n = 0, top = null;
   const put = (x, y, z) => {
     const yy = y - (z - at[2]) * Math.tan(tilt);
-    P.add(g, shade(n++ % 3 ? c0 : c1, R.float(-0.04, 0.04)), { at: [x + R.float(-0.006, 0.006), yy, z + R.float(-0.006, 0.006)], scale: R.float(0.92, 1.06) });
+    P.add(g, shade(n++ % 3 ? c0 : c1, R.float(-0.04, 0.04)), { at: [x + R.float(-0.006, 0.006), yy, z + R.float(-0.006, 0.006)], rot: [R.float(-0.3, 0.3), R.angle(), 0], scale: [R.float(0.95, 1.06), R.float(0.88, 0.98), R.float(0.95, 1.06)] });
     if (!top || yy > top[1]) top = [x, yy, z];
   };
   for (let i = 0; i < cols; i++) for (let j = 0; j < rows; j++) put(at[0] - (cols - 1) * sx / 2 + i * sx, at[1] + r * 0.85, at[2] - (rows - 1) * sz / 2 + j * sz);
   if (layers > 1) {
-    const c2 = Math.max(1, cols - 1), r2 = Math.max(1, rows - 1);
-    for (let i = 0; i < c2; i++) for (let j = 0; j < r2; j++) put(at[0] - (c2 - 1) * sx / 2 + i * sx, at[1] + r * 0.85 + r * 1.25, at[2] - (r2 - 1) * sz / 2 + j * sz);
+    const c2 = Math.max(1, cols - 1), r2 = Math.max(1, rows - 1), spots = [];
+    for (let i = 0; i < c2; i++) for (let j = 0; j < r2; j++) spots.push([at[0] - (c2 - 1) * sx / 2 + i * sx, at[2] - (r2 - 1) * sz / 2 + j * sz]);
+    spots.sort((a, b) => (Math.abs(a[0] - at[0]) + Math.abs(a[1] - at[2])) - (Math.abs(b[0] - at[0]) + Math.abs(b[1] - at[2])) || a[1] - b[1]);
+    for (const [x, z] of spots.slice(0, Math.max(0, max - cols * rows))) put(x, at[1] + r * 0.85 + r * 1.25, z);
   }
   if ((kind === 'apple' || kind === 'pear') && top) {
     // a stem and a leaf on the top fruit
-    P.add(cyl(r * 0.11, r * 0.55, { segments: 4 }), PALETTE.woodDark, { at: [top[0], top[1] + r * 0.85, top[2]] });
-    P.add(sphere(r * 0.38, 6, 4), { slot: 'foliage', color: '#62b356' }, { at: [top[0] + r * 0.35, top[1] + r * 1.25, top[2]], scale: [1.4, 0.4, 0.8], rot: [0, 0, 0.5] });
+    P.add(cyl(r * 0.11, r * 0.55, { segments: 4 }), PALETTE.woodDark, { at: [top[0], top[1] + r * 0.8, top[2]] });
+    P.add(sphere(r * 0.38, 6, 4), { slot: 'foliage', color: '#62b356' }, { at: [top[0] + r * 0.35, top[1] + r * 1.15, top[2]], scale: [1.4, 0.4, 0.8], rot: [0, 0, 0.5] });
   }
 }
 
@@ -418,9 +509,11 @@ function pail(P, R, { at = [0, 0, 0], h = 0.28, r = 0.15, tin = false, color = n
   const [x0, y0, z0] = at;
   const body = color ?? (tin ? '#c9d0d7' : PALETTE.woodLight);
   const rb = r * 0.8;
-  const prof = [[0, 0], [rb - 0.012, 0], [rb, 0.012], [r, h - 0.01], [r - 0.006, h], [r - 0.022, h], [r - 0.024, h - 0.02], [rb - 0.02, 0.03], [0, 0.03]];
+  const prof = plain
+    ? [[0, 0], [rb - 0.012, 0], [rb, 0.012], [r, h - 0.01], [r - 0.01, h], [r - 0.03, h - 0.03], [0, h - 0.03]]
+    : [[0, 0], [rb - 0.012, 0], [rb, 0.012], [r, h - 0.01], [r - 0.006, h], [r - 0.022, h], [r - 0.024, h - 0.02], [rb - 0.02, 0.03], [0, 0.03]];
   if (tin) {
-    P.add(lathe(prof, plain ? 12 : 16), { slot: 'metal', color: body }, { at });
+    P.add(lathe(prof, plain ? 10 : 16), { slot: 'metal', color: body }, { at });
     if (!plain) {
       P.add(ring(r + 0.002, 0.009, { radial: 5, tubular: 18 }), { slot: 'metal', color: shade(body, 0.06) }, { at: [x0, y0 + h - 0.004, z0] });
       P.add(ring(lerp(rb, r, 0.25) + 0.004, 0.006, { radial: 4, tubular: 18 }), { slot: 'metal', color: shade(body, -0.06) }, { at: [x0, y0 + h * 0.25, z0] });
@@ -539,19 +632,21 @@ function buildFountain(p, ctx) {
   const P = new Parts();
   const seed = rand(ctx, 'fountain').int(0, 999);
 
-  // basin wall (stone courses), a soft light rim cap to sit on, pilasters around it
-  const blocks = 2 * Math.min(16, Math.max(6, Math.round(10 * s)));
-  const segs = blocks * 2;
-  const wall = [[R + 0.14, 0], [R + 0.15, 0.04], [R + 0.11, 0.09], [R + 0.03, 0.1], [R + 0.03, 0.21], [R + 0.04, 0.3], [R + 0.03, 0.32],
-    [inner, 0.32], [inner - 0.01, 0.12], [inner - 0.03, 0.1], [0, 0.1]];
+  // basin wall and rim cap in one 28-sided lathe: a dark foot, two courses of stone blocks (two
+  // segments per block), a soft light cap to sit on and a darker inside; pilasters around it
+  const segs = 28;
+  const wall = [[R + 0.13, 0], [R + 0.14, 0.035], [R + 0.1, 0.085], [R + 0.03, 0.1], [R + 0.032, 0.205], [R + 0.048, 0.27],
+    [R + 0.078, 0.315], [R + 0.065, rim - 0.022], [R + 0.03, rim], [inner + 0.04, rim], [inner + 0.004, rim - 0.022],
+    [inner - 0.012, 0.27], [inner - 0.025, 0.1], [0, 0.1]];
   const courses = masonry(stone, { courses: [0.1, 0.205, 0.33], segs, seed, spread: 0.09 });
+  const inside = shade(stone, -0.14);
   paint(P, lathe(wall, segs), stone, {}, (c, x, y, z) => {
     if (y < 0.099) c.set(dark);
-    else if (Math.hypot(x, z) < inner + 0.01) c.set(shade(stone, -0.14));
+    else if (y > 0.262) c.set(cap);
+    else if (Math.hypot(x, z) < inner + 0.01) c.set(inside);
     else courses(c, x, y, z);
   }, { flat: true });
-  P.add(lathe([[R + 0.05, 0.27], [R + 0.075, 0.31], [R + 0.07, rim - 0.025], [R + 0.03, rim], [inner + 0.04, rim], [inner + 0.005, rim - 0.02], [inner - 0.008, 0.29]], 40), cap);
-  const nPil = Math.max(6, Math.round(8 * s));
+  const nPil = s > 1.2 ? 6 : 4;
   for (let i = 0; i < nPil; i++) {
     const a = (i / nPil) * TAU + Math.PI / nPil;
     P.add(softBox(0.12, 0.19, 0.08, 0.025), cap, { at: [Math.sin(a) * (R + 0.04), 0.09, Math.cos(a) * (R + 0.04)], rot: [0, a, 0] });
@@ -562,23 +657,23 @@ function buildFountain(p, ctx) {
   const bowls = [];
   let y = 0.1;
   const pillar = (h, r) => {
-    P.add(lathe([[r * 1.35, 0], [r * 1.4, 0.04 * k], [r * 0.98, 0.1 * k], [r * 0.82, h * 0.45], [r, h * 0.62], [r * 0.78, h * 0.86], [r * 1.1, h], [0, h + 0.01]], 14), cap, { at: [0, y - 0.01, 0] });
+    P.add(lathe([[r * 1.4, 0], [r * 1.05, 0.09 * k], [r * 0.82, h * 0.45], [r, h * 0.62], [r * 0.78, h * 0.86], [r * 1.1, h], [0, h + 0.01]], 10), cap, { at: [0, y - 0.01, 0] });
     y += h;
   };
-  const bowl = (r) => {
+  const bowl = (r, bs) => {
     const y0 = y - 0.03 * k;
-    const prof = [[0.09 * k, 0], [r * 0.45, 0.05 * k], [r * 0.8, 0.13 * k], [r * 0.97, 0.19 * k], [r + 0.035 * k, 0.23 * k], [r + 0.045 * k, 0.27 * k],
-      [r + 0.025 * k, 0.3 * k], [r - 0.03 * k, 0.305 * k], [r - 0.06 * k, 0.28 * k], [r - 0.08 * k, 0.23 * k], [0, 0.2 * k]];
-    paint(P, lathe(prof, 26), stone, { at: [0, y0, 0] }, (c, x, yy) => { if (yy > y0 + 0.24 * k) c.set(cap); });
+    const prof = [[0.09 * k, 0], [r * 0.52, 0.06 * k], [r * 0.9, 0.16 * k], [r + 0.045 * k, 0.262 * k],
+      [r + 0.02 * k, 0.302 * k], [r - 0.04 * k, 0.3 * k], [r - 0.08 * k, 0.24 * k], [0, 0.2 * k]];
+    paint(P, lathe(prof, bs), stone, { at: [0, y0, 0] }, (c, x, yy) => { if (yy > y0 + 0.245 * k) c.set(cap); });
     bowls.push({ r, y: y0 + 0.262 * k, lip: y0 + 0.3 * k });
     y = y0 + 0.2 * k;
   };
-  const TIERS = [[0.62, 0.2, 0.7], [0.34, 0.12, 0.42], [0.22, 0.085, 0.25]];
-  for (let i = 0; i < tiers; i++) { pillar(TIERS[i][0] * k, TIERS[i][1] * k); bowl(TIERS[i][2] * k); }
+  const TIERS = [[0.62, 0.2, 0.7, 20], [0.34, 0.12, 0.42, 16], [0.22, 0.085, 0.25, 12]];
+  for (let i = 0; i < tiers; i++) { pillar(TIERS[i][0] * k, TIERS[i][1] * k); bowl(TIERS[i][2] * k, TIERS[i][3]); }
   const footY = tiers ? y : 0.1;
   const kf = tiers ? k : Math.max(k, 0.85);
   const fh = tiers ? 0.3 * k : 0.62 * kf;
-  P.add(lathe([[0.1 * kf, 0], [0.11 * kf, 0.03 * kf], [0.06 * kf, fh * 0.32], [0.05 * kf, fh * 0.57], [0.085 * kf, fh * 0.74], [0.065 * kf, fh * 0.92], [0.03 * kf, fh], [0, fh]], 12), cap, { at: [0, footY - 0.005, 0] });
+  P.add(lathe([[0.11 * kf, 0], [0.06 * kf, fh * 0.3], [0.05 * kf, fh * 0.57], [0.085 * kf, fh * 0.74], [0.065 * kf, fh * 0.92], [0.03 * kf, fh], [0, fh]], 10), cap, { at: [0, footY - 0.005, 0] });
   const topY = footY + fh;
   const landY = tiers ? bowls[bowls.length - 1].y : wl;
 
@@ -587,14 +682,14 @@ function buildFountain(p, ctx) {
   const jet = new Parts();
   let tex = null;
   if (water === 'running' || water === 'still') {
-    waterDisc(P, inner + 0.005, wl, { segs: 40 });
-    for (const b of bowls) waterDisc(P, b.r - 0.06 * k, b.y, { segs: 24 });
+    waterDisc(P, inner + 0.005, wl, { segs: 32 });
+    for (const b of bowls) waterDisc(P, b.r - 0.06 * k, b.y, { segs: 20 });
   } else if (water === 'frozen') {
     const ice = { slot: 'clear', color: '#d9eef5', opacity: 0.8 };
-    P.add(new THREE.CircleGeometry(inner + 0.005, 40).rotateX(-Math.PI / 2), ice, { at: [0, wl, 0] });
+    P.add(new THREE.CircleGeometry(inner + 0.005, 32).rotateX(-Math.PI / 2), ice, { at: [0, wl, 0] });
     const Ri = rand(ctx, 'icicles');
     for (const b of bowls) {
-      P.add(new THREE.CircleGeometry(b.r - 0.06 * k, 24).rotateX(-Math.PI / 2), ice, { at: [0, b.y, 0] });
+      P.add(new THREE.CircleGeometry(b.r - 0.06 * k, 20).rotateX(-Math.PI / 2), ice, { at: [0, b.y, 0] });
       const n = Math.round(b.r * 22);
       for (let i = 0; i < n; i++) {
         const a = (i / n) * TAU + Ri.float(-0.1, 0.1);
@@ -603,31 +698,56 @@ function buildFountain(p, ctx) {
       }
     }
   } else {
-    P.add(new THREE.CircleGeometry(inner, 32).rotateX(-Math.PI / 2), shade(stone, -0.18), { at: [0, 0.105, 0] });
+    P.add(new THREE.CircleGeometry(inner, 28).rotateX(-Math.PI / 2), shade(stone, -0.18), { at: [0, 0.105, 0] });
   }
   if (water === 'running') {
     const fall = fallMaterial();
     tex = fall.map;
-    const fm = { slot: 'clear', color: '#f4fdff', opacity: 0.55 };
-    // thin sheets of water spill over each bowl's lip and fall almost straight down
+    const fm = (sc) => ({ slot: 'solid', color: shade('#eef8fb', sc) });
+    const Rw = rand(ctx, 'fountain-water');
+    // a splash: a soft foam dome with a smaller one beside it, sitting on the pool
+    const dome = foamDome();
+    const splash = (x, yy, z, w, extra = false) => {
+      const a = Rw.angle();
+      foam.add(dome, fm(Rw.float(-0.03, 0.01)), { at: [x, yy, z], scale: [w, w * Rw.float(0.5, 0.62), w * 0.85], rot: [0, a, 0] });
+      if (extra) foam.add(dome, fm(Rw.float(-0.02, 0.02)), { at: [x + Math.cos(a) * w * 0.85, yy, z - Math.sin(a) * w * 0.85], scale: [w * 0.5, w * 0.32, w * 0.5] });
+    };
+    // water spills over each bowl's lip in separate curtains (gaps between them) that fade as
+    // they fall, landing in white splashes on the pool below
     for (let i = 0; i < bowls.length; i++) {
       const b = bowls[i];
       const yb = i > 0 ? bowls[i - 1].y : wl;
       const r0 = b.r + 0.04 * k, y0 = b.lip - 0.012 * k, drop = y0 - yb;
-      const prof = [[r0 - 0.01 * k, y0 + 0.012 * k], [r0 + 0.03 * k, y0 - 0.005], [r0 + 0.06 * k, y0 - drop * 0.12], [r0 + 0.08 * k, y0 - drop * 0.4], [r0 + 0.095 * k, y0 - drop * 0.75], [r0 + 0.1 * k, yb - 0.01]];
-      P.add(lathe(prof, 26), fall);
-      const rl = r0 + 0.1 * k;
-      foam.add(lathe([[rl + 0.08 * k, 0], [rl + 0.03 * k, 0.03 * k], [rl - 0.03 * k, 0.03 * k], [rl - 0.07 * k, 0]], 22), fm, { at: [0, yb - 0.006, 0] });
+      const prof = [[r0 - 0.012 * k, y0 + 0.012 * k], [r0 + 0.03 * k, y0 - 0.006], [r0 + 0.065 * k, y0 - drop * 0.2], [r0 + 0.088 * k, y0 - drop * 0.6], [r0 + 0.1 * k, yb - 0.01]];
+      const nc = clamp(Math.round(b.r / 0.11), 3, 6);
+      const ph = Rw.angle();
+      for (let j = 0; j < nc; j++) {
+        const dphi = (TAU / nc) * Rw.float(0.42, 0.56);
+        const a0 = ph + (j / nc) * TAU;
+        P.add(curtainGeo(prof, a0, dphi, 2), fall);
+        const am = a0 + dphi / 2, rl = r0 + 0.1 * k;
+        splash(Math.sin(am) * rl, yb + 0.004, Math.cos(am) * rl, clamp(dphi * rl * 0.62, 0.045, 0.11 * k), i === 0);
+      }
     }
-    // a slim jet from the spout, opening into a little umbrella that falls back around it
-    const jh = 0.18 * kf, drop = topY - landY, jr = tiers ? 1 : 1.5;
-    jet.add(lathe([[0.014 * kf, 0], [0.02 * kf, jh * 0.7], [0.035 * kf, jh], [0.075 * kf, jh * 1.06], [0.11 * kf * jr, jh * 0.88], [0.135 * kf * jr, jh * 0.35], [0.15 * kf * jr, -drop * 0.45], [0.16 * kf * jr, -drop + 0.012]], 16), fall);
-    foam.add(lathe([[0.22 * kf * jr, 0], [0.18 * kf * jr, 0.025 * kf], [0.13 * kf * jr, 0.025 * kf], [0.1 * kf * jr, 0]], 20), fm, { at: [0, landY - 0.006, 0] });
+    // the spout: a slim column with a spray cap, arcing back down in a few thin streams
+    const jh = (tiers ? 0.16 : 0.24) * kf, drop = topY - landY, jr = tiers ? 1 : 1.5;
+    jet.add(lathe([[0.03 * kf, 0], [0.024 * kf, jh * 0.6], [0.017 * kf, jh]], 8), fall);
+    jet.add(sphere(1, 6, 4), fm(0.01), { at: [0, jh + 0.012 * kf, 0], scale: [0.065 * kf, 0.04 * kf, 0.065 * kf] });
+    // (the tiny top bowl of a three-tier fountain only gets the spray cap)
+    const ns = tiers >= 3 ? 0 : tiers ? 4 : 5;
+    const sprof = [[0.025 * kf, jh + 0.014 * kf], [0.065 * kf * jr, jh + 0.034 * kf], [0.1 * kf * jr, jh + 0.008], [0.13 * kf * jr, jh * 0.2 - drop * 0.3], [0.15 * kf * jr, -drop + 0.012]];
+    for (let j = 0; j < ns; j++) {
+      const a0 = (j / ns) * TAU + 0.3, dphi = (TAU / ns) * 0.42;
+      jet.add(curtainGeo(sprof, a0, dphi, 2), fall);
+      const am = a0 + dphi / 2, rl = 0.15 * kf * jr;
+      splash(Math.sin(am) * rl, landY + 0.004, Math.cos(am) * rl, 0.05 * kf);
+    }
   }
   const group = P.build('fountain');
   let foamGroup = null, jetGroup = null;
   if (!foam.empty) { foamGroup = foam.build('fountain-foam'); group.add(foamGroup); }
   if (!jet.empty) { jetGroup = jet.build('fountain-jet'); jetGroup.position.set(0, topY - 0.01, 0); group.add(jetGroup); }
+  noShadows(group, (m) => m.material?.name === 'village-falling-water');
 
   // spots: four rim seats facing out, four stand spots at the diagonals facing in
   const seatR = R + 0.075 - 0.12;
@@ -639,7 +759,7 @@ function buildFountain(p, ctx) {
     'front-left': standSpot(45), 'front-right': standSpot(315), 'back-left': standSpot(135), 'back-right': standSpot(225),
   };
   const tick = water === 'running' ? (t) => {
-    tex.offset.y = 1 - fract(t * 0.6);
+    tex.offset.y = 1 - fract(t * 1.1);
     if (foamGroup) { const f = 1 + 0.02 * Math.sin(t * 3.1); foamGroup.scale.set(f, 1, f); foamGroup.position.y = 0.003 * Math.sin(t * 4.3); }
     if (jetGroup) jetGroup.scale.set(1 + 0.05 * Math.sin(t * 5.3), 1 + 0.025 * Math.sin(t * 3.7 + 1), 1 + 0.05 * Math.sin(t * 5.3));
   } : null;
@@ -658,7 +778,7 @@ function buildWell(p, ctx) {
   const ro = 0.55, ri = 0.39, wallH = 0.56;
   // stacked stone blocks around a dark shaft
   P.add(cyl(ri + 0.07, wallH - 0.02, { segments: 18, open: true }), '#4a4f56');
-  const courses = 3, per = 11, ch = (wallH - 0.02) / courses;
+  const courses = 3, per = 9, ch = (wallH - 0.02) / courses;
   for (let k = 0; k < courses; k++) {
     for (let i = 0; i < per; i++) {
       const a = ((i + (k % 2) * 0.5) / per) * TAU + R.float(-0.03, 0.03);
@@ -668,7 +788,7 @@ function buildWell(p, ctx) {
     }
   }
   // rim cap
-  P.add(lathe([[ro + 0.01, 0], [ro + 0.025, 0.03], [ro + 0.01, 0.07], [ro - 0.03, 0.085], [ri + 0.03, 0.085], [ri - 0.005, 0.06], [ri - 0.01, 0.0]], 22), shade(stone, 0.1), { at: [0, wallH - 0.03, 0] });
+  P.add(lathe([[ro + 0.01, 0], [ro + 0.025, 0.03], [ro + 0.01, 0.07], [ro - 0.03, 0.085], [ri + 0.03, 0.085], [ri - 0.005, 0.06], [ri - 0.01, 0.0]], 20), shade(stone, 0.1), { at: [0, wallH - 0.03, 0] });
   // water far down
   waterDisc(P, ri + 0.02, 0.24, { deep: '#2c6f8c', shallow: '#3f8aa6', segs: 16 });
   const top = wallH + 0.055;
@@ -699,7 +819,7 @@ function buildWell(p, ctx) {
   rod(P, [-px - 0.06, ay, 0], [px + 0.1, ay, 0], 0.028, shade(wood, -0.15), { seg: 8 });
   // rope coiled on a drum: a lathe with one bump per turn
   const coil = [[0.04, 0]];
-  for (let i = 0; i <= 12; i++) coil.push([i % 2 ? 0.074 : 0.066, 0.02 + (i / 12) * 0.38]);
+  for (let i = 0; i <= 8; i++) coil.push([i % 2 ? 0.075 : 0.065, 0.02 + (i / 8) * 0.38]);
   coil.push([0.04, 0.42]);
   P.add(lathe(coil, 8), '#d2b57e', { at: [-0.21, ay, 0], rot: [0, 0, -Math.PI / 2] });
   for (const x of [-0.23, 0.21]) P.add(cyl(0.085, 0.025, { segments: 10 }), shade(wood, -0.1), { at: [x, ay, 0], rot: [0, 0, -Math.PI / 2] });
@@ -724,17 +844,19 @@ function buildWell(p, ctx) {
 /**
  * A soft striped canopy: a bent sheet (double-sided cloth) `w` wide and `len` long, bowed along
  * its length and puffed between the stripes, tilted by `slope` (front lower) and centered at `at`.
+ * Returns `yAt(x, z, puffed = true)`: the world height of the cloth above (x, z), for sizing the
+ * frame under it (`puffed: false` gives the low line along the stripe seams).
  */
 function awning(P, { w, len, n, color, cream, at, slope = 0, bow = 0.06, puff = 0.025 }) {
-  const sub = 3;
-  const g = new THREE.PlaneGeometry(w, len, n * sub, 6).rotateX(-Math.PI / 2);
-  const pos = g.attributes.position;
-  for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i), z = pos.getZ(i);
+  const lift = (x, z, puffed = true) => {
+    const t = clamp(z / (len / 2), -1, 1);
     const u = (x + w / 2) / (w / n);
-    const t = z / (len / 2);
-    pos.setY(i, bow * (1 - t * t) + puff * Math.sin(Math.PI * fract(u)) * (0.6 + 0.4 * (1 - t * t)));
-  }
+    return bow * (1 - t * t) + (puffed ? puff * Math.sin(Math.PI * fract(u)) * (0.6 + 0.4 * (1 - t * t)) : 0);
+  };
+  const sub = 2;
+  const g = new THREE.PlaneGeometry(w, len, n * sub, 4).rotateX(-Math.PI / 2);
+  const pos = g.attributes.position;
+  for (let i = 0; i < pos.count; i++) pos.setY(i, lift(pos.getX(i), pos.getZ(i)));
   g.computeVertexNormals();
   const M = xform(at, [slope, 0, 0]);
   const A = C(color), B = C(cream);
@@ -743,12 +865,19 @@ function awning(P, { w, len, n, color, cream, at, slope = 0, bow = 0.06, puff = 
     q.set(x, y, z).applyMatrix4(inv);
     c.copy(Math.floor((q.x + w / 2) / (w / n) + 1e-4) % 2 ? B : A);
   }, { flat: true });
+  const cs = Math.cos(slope), sn = Math.sin(slope);
+  return (x, zw, puffed = true) => {
+    // the sheet point (x, lift, zl) lands at world z = at.z + lift * sin + zl * cos: solve for zl
+    let zl = (zw - at[2]) / cs;
+    for (let i = 0; i < 5; i++) zl = (zw - at[2] - lift(x, zl, puffed) * sn) / cs;
+    return at[1] + lift(x, zl, puffed) * cs - zl * sn;
+  };
 }
 
 let scallopGeo = null;
-/** A half-disc valance tab (1 wide), hanging down from y = 0. */
+/** A half-disc valance tab (1 wide), hanging down from y = 0: a flat shape for double-sided cloth. */
 function scallop() {
-  scallopGeo ??= extrude(Array.from({ length: 9 }, (_, j) => { const a = Math.PI + (j / 8) * Math.PI; return [Math.cos(a) * 0.5, Math.sin(a) * 0.5]; }), 0.022, { bevel: 0 });
+  scallopGeo ??= new THREE.ShapeGeometry(new THREE.Shape(Array.from({ length: 9 }, (_, j) => { const a = Math.PI + (j / 8) * Math.PI; return new THREE.Vector2(Math.cos(a) * 0.5, Math.sin(a) * 0.5); })));
   return scallopGeo;
 }
 
@@ -760,21 +889,18 @@ const GOODS = ['fruit', 'fish', 'flowers', 'bread', 'pottery', 'toys', 'none'];
 function goodsOn(P, R, goods, { at = [0, 0, 0], w = 1.4, d = 0.45 } = {}) {
   const [cx, y, cz] = at;
   const tray = (x, z, tw, td, color = PALETTE.woodLight, tilt = 0.18) => {
-    // a shallow crate tilted toward the customer, its front lip following the tilt
+    // a shallow open tray tilted toward the customer (one double-sided box, so its inside shows)
     const M = xform([x, y + Math.sin(tilt) * td * 0.5, z], [tilt, 0, 0]);
-    P.add(softBox(tw, 0.05, td, 0.014), color, { matrix: M });
-    P.add(softBox(tw, 0.08, 0.03, 0.01), shade(color, -0.08), { matrix: M.clone().multiply(xform([0, 0, td / 2 - 0.015])) });
-    P.add(softBox(tw, 0.08, 0.03, 0.01), shade(color, -0.08), { matrix: M.clone().multiply(xform([0, 0, -td / 2 + 0.015])) });
-    for (const sx of [-1, 1]) P.add(softBox(0.03, 0.08, td, 0.01), shade(color, -0.04), { matrix: M.clone().multiply(xform([sx * (tw / 2 - 0.015), 0, 0])) });
+    P.add(taperBox(tw, 0.085, td, 0.016, 1.04, 1.04, { open: true }), { slot: 'solid', color: shade(color, -0.04), double: true }, { matrix: M });
   };
   if (goods === 'fruit') {
     const kinds = ['apple', 'orange', 'pear', 'plum', 'lemon', 'peach'];
-    const n = clamp(Math.round(w / 0.5), 2, 4);
-    const tw = w / n - 0.03;
+    const n = clamp(Math.round(w / 0.5), 2, 3);
+    const tw = Math.min(w / n - 0.03, 0.56);
     for (let i = 0; i < n; i++) {
       const x = cx - w / 2 + (i + 0.5) * (w / n);
       tray(x, cz, tw, d * 0.9);
-      fruitHeap(P, R, kinds[i % kinds.length], { at: [x, y + 0.04 + Math.sin(0.18) * d * 0.45, cz], rx: tw / 2 - 0.035, rz: d * 0.38, r: 0.064, layers: 2, tilt: 0.18 });
+      fruitHeap(P, R, kinds[i % kinds.length], { at: [x, y + 0.04 + Math.sin(0.18) * d * 0.45, cz], rx: tw / 2 - 0.035, rz: d * 0.38, r: 0.064, layers: 2, tilt: 0.18, max: 10 });
     }
   } else if (goods === 'fish') {
     P.add(softBox(w, 0.04, d * 0.95, 0.012), { slot: 'metal', color: '#b9c3cc' }, { at: [cx, y, cz] });
@@ -787,19 +913,19 @@ function goodsOn(P, R, goods, { at = [0, 0, 0], w = 1.4, d = 0.45 } = {}) {
     }
     for (let i = 0; i < 2; i++) P.add(sphere(0.035, 7, 5), '#f6d84a', { at: [cx + (i ? 0.35 : -0.42) * w, y + 0.09, cz + d * 0.28], scale: [1, 0.85, 1.25] });
   } else if (goods === 'flowers') {
-    const n = clamp(Math.round(w / 0.4), 2, 6);
+    const n = clamp(Math.round(w / 0.4), 2, 4);
     const cols = ['#e9434c', '#f6cf3a', '#f49ac1', '#a57fd9', '#f8f4ea', '#f39a48'];
     for (let i = 0; i < n; i++) {
       const x = cx - w / 2 + (i + 0.5) * (w / n);
       const z = cz + (i % 2 ? -0.06 : 0.05);
       pail(P, R, { at: [x, y, z], h: 0.17, r: 0.1, tin: true, color: R.pick(['#9fb7c9', '#c7a3c8', '#a9c9a4', '#d9b98c']), handle: false, plain: true });
-      bouquet(P, R, [x, y + 0.17, z], cols[(i * 2 + R.int(0, 1)) % cols.length], 7, 0.1);
+      bouquet(P, R, [x, y + 0.17, z], cols[(i * 2 + R.int(0, 1)) % cols.length], 7, clamp(w / n / 4, 0.1, 0.14));
     }
   } else if (goods === 'bread') {
-    const n = clamp(Math.round(w / 0.45), 2, 5);
+    const n = clamp(Math.round(w / 0.45), 2, 3);
     for (let i = 0; i < n; i++) {
       const x = cx - w / 2 + (i + 0.5) * (w / n);
-      const tw = w / n - 0.05;
+      const tw = Math.min(w / n - 0.05, 0.62);
       basketTray(P, R, [x, y, cz], tw, d * 0.85);
       const kind = i % 3;
       if (kind === 0) {
@@ -830,14 +956,14 @@ function goodsOn(P, R, goods, { at = [0, 0, 0], w = 1.4, d = 0.45 } = {}) {
 /** A fish lying on its side (on ice, in a crate): body, tail fin, belly tint and an eye. */
 function fish(P, R, at, color, s, yaw) {
   const M = xform(at, [0, yaw, 0], s);
-  paint(P, sphere(0.1, 10, 6), color, { matrix: M.clone().multiply(xform([0, 0, 0], [0, 0, 0], [1, 0.3, 0.46])) }, (c, x, y, z) => {
+  paint(P, sphere(0.1, 8, 5), color, { matrix: M.clone().multiply(xform([0, 0, 0], [0, 0, 0], [1, 0.3, 0.46])) }, (c, x, y, z) => {
     const local = new THREE.Vector3(x - at[0], 0, z - at[2]).applyAxisAngle(UP, -yaw);
     if (local.z < -0.012 * s) c.lerp(C('#f3f1ea'), 0.55);
   });
   const tail = extrude([[0, 0], [0.075, 0.05], [0.062, 0], [0.075, -0.05]], 0.01, { bevel: 0.006, bevelSegments: 1, curveSegments: 1 });
   P.add(tail, shade(color, -0.1), { matrix: M.clone().multiply(xform([0.088, 0, 0], [Math.PI / 2, 0, 0])) });
   P.add(extrude([[-0.03, 0], [0.03, 0], [0.01, 0.03]], 0.008, { bevel: 0.004, bevelSegments: 1 }), shade(color, -0.1), { matrix: M.clone().multiply(xform([0, 0, 0.04], [Math.PI / 2, 0, 0])) });
-  P.add(sphere(0.013, 6, 4), '#33303a', { matrix: M.clone().multiply(xform([-0.066, 0.026, 0.006])) });
+  P.add(sphere(0.013, 4, 3), '#3a3640', { matrix: M.clone().multiply(xform([-0.066, 0.026, 0.006])) });
 }
 
 function bouquet(P, R, at, color, n = 7, spread = 0.1) {
@@ -849,8 +975,8 @@ function bouquet(P, R, at, color, n = 7, spread = 0.1) {
     const r = i === 0 ? 0 : spread * R.float(0.45, 0.8);
     const c = shade(color, R.float(-0.05, 0.05));
     const bx = x0 + Math.cos(a) * r, bz = z0 + Math.sin(a) * r, by = y0 + spread * 0.8 + R.float(0, 0.05) - r * 0.4;
-    P.add(sphere(0.034, 6, 4), { slot: 'foliage', color: c }, { at: [bx, by, bz], scale: [bs, 0.8 * bs, bs] });
-    P.add(sphere(0.013, 4, 3), { slot: 'foliage', color: '#f6d34a' }, { at: [bx, by + 0.026 * bs, bz], scale: bs });
+    P.add(sphere(0.034, 5, 3), { slot: 'foliage', color: c }, { at: [bx, by, bz], scale: [bs, 0.8 * bs, bs], rot: [0, a, 0] });
+    P.add(sphere(0.014, 4, 2), { slot: 'foliage', color: '#f6d34a' }, { at: [bx, by + 0.024 * bs, bz], scale: bs });
   }
 }
 
@@ -868,17 +994,17 @@ function loaf(P, R, at, kind, s = 1) {
   const [x, y, z] = at;
   const M = xform(at, [0, R.float(-0.15, 0.15), 0], s);
   const add = (g, c, local) => P.add(g, c, { matrix: M.clone().multiply(local) });
-  const slash = sphere(0.02, 6, 4);
+  const slash = sphere(0.02, 5, 3);
   if (kind === 'baguette') {
-    add(sphere(0.05, 10, 6), crust, xform([0, 0, 0], [0, 0, 0], [3.4, 0.75, 0.85]));
+    add(sphere(0.05, 8, 5), crust, xform([0, 0, 0], [0, 0, 0], [3.4, 0.75, 0.85]));
     for (let i = -1; i <= 1; i++) {
       const x = i * 0.075, top = 0.0375 * Math.sqrt(Math.max(0, 1 - (x / 0.17) ** 2));
       add(slash, '#f2d9a4', xform([x, top - 0.004, 0], [0, 0.7, 0], [1.6, 0.25, 0.42]));
     }
   } else if (kind === 'bun') {
-    add(sphere(0.045, 8, 6), shade(crust, 0.04), xform([0, 0, 0], [0, 0, 0], [1, 0.7, 1]));
+    add(sphere(0.045, 7, 5), shade(crust, 0.04), xform([0, 0, 0], [0, 0, 0], [1, 0.7, 1]));
   } else {
-    add(sphere(0.06, 10, 6), crust, xform([0, 0.01, 0], [0, 0, 0], [1.5, 0.85, 1.05]));
+    add(sphere(0.06, 8, 5), crust, xform([0, 0.01, 0], [0, 0, 0], [1.5, 0.85, 1.05]));
     for (let i = -1; i <= 1; i++) {
       const x = i * 0.034, top = 0.01 + 0.051 * Math.sqrt(Math.max(0, 1 - (x / 0.09) ** 2));
       add(slash, '#f2d9a4', xform([x, top - 0.004, 0], [0, 1.2, 0], [1.5, 0.25, 0.4]));
@@ -908,7 +1034,7 @@ function toy(P, R, at, i, s = 1) {
     const gores = ['#e9434c', '#f8f4ea', '#4f86c6', '#f8f4ea', '#f6cf3a', '#f8f4ea'];
     const B = M.clone().multiply(xform([0, 0.07, 0], [0.4, 0.3, 0]));
     const inv = B.clone().invert(), q = new THREE.Vector3();
-    paint(P, sphere(0.07, 12, 8), '#e9434c', { matrix: B }, (c, px, py, pz) => {
+    paint(P, sphere(0.07, 10, 6), '#e9434c', { matrix: B }, (c, px, py, pz) => {
       q.set(px, py, pz).applyMatrix4(inv);
       const a = (Math.atan2(q.z, q.x) / TAU + 0.5) * 6;
       c.set(Math.abs(q.y) > 0.062 ? '#f8f4ea' : gores[Math.floor(a) % 6]);
@@ -920,14 +1046,14 @@ function toy(P, R, at, i, s = 1) {
     add(softBox(0.08, 0.08, 0.08, 0.012), cols[2], xform([0, 0.08, 0], [0, -0.2, 0]));
   } else if (k === 2) {
     const fur = '#c98a52';
-    add(sphere(0.06, 9, 6), fur, xform([0, 0.06, 0], [0, 0, 0], [1, 1.05, 0.9]));
-    add(sphere(0.05, 9, 6), fur, xform([0, 0.15, 0.005]));
+    add(sphere(0.06, 8, 5), fur, xform([0, 0.06, 0], [0, 0, 0], [1, 1.05, 0.9]));
+    add(sphere(0.05, 8, 5), fur, xform([0, 0.15, 0.005]));
     for (const sx of [-1, 1]) {
-      add(sphere(0.02, 6, 4), fur, xform([sx * 0.035, 0.195, 0]));
-      add(sphere(0.022, 6, 4), fur, xform([sx * 0.06, 0.07, 0.02]));
+      add(sphere(0.02, 5, 3), fur, xform([sx * 0.035, 0.195, 0]));
+      add(sphere(0.022, 5, 3), fur, xform([sx * 0.06, 0.07, 0.02]));
     }
-    add(sphere(0.018, 6, 4), '#f0d2a8', xform([0, 0.14, 0.045]));
-    for (const sx of [-1, 1]) add(sphere(0.008, 5, 4), '#3a3440', xform([sx * 0.018, 0.165, 0.044]));
+    add(sphere(0.018, 5, 3), '#f0d2a8', xform([0, 0.14, 0.045]));
+    for (const sx of [-1, 1]) add(sphere(0.008, 4, 2), '#3a3440', xform([sx * 0.018, 0.165, 0.044]));
   } else {
     add(cyl(0.008, 0.26, { segments: 5 }), PALETTE.woodLight, xform([0, 0, 0]));
     const cols = ['#e9434c', '#4f86c6', '#f6cf3a', '#5aa56a'];
@@ -949,7 +1075,7 @@ function buildStall(p, ctx) {
   const zc0 = -0.08, zc1 = 0.5, dc = zc1 - zc0;
   // counter: a plank front, a colored trim and an overhanging top
   P.add(softBox(W - 0.06, top - 0.06, dc - 0.06, 0.02), shade(wood, 0.08), { at: [0, 0.02, (zc0 + zc1) / 2 - 0.01] });
-  const nPl = Math.max(4, Math.round(W / 0.24));
+  const nPl = clamp(Math.round(W / 0.34), 4, 6);
   for (let i = 0; i < nPl; i++) {
     const x = -W / 2 + 0.05 + (i + 0.5) * ((W - 0.1) / nPl);
     P.add(softBox((W - 0.1) / nPl - 0.012, top - 0.1, 0.03, 0.01), shade(PALETTE.woodLight, R.float(-0.05, 0.03)), { at: [x, 0.05, zc1 - 0.035] });
@@ -957,33 +1083,36 @@ function buildStall(p, ctx) {
   P.add(softBox(W + 0.02, 0.06, 0.05, 0.015), shade(wood, -0.1), { at: [0, 0, zc1 - 0.03] });
   P.add(softBox(W - 0.06, 0.05, 0.035, 0.012), color, { at: [0, top - 0.1, zc1 - 0.012] });
   P.add(softBox(W + 0.08, 0.05, dc + 0.1, 0.018), wood, { at: [0, top - 0.05, (zc0 + zc1) / 2 + 0.02] });
-  // posts: front ones at the counter corners, back ones taller behind the vendor
-  const zf = zc1 - 0.06, zb = -0.78, hf = 1.5, hb = 1.84;
-  for (const x of [-W / 2 + 0.03, W / 2 - 0.03]) {
-    P.add(softBox(0.07, hf, 0.07, 0.02), shade(wood, -0.05), { at: [x, 0, zf] });
-    P.add(softBox(0.07, hb, 0.07, 0.02), shade(wood, -0.05), { at: [x, 0, zb] });
-    P.add(softBox(0.05, 0.05, zf - zb, 0.015), shade(wood, -0.1), { at: [x, 0.12, (zf + zb) / 2] });
-  }
   // a puffy striped awning from the back (high) to the front (low), with a scalloped valance
-  const zA0 = zb - 0.14, zA1 = zc1 + 0.3, yA0 = hb + 0.06, yA1 = hf + 0.06;
+  const zf = zc1 - 0.06, zb = -0.78;
+  const zA0 = zb - 0.14, zA1 = zc1 + 0.3, yA0 = 1.84, yA1 = 1.48;
   const slope = Math.atan2(yA0 - yA1, zA1 - zA0);
   const len = Math.hypot(zA1 - zA0, yA0 - yA1);
   const AW = W + 0.26;
   const n = Math.max(5, Math.round(AW / 0.2) | 1);
   const sw = AW / n;
-  awning(P, { w: AW, len, n, color, cream, at: [0, (yA0 + yA1) / 2, (zA0 + zA1) / 2], slope, bow: 0.07, puff: 0.03 });
+  const yAt = awning(P, { w: AW, len, n, color, cream, at: [0, (yA0 + yA1) / 2, (zA0 + zA1) / 2], slope, bow: 0.07, puff: 0.03 });
   for (let i = 0; i < n; i++) {
     const x = -AW / 2 + (i + 0.5) * sw;
-    P.add(scallop(), { slot: 'cloth', color: i % 2 ? cream : color }, { at: [x, yA1 - 0.012, zA1 + 0.006], scale: [sw * 1.04, sw * 1.0, 1] });
+    P.add(scallop(), { slot: 'cloth', color: i % 2 ? cream : color, double: true }, { at: [x, yA1 - 0.012, zA1 + 0.006], scale: [sw * 1.04, sw * 1.0, 1] });
   }
-  P.add(roundCyl(0.03, AW + 0.03, { segments: 8, steps: 1, bevel: 0.012 }), { slot: 'cloth', color: shade(color, -0.12) }, { at: [-(AW + 0.03) / 2, yA1 - 0.012, zA1 + 0.004], rot: [0, 0, -Math.PI / 2] });
-  P.add(roundCyl(0.03, AW + 0.03, { segments: 8, steps: 1, bevel: 0.012 }), { slot: 'cloth', color: shade(color, -0.12) }, { at: [-(AW + 0.03) / 2, yA0 - 0.01, zA0], rot: [0, 0, -Math.PI / 2] });
-  // a little lantern hanging under the front corner of the awning
-  const lx = W / 2 - 0.2, ly = yA1 - 0.36;
-  rod(P, [lx, yA1 - 0.07, zA1 - 0.1], [lx, ly + 0.17, zA1 - 0.1], 0.006, PALETTE.iron, { seg: 4 });
-  P.add(roundCyl(0.05, 0.03, { segments: 8, steps: 1, bevel: 0.01 }), PALETTE.iron, { at: [lx, ly + 0.14, zA1 - 0.1] });
-  P.add(roundCyl(0.045, 0.13, { top: 0.052, segments: 10, steps: 1, bevel: 0.015 }), { slot: 'lamp', color: '#fff0c8' }, { at: [lx, ly + 0.01, zA1 - 0.1] });
-  P.add(roundCyl(0.042, 0.025, { segments: 8, steps: 1, bevel: 0.01 }), PALETTE.iron, { at: [lx, ly - 0.01, zA1 - 0.1] });
+  for (const [yy, zz] of [[yA1 - 0.012, zA1 + 0.004], [yA0 - 0.01, zA0]]) P.add(cyl(0.03, AW + 0.03, { segments: 7 }), { slot: 'cloth', color: shade(color, -0.12) }, { at: [-(AW + 0.03) / 2, yy, zz], rot: [0, 0, -Math.PI / 2] });
+  // the frame under it: four posts (front ones at the counter corners, back ones behind the
+  // vendor) carrying a front and a back crossbar, each tilted to the cloth that rests on it
+  const px = W / 2 - 0.03, postC = shade(wood, -0.05), barC = shade(wood, -0.12), bh = 0.06, bd = 0.075;
+  for (const z of [zf, zb]) {
+    const top = yAt(0, z, false) - 0.003;
+    const tilt = Math.atan2(yAt(0, z - 0.03, false) - yAt(0, z + 0.03, false), 0.06);
+    P.add(softBox(2 * px + 0.13, bh, bd, 0.02), barC, { at: [0, top - Math.cos(tilt) * bh, z - Math.sin(tilt) * bh], rot: [tilt, 0, 0] });
+    for (const x of [-px, px]) P.add(softBox(0.07, top - bh + 0.01, 0.07, 0.02), postC, { at: [x, 0, z] });
+  }
+  for (const x of [-px, px]) P.add(softBox(0.05, 0.05, zf - zb, 0.015), shade(wood, -0.1), { at: [x, 0.12, (zf + zb) / 2] });
+  // a little lantern hanging from the cloth near the front corner
+  const lx = W / 2 - 0.2, lz = zA1 - 0.1, ly = yA1 - 0.32;
+  rod(P, [lx, yAt(lx, lz) - 0.002, lz], [lx, ly + 0.17, lz], 0.006, PALETTE.iron, { seg: 4 });
+  P.add(cyl(0.05, 0.03, { top: 0.03, segments: 8 }), PALETTE.iron, { at: [lx, ly + 0.14, lz] });
+  P.add(roundCyl(0.045, 0.13, { top: 0.052, segments: 8, steps: 1, bevel: 0.015 }), { slot: 'lamp', color: '#fff0c8' }, { at: [lx, ly + 0.01, lz] });
+  P.add(cyl(0.042, 0.025, { segments: 8 }), PALETTE.iron, { at: [lx, ly - 0.01, lz] });
   // a sign board on top of the awning front
   if (sign) {
     const sw2 = clamp(0.3 + sign.length * 0.075, 0.6, Math.min(1.3, W)), sh = 0.24;
@@ -1084,16 +1213,31 @@ function buildCrate(p, ctx) {
   const R = rand(ctx, 'crate');
   const P = new Parts();
   const lay = stackLayout(count, S * 1.02, R);
+  // Resolve what each crate shows before building: a crate with another on it has its lid on;
+  // the top of a stack (or the first crate) always shows the contents; the second of a pair is
+  // closed so there is a seat; any other open crate may or may not have its lid on.
+  const covered = lay.map(([x, y, z], i) => lay.some(([x2, y2, z2], j) => j !== i && y2 > y + 0.01 && Math.hypot(x2 - x, z2 - z) < S));
+  const open = lay.map((_, i) => i).filter((i) => !covered[i]);
+  const main = open.reduce((a, i) => (lay[i][1] > lay[a][1] ? i : a), open[0]);
+  const fills = lay.map((_, i) => {
+    if (covered[i] || fill === 'closed') return 'closed';
+    if (i === main) return fill;
+    return count === 2 ? 'closed' : R.pick([fill, 'closed']);
+  });
   let seat = null;
   lay.forEach(([x, y, z, yaw], i) => {
-    const onTop = lay.some(([x2, y2, z2], j) => j !== i && y2 > y + 0.01 && Math.hypot(x2 - x, z2 - z) < S);
-    const top = crateAt(P, R, [x, y, z], S, wood, yaw, onTop ? 'closed' : i === 0 ? fill : R.pick([fill, 'closed']));
-    if (!onTop && !seat && (fill === 'closed' || count > 1)) seat = [x, y + top, z + S / 2 - 0.12];
+    const top = crateAt(P, R, [x, y, z], S, wood, yaw, fills[i]);
+    // sit only on a lid: 0.12 behind its front edge, turned with the crate
+    if (!seat && !covered[i] && fills[i] === 'closed' && y + top < 0.75) {
+      const off = new THREE.Vector3(0, 0, S / 2 - 0.12).applyAxisAngle(UP, yaw);
+      seat = spot([x + off.x, y + top, z + off.z], yaw / D2R, 'sit');
+    }
   });
   const spots = { side: spot([0, 0, S / 2 + 0.42 + (count >= 4 ? 0.3 * S : 0)], 180, 'stand') };
-  if (seat && seat[1] < 0.75) spots.sit = spot(seat, 0, 'sit');
-  const w = count === 1 ? S : 2.1 * S;
-  return finish(P.build('crate'), { footprint: { w: w + 0.12, d: (count >= 4 ? 1.9 * S : S) + 0.12 }, spots });
+  if (seat) spots.sit = seat;
+  const group = P.build('crate');
+  const footprint = recenter(group, { spots, pad: 0.1 });
+  return finish(group, { footprint, spots });
 }
 
 const BARREL_FILL = ['closed', 'open', 'water', 'apples', 'fish'];
@@ -1103,7 +1247,7 @@ function barrelAt(P, R, at, H, wood, hoop, fill, yaw) {
   const re = 0.19 * (H / 0.52), rb = 0.045 * (H / 0.52);
   const rAt = (y) => re + rb * Math.sin(Math.PI * clamp(y / H, 0, 1));
   const prof = [[re - 0.018, 0], [re - 0.004, 0.012]];
-  for (let i = 1; i <= 7; i++) { const y = (i / 8) * H; prof.push([rAt(y), y]); }
+  for (let i = 1; i <= 5; i++) { const y = (i / 6) * H; prof.push([rAt(y), y]); }
   const open = fill !== 'closed';
   prof.push([re - 0.004, H - 0.012], [re - 0.018, H], [re - 0.03, H], [re - 0.032, H - 0.03]);
   if (open) prof.push([re - 0.035, H * 0.5], [re - 0.04, 0.08], [0, 0.07]);
@@ -1111,17 +1255,17 @@ function barrelAt(P, R, at, H, wood, hoop, fill, yaw) {
   const seed = R.int(0, 999);
   const stv = staves(wood, { cx: x0, cz: z0, n: 16, y0, y1: y0 + H, seed });
   const inside = C(shade(wood, -0.3));
-  paint(P, lathe(prof, 16), wood, { at, rot: [0, yaw, 0] }, (c, x, y, z, nx, ny, nz) => {
+  paint(P, lathe(prof, 14), wood, { at, rot: [0, yaw, 0] }, (c, x, y, z, nx, ny, nz) => {
     stv(c, x, y, z);
     if (open && (nx * (x - x0) + nz * (z - z0) < 0 || ny > 0.5) && y < y0 + H - 0.02) c.lerp(inside, 0.75);
   }, { flat: true });
   for (const t of [0.13, 0.33, 0.67, 0.87]) {
     const y = t * H, r = rAt(y) + 0.004;
-    P.add(lathe([[r - 0.004, -0.022], [r + 0.004, -0.016], [r + 0.004, 0.016], [r - 0.004, 0.022]], 16), { slot: 'metal', color: hoop }, { at: [x0, y0 + y, z0] });
+    P.add(lathe([[r - 0.004, -0.022], [r + 0.004, -0.016], [r + 0.004, 0.016], [r - 0.004, 0.022]], 14), { slot: 'metal', color: hoop }, { at: [x0, y0 + y, z0] });
   }
   const topY = y0 + H - 0.03;
   if (fill === 'closed') {
-    P.add(roundCyl(re - 0.03, 0.025, { segments: 16, steps: 1, bevel: 0.008 }), shade(wood, 0.05), { at: [x0, topY - 0.012, z0] });
+    P.add(roundCyl(re - 0.03, 0.025, { segments: 14, steps: 1, bevel: 0.008 }), shade(wood, 0.05), { at: [x0, topY - 0.012, z0] });
     for (const dz of [-0.05, 0.05]) P.add(box((re - 0.035) * 2 * Math.sqrt(1 - (dz / re) ** 2), 0.004, 0.006), shade(wood, -0.22), { at: [x0, topY + 0.013, z0 + dz], rot: [0, yaw, 0] });
     return H;
   }
@@ -1144,10 +1288,16 @@ function buildBarrel(p, ctx) {
   const P = new Parts();
   const re = 0.235 * (H / 0.52);
   const lay = count === 1 ? [[0, 0, 0]] : count === 2 ? [[-re * 1.05, 0, 0], [re * 1.05, 0, 0.06]] : [[-re * 1.05, 0, 0.12], [re * 1.05, 0, 0.14], [0, 0, -re * 1.6]];
-  lay.forEach(([x, y, z], i) => barrelAt(P, R, [x + R.float(-0.02, 0.02), y, z], H * (i === 2 ? 0.94 : 1), wood, hoop, i === 0 ? fill : 'closed', R.angle()));
+  const fills = lay.map((_, i) => (i === 0 ? fill : 'closed'));
+  const hs = lay.map((_, i) => H * (i === 2 ? 0.94 : 1));
+  lay.forEach(([x, y, z], i) => { lay[i][0] = x + R.float(-0.02, 0.02); barrelAt(P, R, lay[i], hs[i], wood, hoop, fills[i], R.angle()); });
   const spots = { side: spot([0, 0, re + 0.45 + (count > 1 ? 0.1 : 0)], 180, 'stand') };
-  if (fill === 'closed' && H <= 0.7) spots.sit = spot([lay[0][0], H, lay[0][2] + re - 0.16], 0, 'sit');
-  return finish(P.build('barrel'), { footprint: count === 1 ? { r: re + 0.05 } : { w: re * 4.3, d: re * (count === 3 ? 4 : 2.3) } , spots });
+  // sit on the first lidded barrel that is low enough
+  const si = fills.findIndex((f, i) => f === 'closed' && hs[i] <= 0.7);
+  if (si >= 0) spots.sit = spot([lay[si][0], hs[si], lay[si][2] + re * (hs[si] / H) - 0.16], 0, 'sit');
+  const group = P.build('barrel');
+  const footprint = count === 1 ? { r: re + 0.05 } : recenter(group, { spots, pad: 0.1 });
+  return finish(group, { footprint, spots });
 }
 
 const SACK_STYLE = ['tied', 'open', 'lying'];
@@ -1212,7 +1362,9 @@ function buildSack(p, ctx) {
   lay.forEach(([x, y, z], i) => sackAt(P, R, [x, y, z], shade(color, R.float(-0.04, 0.03)), style, style === 'lying' ? R.float(-0.12, 0.12) : R.angle(), R.float(0.92, 1.06), R.int(0, 999)));
   const spots = { side: spot([0, 0, 0.6], 180, 'stand') };
   if (style === 'lying') spots.sit = spot([0, 0.19, 0.04], 0, 'sit');
-  return finish(P.build('sack'), { footprint: { r: count === 1 ? 0.28 : 0.5 }, spots });
+  const group = P.build('sack');
+  const footprint = count === 1 ? { r: 0.28 } : recenter(group, { spots, pad: 0.08 });
+  return finish(group, { footprint, spots });
 }
 
 /* ───────────────────────── pots, buckets, baskets ───────────────────────── */
@@ -1451,18 +1603,22 @@ function buildSignpost(p, ctx) {
   const H = num(p.height, 1.75, 1.2, 2.6);
   const R = rand(ctx, 'signpost');
   const P = new Parts();
-  P.add(softBox(0.11, H, 0.11, 0.025), wood, { at: [0, 0, 0] });
-  P.add(cone(0.1, 0.12, 4), shade(wood, -0.06), { at: [0, H, 0], rot: [0, Math.PI / 4, 0] });
   for (let i = 0; i < 4; i++) {
     const a = (i / 4) * TAU + R.float(-0.3, 0.3);
     P.add(blob(0.09, { detail: 1, amp: 0.15, seed: i + R.int(0, 50), squash: [1.2, 0.55, 1] }), shade(PALETTE.stone, R.float(-0.1, 0.02)), { at: [Math.cos(a) * 0.12, 0.02, Math.sin(a) * 0.12] });
   }
   const list = labels.length ? labels : ['', ''];
-  const bh = 0.19, gap = 0.255;
+  // boards 0.255 apart, closer on a short post; a post too short for its boards grows so the
+  // lowest one stays at hip height (0.55) and boards never overlap
+  const bh = 0.19, lowest = 0.55, n = list.length;
+  const gap = n > 1 ? clamp((H - 0.2 - lowest) / (n - 1), bh + 0.025, 0.255) : 0.255;
+  const top = Math.max(H, lowest + 0.2 + (n - 1) * gap);
+  P.add(softBox(0.11, top, 0.11, 0.025), wood, { at: [0, 0, 0] });
+  P.add(cone(0.1, 0.12, 4), shade(wood, -0.06), { at: [0, top, 0], rot: [0, Math.PI / 4, 0] });
   list.forEach((text, i) => {
     const dir = i % 2 ? -1 : 1;
     const L = clamp(0.36 + text.length * 0.052, 0.62, 1.12);
-    const y = H - 0.2 - i * gap;
+    const y = top - 0.2 - i * gap;
     const yaw = R.float(-0.32, 0.32) + (i === 2 ? 0.25 : 0);
     const M = xform([0, y, 0], [0, yaw, R.float(-0.04, 0.04)]);
     const col = shade(board, R.float(-0.04, 0.03));
@@ -1476,7 +1632,7 @@ function buildSignpost(p, ctx) {
     }
     P.add(sphere(0.016, 6, 4), PALETTE.iron, { matrix: M.clone().multiply(xform([0, 0, 0.034])) });
   });
-  return finish(P.build('signpost'), { footprint: { r: 0.25 }, spots: { read: spot([0.15, 0, 0.75], 190, 'stand') }, height: H + 0.12 });
+  return finish(P.build('signpost'), { footprint: { r: 0.25 }, spots: { read: spot([0.15, 0, 0.75], 190, 'stand') }, height: top + 0.12 });
 }
 
 function buildNoticeboard(p, ctx) {
@@ -1547,8 +1703,10 @@ function buildMailbox(p, ctx) {
   P.add(sphere(0.022, 8, 6), PALETTE.gold, { at: [0, by + bw * 0.86, bl / 2 + 0.035] });
   // the flag on the right side: up means there is mail
   const fc = color === '#f2c94c' ? PALETTE.cloth.red : '#f2c94c';
-  const pivot = [bw / 2 + 0.03, by + 0.11, -0.06];
-  const M = xform(pivot, [0, 0, up ? 0 : -Math.PI / 2]);
+  // the arm pivots on the box side (about X): up it stands tall, down it lies along the side
+  // pointing to the front, flat against the box
+  const pivot = [bw / 2 + 0.03, by + 0.13, -0.08];
+  const M = xform(pivot, [up ? 0 : Math.PI / 2, 0, 0]);
   P.add(softBox(0.03, 0.24, 0.025, 0.008), fc, { matrix: M });
   P.add(softBox(0.025, 0.09, 0.12, 0.008), fc, { matrix: M.clone().multiply(xform([0.0, 0.16, 0.055])) });
   P.add(roundCyl(0.025, 0.02, { segments: 8, steps: 1, bevel: 0.008 }), PALETTE.ironLight, { at: [bw / 2, pivot[1], pivot[2]], rot: [0, 0, -Math.PI / 2] });
@@ -1566,25 +1724,25 @@ const FENCE_STYLES = ['picket', 'rail', 'stone', 'iron'];
 const FENCE_COLOR = { picket: '#f4efe4', rail: '#a8784a', stone: PALETTE.stone, iron: '#3f4a52' };
 
 let picketGeo = null;
+/** A picket with a rounded top (24 triangles). */
 function picket() {
   if (picketGeo) return picketGeo;
   const w = 0.078, h = 0.5;
-  const pts = [[-w / 2, 0], [w / 2, 0], [w / 2, h - 0.05]];
-  for (let i = 1; i < 6; i++) { const a = (i / 6) * Math.PI; pts.push([Math.cos(a) * w / 2, h - 0.05 + Math.sin(a) * 0.05]); }
-  pts.push([-w / 2, h - 0.05]);
+  const pts = [[-w / 2, 0], [w / 2, 0], [w / 2, h - 0.045]];
+  for (let i = 1; i < 4; i++) { const a = (i / 4) * Math.PI; pts.push([Math.cos(a) * w / 2, h - 0.045 + Math.sin(a) * 0.045]); }
+  pts.push([-w / 2, h - 0.045]);
   picketGeo = extrude(pts, 0.026, { bevel: 0 });
   return picketGeo;
 }
 
-function fenceSection(P, R, style, color, x0, x1, opts = {}) {
-  const len = x1 - x0, cx = (x0 + x1) / 2;
+/** The pickets, rails or bars between two posts (picket rails and the iron base run whole runs). */
+function fenceSection(P, R, style, color, x0, x1, { arch = null, spacing = 0.13 } = {}) {
+  const len = x1 - x0;
   if (style === 'picket') {
-    for (const y of [0.13, 0.36]) P.add(softBox(len + 0.02, 0.05, 0.028, 0.01), shade(color, -0.05), { at: [cx, y, -0.03] });
-    const n = Math.max(1, Math.round((len - 0.06) / 0.13));
+    const n = Math.max(1, Math.round((len - 0.06) / spacing));
     for (let i = 0; i < n; i++) {
       const x = x0 + 0.04 + (i + 0.5) * ((len - 0.08) / n);
-      const arch = opts.arch ? opts.arch(x) : 0;
-      P.add(picket(), shade(color, R.float(-0.025, 0.01)), { at: [x, 0.02, 0.0], scale: [1, 1 + arch, 1] });
+      P.add(picket(), shade(color, R.float(-0.025, 0.01)), { at: [x, 0.02, 0.0], scale: [1, 1 + (arch ? arch(x) : 0), 1] });
     }
   } else if (style === 'rail') {
     for (const [y, h] of [[0.2, 0.075], [0.43, 0.075]]) {
@@ -1592,50 +1750,64 @@ function fenceSection(P, R, style, color, x0, x1, opts = {}) {
       plank(P, [x0 - 0.04, y + lift, 0.06], [x1 + 0.04, y - lift, 0.06], 0.045, h, shade(color, R.float(-0.06, 0.03)), { up: [0, 0, 1] });
     }
   } else if (style === 'iron') {
-    P.add(softBox(len + 0.02, 0.1, 0.16, 0.025), PALETTE.stone, { at: [cx, 0, 0] });
-    for (const y of [0.17, 0.5]) P.add(softBox(len, 0.025, 0.025, 0.008), color, { at: [cx, y, 0] });
-    const n = Math.max(1, Math.round(len / 0.1));
+    // square bars with spear tips
+    const n = Math.max(2, Math.floor(len / spacing));
     for (let i = 0; i < n; i++) {
       const x = x0 + (i + 0.5) * (len / n);
-      P.add(cyl(0.012, 0.5, { segments: 5 }), color, { at: [x, 0.1, 0] });
-      P.add(sphere(0.022, 5, 4), color, { at: [x, 0.6, 0], scale: [1, 1.3, 1] });
+      P.add(cyl(0.012, 0.5, { segments: 4, open: true }), color, { at: [x, 0.1, 0], rot: [0, Math.PI / 4, 0] });
+      P.add(cone(0.026, 0.075, 4), color, { at: [x, 0.585, 0], rot: [0, Math.PI / 4, 0] });
     }
   }
 }
 
-function fencePost(P, R, style, color, x, { tall = 0 } = {}) {
+/** Rails (pickets, iron) and the iron fence's stone base along a whole run. */
+function fenceRun(P, style, color, a, b) {
+  const len = b - a, cx = (a + b) / 2;
   if (style === 'picket') {
-    P.add(softBox(0.09, 0.6 + tall, 0.09, 0.022), shade(color, -0.03), { at: [x, 0, -0.01] });
-    P.add(sphere(0.055, 8, 6), shade(color, -0.03), { at: [x, 0.62 + tall, -0.01], scale: [1, 0.8, 1] });
-  } else if (style === 'rail') {
-    const h = 0.6 + tall + R.float(-0.03, 0.03);
-    P.add(softBox(0.1, h, 0.1, 0.028), shade(color, R.float(-0.12, -0.04)), { at: [x, 0, 0], rot: [R.float(-0.03, 0.03), R.float(-0.2, 0.2), R.float(-0.03, 0.03)] });
+    for (const y of [0.13, 0.36]) P.add(softBox(len + 0.02, 0.05, 0.028, 0.01), shade(color, -0.05), { at: [cx, y, -0.03] });
   } else if (style === 'iron') {
-    P.add(softBox(0.16, 0.66 + tall, 0.18, 0.03), PALETTE.stone, { at: [x, 0, 0] });
-    P.add(softBox(0.2, 0.05, 0.22, 0.02), shade(PALETTE.stone, 0.08), { at: [x, 0.66 + tall, 0] });
-    P.add(sphere(0.05, 8, 6), color, { at: [x, 0.74 + tall, 0] });
+    P.add(softBox(len + 0.02, 0.1, 0.16, 0.025), PALETTE.stone, { at: [cx, 0, 0] });
+    for (const y of [0.17, 0.5]) P.add(softBox(len, 0.025, 0.025, 0.008), color, { at: [cx, y, 0] });
   }
 }
 
-/** A dry-stone wall run: two courses of soft blocks with lighter capstones. */
-function stoneRun(P, R, color, x0, x1) {
-  const len = x1 - x0;
-  for (let k = 0; k < 2; k++) {
+function fencePost(P, R, style, color, x, { tall = 0, pillar = false, lite = false } = {}) {
+  if (style === 'picket') {
+    P.add(softBox(0.09, 0.6 + tall, 0.09, 0.022), shade(color, -0.03), { at: [x, 0, -0.01] });
+    if (lite) P.add(foamDome(), shade(color, -0.03), { at: [x, 0.596 + tall, -0.01], scale: [0.056, 0.062, 0.056] });
+    else P.add(sphere(0.055, 6, 4), shade(color, -0.03), { at: [x, 0.62 + tall, -0.01], scale: [1, 0.8, 1], rot: [0, Math.PI / 6, 0] });
+  } else if (style === 'rail') {
+    const h = 0.6 + tall + R.float(-0.03, 0.03);
+    P.add(softBox(0.1, h, 0.1, 0.028), shade(color, R.float(-0.12, -0.04)), { at: [x, 0, 0], rot: [R.float(-0.03, 0.03), R.float(-0.2, 0.2), R.float(-0.03, 0.03)] });
+  } else if (style === 'iron' && pillar) {
+    // stone pillars at the ends and beside the gate
+    P.add(softBox(0.16, 0.66 + tall, 0.18, 0.03), PALETTE.stone, { at: [x, 0, 0] });
+    P.add(softBox(0.2, 0.05, 0.22, 0.02), shade(PALETTE.stone, 0.08), { at: [x, 0.66 + tall, 0] });
+    P.add(sphere(0.05, 7, 5), color, { at: [x, 0.74 + tall, 0] });
+  } else if (style === 'iron') {
+    // slim iron posts in between
+    P.add(softBox(0.045, 0.6, 0.045, 0.012), color, { at: [x, 0.08, 0] });
+    P.add(sphere(0.032, 6, 4), color, { at: [x, 0.7, 0] });
+  }
+}
+
+/** A dry-stone wall run: two courses of soft blocks with lighter capstones (`k` stretches the blocks). */
+function stoneRun(P, R, color, x0, x1, k = 1) {
+  for (let c = 0; c < 2; c++) {
     let x = x0;
     const h = 0.2;
-    if (k === 1) x += R.float(0.08, 0.16);
-    else x += 0.0;
-    const first = k === 1 ? x - x0 : 0;
-    if (first > 0.04) P.add(softBox(first - 0.012, h - 0.012, 0.3, 0.04), shade(color, R.float(-0.1, 0.04)), { at: [x0 + first / 2, k * h, R.float(-0.01, 0.01)] });
+    if (c === 1) x += R.float(0.08, 0.16) * k;
+    const first = c === 1 ? x - x0 : 0;
+    if (first > 0.04) P.add(softBox(first - 0.012, h - 0.012, 0.3, 0.04), shade(color, R.float(-0.1, 0.04)), { at: [x0 + first / 2, c * h, R.float(-0.01, 0.01)] });
     while (x < x1 - 0.01) {
-      const bl = Math.min(R.float(0.26, 0.42), x1 - x);
-      P.add(softBox(bl - 0.012, h - 0.012, 0.3 + R.float(-0.02, 0.02), 0.045), shade(color, R.float(-0.1, 0.05)), { at: [x + bl / 2, k * h, R.float(-0.012, 0.012)], rot: [0, R.float(-0.03, 0.03), 0] });
+      const bl = Math.min(R.float(0.26, 0.42) * k, x1 - x);
+      P.add(softBox(bl - 0.012, h - 0.012, 0.3 + R.float(-0.02, 0.02), 0.045), shade(color, R.float(-0.1, 0.05)), { at: [x + bl / 2, c * h, R.float(-0.012, 0.012)], rot: [0, R.float(-0.03, 0.03), 0] });
       x += bl;
     }
   }
   let x = x0;
   while (x < x1 - 0.01) {
-    const bl = Math.min(R.float(0.34, 0.5), x1 - x);
+    const bl = Math.min(R.float(0.34, 0.5) * k, x1 - x);
     P.add(softBox(bl - 0.01, 0.07, 0.36, 0.03), shade(color, R.float(0.04, 0.1)), { at: [x + bl / 2, 0.4, 0] });
     x += bl;
   }
@@ -1655,16 +1827,16 @@ function fenceGate(P, R, style, color, gw) {
     plank(P, [x0 + 0.05, 0.18, 0.075], [x1 - 0.05, 0.5, 0.075], 0.04, 0.055, shade(c, -0.08), { up: [0, 0, 1] });
   } else {
     for (const y of [0.1, 0.45]) P.add(softBox(x1 - x0, 0.03, 0.03, 0.01), c, { at: [0, y, 0] });
-    P.add(arcTube((x1 - x0) / 2, 0.016, 0, Math.PI, { radial: 5, segments: 16 }), c, { at: [0, 0.45, 0], scale: [1, 0.45, 1] });
+    P.add(arcTube((x1 - x0) / 2, 0.016, 0, Math.PI, { radial: 4, segments: 14 }), c, { at: [0, 0.45, 0], scale: [1, 0.45, 1] });
     const n = Math.round((x1 - x0) / 0.09);
     for (let i = 0; i < n; i++) {
       const x = x0 + (i + 0.5) * ((x1 - x0) / n);
       const top = 0.45 + 0.45 * Math.sqrt(Math.max(0, ((x1 - x0) / 2) ** 2 - x * x));
-      P.add(cyl(0.011, top - 0.1, { segments: 6 }), c, { at: [x, 0.1, 0] });
+      P.add(cyl(0.011, top - 0.1, { segments: 4, open: true }), c, { at: [x, 0.1, 0], rot: [0, Math.PI / 4, 0] });
     }
     P.add(ring(0.06, 0.012, { radial: 4, tubular: 14 }), PALETTE.gold, { at: [0, 0.3, 0.02], rot: [Math.PI / 2, 0, 0] });
   }
-  for (const x of [x0 - 0.01, x1 + 0.01]) for (const y of [0.15, 0.4]) P.add(softBox(0.05, 0.03, 0.05, 0.008), PALETTE.iron, { at: [x, y, 0.0] });
+  for (const x of [x0 - 0.01, x1 + 0.01]) for (const y of [0.15, 0.4]) P.add(box(0.05, 0.03, 0.05), PALETTE.iron, { at: [x, y, 0.0] });
 }
 
 function buildFence(p, ctx) {
@@ -1675,6 +1847,10 @@ function buildFence(p, ctx) {
   const R = rand(ctx, 'fence');
   const P = new Parts();
   const gw = style === 'stone' ? 1.14 : 0.94;
+  // long runs space their pickets and bars a little wider and lay longer stones (keeps a 10-long
+  // fence within the small-prop budget)
+  const long = clamp((L - 4) / 6, 0, 1);
+  const spacing = style === 'iron' ? 0.1 * (1 + 0.55 * long) : 0.13 * (1 + 0.27 * long);
   const runs = gate ? [[-L / 2, -gw / 2], [gw / 2, L / 2]] : [[-L / 2, L / 2]];
   for (const [a, b] of runs) {
     if (style === 'stone') {
@@ -1683,16 +1859,18 @@ function buildFence(p, ctx) {
         P.add(softBox(0.42, 0.07, 0.46, 0.03), shade(color, 0.09), { at: [x, 0.56, 0] });
       };
       const inner = [gate && a > 0 ? a + 0.18 : a, gate && b < 0 ? b - 0.18 : b];
-      if (inner[1] - inner[0] > 0.05) stoneRun(P, R, color, inner[0], inner[1]);
+      if (inner[1] - inner[0] > 0.05) stoneRun(P, R, color, inner[0], inner[1], 1 + 0.45 * long);
       if (gate) pillarAt(a > 0 ? a : b);
       continue;
     }
+    fenceRun(P, style, color, a, b);
     const n = Math.max(1, Math.round((b - a) / 0.6));
-    for (let i = 0; i < n; i++) fenceSection(P, R, style, color, a + (i * (b - a)) / n, a + ((i + 1) * (b - a)) / n);
+    for (let i = 0; i < n; i++) fenceSection(P, R, style, color, a + (i * (b - a)) / n, a + ((i + 1) * (b - a)) / n, { spacing });
     for (let i = 0; i <= n; i++) {
       const x = a + (i * (b - a)) / n;
       const atGate = gate && ((i === n && b < 0) || (i === 0 && a > 0));
-      fencePost(P, R, style, color, x, { tall: atGate ? 0.12 : 0 });
+      const atEnd = (i === 0 && a <= -L / 2 + 1e-6) || (i === n && b >= L / 2 - 1e-6);
+      fencePost(P, R, style, color, x, { tall: atGate ? 0.12 : 0, pillar: atGate || atEnd, lite: long > 0.5 });
     }
   }
   if (gate) fenceGate(P, R, style, color, style === 'stone' ? gw - 0.36 : gw);
@@ -1702,7 +1880,8 @@ function buildFence(p, ctx) {
     lean: spot([gate ? L / 4 + gw / 4 : -Math.min(L / 4, 0.8), 0, style === 'stone' ? 0.36 : 0.24], 0, 'lean'),
   };
   if (gate) { spots.gate = spot([0, 0, 0.55], 180, 'stand'); spots['gate-back'] = spot([0, 0, -0.55], 0, 'stand'); }
-  return finish(P.build('fence'), { footprint: { w: L + 0.1, d: style === 'stone' ? 0.46 : 0.26 }, spots });
+  const ends = style === 'stone' ? 0.1 : style === 'iron' ? 0.22 : 0.12;
+  return finish(P.build('fence'), { footprint: { w: L + ends, d: style === 'stone' ? 0.46 : style === 'iron' ? 0.28 : 0.26 }, spots });
 }
 
 /* ───────────────────────── tables and seats ───────────────────────── */
@@ -1936,7 +2115,7 @@ function buildParasol(p, ctx) {
   for (let i = 0; i < 16; i++) {
     const a = ((i + 0.5) / 16) * TAU;
     const wv = 2 * Rc * Math.sin(Math.PI / 16);
-    P.add(scallop(), { slot: 'cloth', color: stripes ? (Math.floor(i / 2) % 2 ? cream : color) : shade(color, -0.06) }, { at: [Math.sin(a) * Rc * Math.cos(Math.PI / 16), rimY + 0.005, Math.cos(a) * Rc * Math.cos(Math.PI / 16)], rot: [0, a, 0], scale: [wv, wv * 0.7, 1] });
+    P.add(scallop(), { slot: 'cloth', color: stripes ? (Math.floor(i / 2) % 2 ? cream : color) : shade(color, -0.06), double: true }, { at: [Math.sin(a) * Rc * Math.cos(Math.PI / 16), rimY + 0.005, Math.cos(a) * Rc * Math.cos(Math.PI / 16)], rot: [0, a, 0], scale: [wv, wv * 0.7, 1] });
   }
   for (let i = 0; i < 8; i++) {
     const a = (i / 8) * TAU;
@@ -2018,19 +2197,21 @@ function buildPicnic(p, ctx) {
 
 /* ───────────────────────── campfire ───────────────────────── */
 
-/** A log lying from a to b: bark around, light end grain. */
-function log(P, a, b, r, bark, seg = 8) {
+/**
+ * A log lying from a to b: bark around and light end grain with a darker heart. The heart is
+ * painted on the cap's center vertex (a soft radial blend), so the ends cost no extra faces.
+ */
+function log(P, a, b, r, bark, seg = 7) {
   const { matrix, len } = along(a, b);
-  const end = C('#e8c48e'), heart = C('#c99a5e');
-  const axis = v3(b).sub(v3(a)).normalize();
+  const end = C('#ecc993'), heart = C('#b8854d');
+  const A = v3(a), axis = v3(b).sub(A).normalize();
+  const q = new THREE.Vector3();
   paint(P, cyl(r, len, { segments: seg }), bark, { matrix }, (c, x, y, z, nx, ny, nz) => {
-    if (Math.abs(axis.x * nx + axis.y * ny + axis.z * nz) > 0.9) c.copy(end);
-  }, { flat: true });
-  for (const [p0, sgn] of [[a, -1], [b, 1]]) {
-    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), axis.clone().multiplyScalar(sgn));
-    const at = v3(p0).addScaledVector(axis, sgn * 0.002);
-    P.add(new THREE.CircleGeometry(r * 0.45, 7), `#${heart.getHexString()}`, { matrix: new THREE.Matrix4().compose(at, q, new THREE.Vector3(1, 1, 1)) });
-  }
+    if (Math.abs(axis.x * nx + axis.y * ny + axis.z * nz) < 0.9) return;
+    q.set(x, y, z).sub(A);
+    q.addScaledVector(axis, -q.dot(axis));
+    c.copy(q.length() < r * 0.3 ? heart : end);
+  });
 }
 
 let flameGeo = null;
@@ -2724,19 +2905,28 @@ function buildScarecrow(p, ctx) {
   for (let i = 0; i < 3; i++) P.add(sphere(0.016, 6, 4), '#f4efe6', { at: [0, 0.82 + i * 0.1, 0.165] });
   // head
   const hy = 1.4;
+  const Hd = new Parts();
   if (head === 'pumpkin') {
-    pumpkin(P, R, [0, hy - 0.17, 0], 0.17);
+    pumpkin(Hd, R, [0, hy - 0.17, 0], 0.17);
   } else {
-    P.add(clothLathe([[0, -0.17], [0.11, -0.15], [0.17, -0.06], [0.175, 0.02], [0.15, 0.11], [0.08, 0.165], [0, 0.18]], 14, 9, { amp: 0.04 }), { slot: 'cloth', color: '#efdcb2' }, { at: [0, hy, 0] });
-    P.add(ring(0.06, 0.016, { radial: 4, tubular: 12 }), '#a8865a', { at: [0, hy - 0.18, 0] });
+    Hd.add(clothLathe([[0, -0.17], [0.11, -0.15], [0.17, -0.06], [0.175, 0.02], [0.15, 0.11], [0.08, 0.165], [0, 0.18]], 14, 9, { amp: 0.04 }), { slot: 'cloth', color: '#efdcb2' }, { at: [0, hy, 0] });
+    Hd.add(ring(0.06, 0.016, { radial: 4, tubular: 12 }), '#a8865a', { at: [0, hy - 0.18, 0] });
   }
-  const fz = head === 'pumpkin' ? 0.165 : 0.168, fy = head === 'pumpkin' ? hy - 0.02 : hy;
-  for (const sx of [-1, 1]) P.add(sphere(0.026, 8, 6), '#3a3440', { at: [sx * 0.06, fy + 0.03, fz - 0.01], scale: [1, 1, 0.6] });
+  P.merge(Hd);
+  // the face sits on the head's actual surface (the sack is lumpy, the pumpkin ridged and turned):
+  // find it with a ray from the front
+  const probe = Hd.build('head-probe');
+  probe.updateMatrixWorld(true);
+  const rc = new THREE.Raycaster(), from = new THREE.Vector3(), back = new THREE.Vector3(0, 0, -1);
+  const surf = (x, y) => { rc.set(from.set(x, y, 1), back); return rc.intersectObject(probe, true)[0]?.point.z ?? 0.15; };
+  const fy = head === 'pumpkin' ? hy - 0.035 : hy;
+  for (const sx of [-1, 1]) P.add(sphere(0.026, 8, 6), '#3a3440', { at: [sx * 0.06, fy + 0.03, surf(sx * 0.06, fy + 0.03) - 0.003], scale: [1, 1, 0.6] });
   for (let i = 0; i < 5; i++) {
     const a = -0.75 + (i / 4) * 1.5;
-    P.add(softBox(0.03, 0.012, 0.014, 0.004), '#4a3a32', { at: [Math.sin(a) * 0.07, fy - 0.07 + (1 - Math.cos(a)) * 0.045, fz - 0.012 - Math.abs(a) * 0.02], rot: [0, -a * 0.6, a * 0.9] });
+    const x = Math.sin(a) * 0.07, y = fy - 0.07 + (1 - Math.cos(a)) * 0.045;
+    P.add(softBox(0.032, 0.014, 0.026, 0.005), '#4a3a32', { at: [x, y - 0.007, surf(x, y) + 0.002], rot: [0, -a * 0.6, a * 0.9] });
   }
-  for (const sx of [-1, 1]) P.add(sphere(0.022, 6, 4), '#f19bb7', { at: [sx * 0.11, fy - 0.02, fz - 0.035], scale: [1, 0.7, 0.4] });
+  for (const sx of [-1, 1]) P.add(sphere(0.022, 6, 4), '#f19bb7', { at: [sx * 0.11, fy - 0.02, surf(sx * 0.11, fy - 0.02) - 0.002], scale: [1, 0.7, 0.4] });
   if (hat) {
     const hTop = head === 'pumpkin' ? hy + 0.08 : hy + 0.12;
     P.add(roundCyl(0.3, 0.025, { segments: 18, steps: 1, bevel: 0.01 }), HAY, { at: [0, hTop, 0], rot: [0.12, 0, 0.06] });

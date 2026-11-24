@@ -240,6 +240,41 @@ function stick(a, b, r, { top = r, segments = 8, bevel = null } = {}) {
   return g;
 }
 
+/**
+ * A board along X with a rounded-rectangle section (h tall, d deep), standing on y = 0 and
+ * centered in X and Z, with flat sawn ends: planks, boards, beams and seats at about a third of
+ * a roundBox's triangles (44 with steps 2, 28 with steps 1).
+ */
+function bar(len, h, d, r = 0.015, steps = 2) {
+  const rr = Math.max(0.0005, Math.min(r, h / 2 - 1e-4, d / 2 - 1e-4));
+  // the section in (z, y), counter-clockwise from the bottom of the +Z side, with outward normals
+  const sec = [];
+  for (const [cz, cy, a0] of [[d / 2 - rr, h - rr, 0], [-d / 2 + rr, h - rr, Math.PI / 2], [-d / 2 + rr, rr, Math.PI], [d / 2 - rr, rr, 1.5 * Math.PI]]) {
+    for (let k = 0; k <= steps; k++) {
+      const a = a0 + (k / steps) * (Math.PI / 2);
+      sec.push([cz + Math.cos(a) * rr, cy + Math.sin(a) * rr, Math.cos(a), Math.sin(a)]);
+    }
+  }
+  const n = sec.length, x0 = -len / 2, x1 = len / 2;
+  const pos = [], nor = [];
+  const vert = (x, [z, y], nx, ny, nz) => { pos.push(x, y, z); nor.push(nx, ny, nz); };
+  for (let i = 0; i < n; i++) {
+    const a = sec[i], b = sec[(i + 1) % n];
+    // side quad (a, b) from x0 to x1, wound to face out
+    vert(x0, a, 0, a[3], a[2]); vert(x1, b, 0, b[3], b[2]); vert(x0, b, 0, b[3], b[2]);
+    vert(x0, a, 0, a[3], a[2]); vert(x1, a, 0, a[3], a[2]); vert(x1, b, 0, b[3], b[2]);
+  }
+  for (let i = 1; i < n - 1; i++) {
+    // end caps: fans from the first point (the section is convex)
+    vert(x1, sec[0], 1, 0, 0); vert(x1, sec[i + 1], 1, 0, 0); vert(x1, sec[i], 1, 0, 0);
+    vert(x0, sec[0], -1, 0, 0); vert(x0, sec[i], -1, 0, 0); vert(x0, sec[i + 1], -1, 0, 0);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  return g;
+}
+
 /** A flower cup: soft petals round a center, opening upward (double-sided look needed). */
 function petalCup(r, h, petals = 8, { rows = 4, per = 4, open = 1, tipLift = 0.35, phase = 0 } = {}) {
   const cols = petals * per;
@@ -358,9 +393,10 @@ function addLily(parts, at, color, { scale = 1, bud = false } = {}) {
 
 /**
  * A boat hull from stations along its length (t 0 = stern, 1 = bow). Returns the outer and inner
- * shells, the rim between them and helpers for fitting seats and rails.
+ * shells, the rim between them and helpers for fitting seats and rails. Stations crowd toward
+ * the bow, where the hull curves most.
  */
-function hullModel({ L = 2, B = 0.42, D = 0.14, sheer = 0.24, bowRise = 0.09, sternRise = 0.03, transom = 0.62, th = 0.035, fullness = 0.72, band = [0.012, 0.048] } = {}) {
+function hullModel({ L = 2, B = 0.42, D = 0.14, sheer = 0.24, bowRise = 0.09, sternRise = 0.03, transom = 0.62, th = 0.035, fullness = 0.72, band = [0.012, 0.048], N = 16, MI = 11 } = {}) {
   const half = (t) => (t < 0.45
     ? B * (transom + (1 - transom) * Math.sin((t / 0.45) * (Math.PI / 2)))
     : B * Math.sqrt(Math.max(0, 1 - Math.pow((t - 0.45) / 0.55, 2.2))));
@@ -372,25 +408,26 @@ function hullModel({ L = 2, B = 0.42, D = 0.14, sheer = 0.24, bowRise = 0.09, st
     const sx = Math.sign(s) * Math.pow(Math.abs(Math.sin(a)), fullness);
     return [-b * sx, yk + (yt - yk) * (1 - Math.cos(a))];
   };
+  /** Where height y falls on a section (0 keel … 1 gunwale), as the section parameter s. */
+  const sOf = (y, yk, yt) => (2 / Math.PI) * Math.acos(1 - clamp((y - yk) / Math.max(1e-4, yt - yk), 0, 1));
   // Outer columns per half, gunwale to keel, with rows on the edges of the painted band so the
   // stripe is crisp: kTop segments above the band, one for the band, kBot below it.
-  const kTop = 4, kBot = 4;
+  const kTop = 3, kBot = 3;
   const halfCols = (yk, yt) => {
-    const sOf = (y) => (2 / Math.PI) * Math.acos(1 - clamp((y - yk) / Math.max(1e-4, yt - yk), 0, 1));
-    const sB = sOf(band[1]), sA = Math.min(sOf(band[0]), sB);
+    const sB = sOf(band[1], yk, yt), sA = Math.min(sOf(band[0], yk, yt), sB);
     const out = [];
     for (let k = 0; k < kTop; k++) out.push(lerp(1, sB, k / kTop));
     out.push(sB, sA);
     for (let k = 1; k <= kBot; k++) out.push(lerp(sA, 0, k / kBot));
     return out;
   };
-  const N = 22, MI = 15;
+  const innerKeel = (t) => Math.min(keelY(t) + th, topY(t) - 0.01);
   const outer = [], inner = [], rimL = [], rimR = [];
   let M = 0;
   for (let i = 0; i <= N; i++) {
-    const t = i / N, z = zOf(t);
+    const t = 1 - Math.pow(1 - i / N, 1.3), z = zOf(t);
     const b = half(t), yk = keelY(t), yt = topY(t);
-    const bi = Math.max(0.002, b - th), yki = Math.min(yk + th, yt - 0.01);
+    const bi = Math.max(0.002, b - th), yki = innerKeel(t);
     const hc = halfCols(yk, yt);
     const cols = [...hc.map((v) => -v), ...hc.slice(0, -1).reverse()];
     M = cols.length;
@@ -416,17 +453,57 @@ function hullModel({ L = 2, B = 0.42, D = 0.14, sheer = 0.24, bowRise = 0.09, st
   };
   /** Half-width of the inside at height y, station t. */
   const insideHalf = (t, y) => {
-    const b = Math.max(0.002, half(t) - th), yk = Math.min(keelY(t) + th, topY(t) - 0.01), yt = topY(t);
-    const f = clamp((y - yk) / Math.max(1e-3, yt - yk), 0, 1);
-    const s = (2 / Math.PI) * Math.acos(1 - f);
-    return b * Math.pow(Math.sin(s * (Math.PI / 2)), fullness);
+    const b = Math.max(0.002, half(t) - th), yk = innerKeel(t), yt = topY(t);
+    return b * Math.pow(Math.sin(sOf(y, yk, yt) * (Math.PI / 2)), fullness);
+  };
+  /** Half-width of the outside at height y, station t. */
+  const outsideHalf = (t, y) => half(t) * Math.pow(Math.sin(sOf(y, keelY(t), topY(t)) * (Math.PI / 2)), fullness);
+  /**
+   * A flat lid across the inside at height y, reaching halfway into the hull walls: drawn
+   * depth-only (see WATERLINE), it keeps a translucent water plane out of the hull.
+   */
+  const lidGeo = (y, t0 = 0, t1 = 0.9, n = 12) => {
+    const rows = [];
+    for (let i = 0; i <= n; i++) {
+      const t = lerp(t0, t1, i / n);
+      const w = Math.max(0.002, (insideHalf(t, y) + outsideHalf(t, y)) / 2);
+      rows.push([[-w, y, zOf(t)], [w, y, zOf(t)]]);
+    }
+    return loft(rows);
   };
   const transomOutline = [];
   for (let j = 0; j < MI; j++) {
     const s = -1 + (2 * j) / (MI - 1);
     transomOutline.push(section(half(0), keelY(0), topY(0), s));
   }
-  return { L, B, half, keelY, topY, zOf, insideHalf, outerGeo, innerGeo, rimGeo, transomOutline, th, bandOfFace };
+  return { L, B, half, keelY, topY, zOf, insideHalf, outsideHalf, lidGeo, outerGeo, innerGeo, rimGeo, transomOutline, th, bandOfFace };
+}
+
+/**
+ * The waterline lid's material: writes depth but no color, drawn after the opaque hull and its
+ * riders (renderOrder 1) and before the scene's water (transparent, renderOrder 2), so the water
+ * plane never shows inside a floating hull. Casts no shadow.
+ */
+const WATERLINE = new THREE.MeshBasicMaterial({ name: 'waterline-lid', colorWrite: false, side: THREE.DoubleSide });
+WATERLINE.userData.slot = 'waterline';
+WATERLINE.userData.castShadow = false;
+
+/** Height of the lid above the waterline: clears the gentle bob of a crewed hull. */
+const LID_Y = 0.04;
+
+/** After `parts.build`, draw the waterline lid between the opaque pass and the water. */
+function orderLid(group) {
+  group.traverse((o) => {
+    if (o.isMesh && o.material === WATERLINE) { o.renderOrder = 1; o.receiveShadow = false; }
+  });
+  return group;
+}
+
+/** The first station toward the bow where the keel line rises to height y. */
+function keelRiseT(h, y) {
+  let t = 0.6;
+  while (t < 1 && h.keelY(t) < y) t += 0.005;
+  return Math.min(t, 0.98);
 }
 
 /** The hull pieces of a boat into `parts`: shell, rim, rails, stem, keel, transom, bow deck, ribs. */
@@ -462,7 +539,7 @@ function addHull(parts, h, { hull, bottom, stripe, rail, inside, weathered = fal
       const t = (i / 12) * 0.985;
       pts.push([side * (h.half(t) + 0.004), h.topY(t) - 0.01, h.zOf(t)]);
     }
-    parts.add(taper(pts, [0.024, 0.021], { segments: 16, radial: 6 }), rail);
+    parts.add(taper(pts, [0.024, 0.021], { segments: 11, radial: 5 }), rail);
   }
   // a little deck in the bow, between the rails
   const deck = [];
@@ -472,26 +549,30 @@ function addHull(parts, h, { hull, bottom, stripe, rail, inside, weathered = fal
     deck.push([[hw, y, h.zOf(t)], [0, y + 0.008, h.zOf(t)], [-hw, y, h.zOf(t)]]);
   }
   parts.add(loft(deck, { flip: true }), rail);
-  // stem: a rounded post up the bow
+  // stem: a rounded post up the bow from the waterline; below it the keel strip, in the bottom
+  // paint, runs on from the stern round the forefoot to meet it
+  const tw = keelRiseT(h, -0.025);
   const stem = [];
-  for (let i = 0; i <= 6; i++) {
-    const t = 0.7 + (0.3 * i) / 6;
+  for (let i = 0; i <= 3; i++) {
+    const t = lerp(tw, 1, i / 3);
     stem.push([0, h.keelY(t) - 0.004, h.zOf(t) + 0.003]);
   }
   stem.push([0, h.topY(1) - 0.004, h.zOf(1) + 0.006]);
-  parts.add(taper(stem, [0.026, 0.026], { segments: 14, radial: 8 }), rail);
-  // keel strip
+  parts.add(taper(stem, [0.026, 0.026], { segments: 8, radial: 6 }), rail);
   const keel = [];
   for (let i = 0; i <= 8; i++) {
-    const t = 0.03 + (0.7 * i) / 8;
+    const t = lerp(0.03, tw + 0.015, i / 8);
     keel.push([0, h.keelY(t) - 0.008, h.zOf(t)]);
   }
-  parts.add(taper(keel, [0.022, 0.022], { segments: 12, radial: 6 }), bottom);
-  // transom board with a rail across its top
+  parts.add(taper(keel, [0.022, 0.022], { segments: 9, radial: 5 }), bottom);
+  // transom board (bare wood on its inner face) with a rail across its top
   const tg = extrude(h.transomOutline, 0.03, { bevel: 0.012, bevelSegments: 1, curveSegments: 4 });
-  parts.add(tg, weathered ? mix(hull, '#8f8a80', 0.4) : hull, { at: [0, 0, h.zOf(0) + 0.006] });
+  addPainted(parts, tg, weathered ? mix(hull, '#8f8a80', 0.4) : hull, { at: [0, 0, h.zOf(0) + 0.006] }, (c, x, y, z, nx, ny, nz) => {
+    if (nz > 0.8) c.set(shade(inside, -0.03)).offsetHSL(0, 0, clamp((y - 0.1) * 0.35, -0.07, 0.02));
+    if (weathered) grime(c, x, y, z);
+  }, true);
   const hb = h.half(0) + 0.01, yt = h.topY(0) - 0.006;
-  parts.add(taper([[hb, yt, h.zOf(0) + 0.006], [0, yt + 0.006, h.zOf(0) + 0.004], [-hb, yt, h.zOf(0) + 0.006]], [0.024, 0.024], { segments: 8, radial: 7 }), rail);
+  parts.add(taper([[hb, yt, h.zOf(0) + 0.006], [0, yt + 0.006, h.zOf(0) + 0.004], [-hb, yt, h.zOf(0) + 0.006]], [0.024, 0.024], { segments: 6, radial: 5 }), rail);
   // ribs inside
   for (const t of ribs) {
     const pts = [];
@@ -501,19 +582,19 @@ function addHull(parts, h, { hull, bottom, stripe, rail, inside, weathered = fal
       const hw = h.insideHalf(t, y) - 0.008;
       pts.push([-Math.sign(s) * hw, y, h.zOf(t)]);
     }
-    parts.add(taper(pts, [0.013, 0.013], { segments: 12, radial: 4, caps: false }), shade(inside, -0.1));
+    parts.add(taper(pts, [0.013, 0.013], { segments: 8, radial: 4, caps: false }), shade(inside, -0.1));
   }
 }
 
-/** One oar: shaft along +X from the handle (origin) with the blade at the far end. */
+/** One oar: shaft along +X from the handle (origin) with the blade (painted tip) at the far end. */
 function oarParts(len = 1.05, wood = PALETTE.woodLight, tip = '#f4efe6', broken = false) {
   const p = new Parts();
   const L = broken ? len * 0.55 : len;
-  p.add(roundCyl(0.017, L, { bevel: 0.008, segments: 8, steps: 1 }), wood, { rot: [0, 0, -Math.PI / 2] });
-  p.add(roundCyl(0.024, 0.12, { bevel: 0.01, segments: 8, steps: 1 }), shade(wood, -0.08), { rot: [0, 0, -Math.PI / 2] });
+  p.add(roundCyl(0.017, L, { bevel: 0.008, segments: 6, steps: 1 }), wood, { rot: [0, 0, -Math.PI / 2] });
+  p.add(roundCyl(0.024, 0.12, { bevel: 0.01, segments: 6, steps: 1 }), shade(wood, -0.08), { rot: [0, 0, -Math.PI / 2] });
   if (!broken) {
-    p.add(roundBox(0.26, 0.016, 0.085, 0.008, 1), wood, { at: [len - 0.13, -0.008, 0] });
-    p.add(roundBox(0.1, 0.018, 0.088, 0.008, 1), tip, { at: [len - 0.05, -0.009, 0] });
+    p.add(bar(0.17, 0.016, 0.085, 0.008, 2), wood, { at: [len - 0.175, -0.008, 0] });
+    p.add(bar(0.1, 0.018, 0.088, 0.009, 2), tip, { at: [len - 0.045, -0.009, 0] });
   } else {
     p.add(cone(0.02, 0.05, 6), shade(wood, 0.05), { at: [L, 0, 0], rot: [0, 0, -Math.PI / 2] });
   }
@@ -531,6 +612,13 @@ function bobber(group, phase, { heave = 0.018, roll = 0.035, pitch = 0.02, speed
     group.rotation.x = pitch * Math.sin(a * 1.1 + 2.0);
   };
 }
+
+/**
+ * The gentle bob of a hull with people aboard: small enough that riders placed on its static
+ * spots don't visibly sink into or hover over their seats, and that the waterline lid stays
+ * above the water (worst case about 0.03 at the ends of the hull).
+ */
+const CREWED = { heave: 0.008, roll: 0.016, pitch: 0.01 };
 
 /* ───────────────────────── hand props ───────────────────────── */
 
@@ -642,28 +730,30 @@ const HELD = { held: true, hand: 'rightHand' };
 const DOCK_WOODS = {
   natural: { deck: [PALETTE.woodLight, '#c99a63', '#dcb27c'], frame: PALETTE.wood, post: PALETTE.woodDark, cap: PALETTE.woodLight, trim: PALETTE.wood },
   weathered: { deck: ['#b9ae9c', '#a89d8b', '#c6bcaa'], frame: '#8f8574', post: '#6e6558', cap: '#c2b8a6', trim: '#9a9080' },
-  painted: { deck: ['#f3eee4', '#ebe4d6', '#f7f3ea'], frame: '#4f86c6', post: '#3f6fae', cap: '#f6f1e7', trim: '#4f86c6' },
+  painted: { deck: ['#e6dece', '#d9d2c2', '#e0d8c8'], frame: '#4f86c6', post: '#3f6fae', cap: '#e8e1d2', trim: '#4f86c6' },
 };
 
 export const WATERSIDE = {
   dock: {
     label: 'Dock',
-    about: 'A wooden pier. Its origin is the shore end, on the bank; the deck runs toward +Z over the water at about 0.08 and its posts go down into the water. Sit at the end with your legs over the edge, or along the side.',
+    about: 'A wooden pier, budgeted as a structure (about 3k triangles at the default size, up to about 6k at length 12). Its origin is the shore end, on the bank; the deck runs toward +Z over the water at about 0.08 and its posts go down into the water (to about -1.25). Sit at the end with your legs over the edge (end; endLeft and endRight too on docks 1.3 or wider), sit on the side between two posts facing the water (side), or stand (along, shore, ladder). Like every footprint it is centered on the origin: it covers up to 3 units of bank and of near-shore deck, not the far end.',
     params: {
       length: { default: 4, min: 1.5, max: 12, about: 'how far the deck reaches out over the water' },
-      width: { default: 1.4, min: 0.8, max: 3, about: 'deck width' },
+      width: { default: 1.4, min: 0.8, max: 3, about: 'deck width (1.3 or more seats three at the end)' },
       ladder: { default: true, about: 'a ladder down into the water near the end' },
       lamp: { default: false, about: 'a lantern post at the end that lights up at night' },
-      style: { default: 'natural', options: ['natural', 'weathered', 'painted'], about: 'warm wood, sea-grey wood, or white planks with blue trim' },
+      style: { default: 'natural', options: ['natural', 'weathered', 'painted'], about: 'warm wood, sea-grey wood, or cream planks with blue trim' },
     },
     examples: [{}, { style: 'weathered', length: 2.6, ladder: false }, { style: 'painted', length: 5, width: 1.8, lamp: true }],
     build(p, ctx) {
       const L = size(p.length, 4, 1.5, 12), W = size(p.width, 1.4, 0.8, 3);
       const style = oneOf(p.style, ['natural', 'weathered', 'painted'], 'natural');
+      const withLadder = flag(p.ladder, true), withLamp = flag(p.lamp, false);
       const pal = DOCK_WOODS[style];
       const r = rand(ctx, 'dock');
       const parts = new Parts();
       const top = 0.08, plankT = 0.05;
+      const alongZ = [0, Math.PI / 2, 0];
       // planks across the deck
       const pitch = 0.205, n = Math.max(3, Math.round((L + 0.15) / pitch));
       const step = (L + 0.15) / n;
@@ -671,21 +761,22 @@ export const WATERSIDE = {
         const z = -0.15 + (i + 0.5) * step;
         const w = W + r.float(-0.03, 0.03);
         const col = shade(r.pick(pal.deck), r.float(-0.025, 0.025));
-        parts.add(roundBox(w, plankT, step - 0.024, 0.014, 1), col, { at: [r.float(-0.012, 0.012), top - plankT, z], rot: [0, r.float(-0.012, 0.012), 0] });
+        parts.add(bar(w, plankT, step - 0.024, 0.014, 2), col, { at: [r.float(-0.012, 0.012), top - plankT, z], rot: [0, r.float(-0.012, 0.012), 0] });
       }
       // stringers under the planks and a darker fascia board down each side
       for (const s of [1, -1]) {
-        parts.add(roundBox(0.09, 0.11, L + 0.12, 0.02, 1), pal.frame, { at: [s * (W / 2 - 0.16), top - plankT - 0.11, L / 2 - 0.09] });
-        parts.add(roundBox(0.04, 0.11, L + 0.17, 0.016, 1), pal.trim, { at: [s * (W / 2 + 0.012), top - plankT - 0.085, L / 2 - 0.075] });
+        parts.add(box(0.09, 0.11, L + 0.12), pal.frame, { at: [s * (W / 2 - 0.16), top - plankT - 0.11, L / 2 - 0.09] });
+        parts.add(bar(L + 0.17, 0.11, 0.04, 0.016, 1), pal.trim, { at: [s * (W / 2 + 0.012), top - plankT - 0.085, L / 2 - 0.075], rot: alongZ });
       }
       // end board across the front
-      parts.add(roundBox(W + 0.06, 0.11, 0.04, 0.016, 1), pal.trim, { at: [0, top - plankT - 0.085, L + 0.012] });
-      // posts in pairs, sticking up as bollards with round caps
+      parts.add(bar(W + 0.06, 0.11, 0.04, 0.016, 1), pal.trim, { at: [0, top - plankT - 0.085, L + 0.012] });
+      // posts in pairs, sticking up as bollards with round caps; the last pair stands a little
+      // back from the end, behind the end sitters
       const bays = Math.max(1, Math.round(L / (L > 6 ? 1.6 : 1.35)));
       const postZ = [];
-      for (let i = 0; i <= bays; i++) postZ.push(lerp(0.25, L - 0.12, i / bays));
-      const postGeo = lathe([[0, -1.25], [0.072, -1.25], [0.07, 0.17], [0.066, 0.19], [0, 0.19]], 10);
-      const capGeo = lathe([[0, 0], [0.072, 0], [0.08, 0.012], [0.078, 0.034], [0.06, 0.052], [0, 0.056]], 10);
+      for (let i = 0; i <= bays; i++) postZ.push(lerp(0.25, L - 0.3, i / bays));
+      const postGeo = lathe([[0.072, -1.25], [0.07, 0.19]], 8);
+      const capGeo = lathe([[0.072, 0], [0.08, 0.012], [0.078, 0.034], [0.06, 0.052], [0, 0.056]], 8);
       for (const z of postZ) {
         for (const s of [1, -1]) {
           const x = s * (W / 2 + 0.06);
@@ -693,61 +784,99 @@ export const WATERSIDE = {
           parts.add(capGeo, pal.cap, { at: [x, 0.185, z] });
         }
         // a cross beam under the deck between the pair
-        parts.add(roundBox(W + 0.1, 0.07, 0.07, 0.02, 1), pal.frame, { at: [0, -0.16, z] });
+        parts.add(bar(W + 0.1, 0.07, 0.07, 0.02, 1), pal.frame, { at: [0, -0.16, z] });
       }
-      // the shore end: a sturdy sill sunk into the bank and a step down
-      parts.add(roundBox(W + 0.24, 0.16, 0.2, 0.03, 1), pal.post, { at: [0, top - plankT - 0.14, -0.06] });
-      parts.add(roundBox(W * 0.62, 0.05, 0.22, 0.016, 1), pal.deck[1], { at: [0, -0.06, -0.34] });
-      // a rope coiled on the deck near the end, and a cleat
-      const ropeCol = '#e9d6a7';
-      const coil = [];
-      for (let i = 0; i <= 40; i++) {
-        const a = (i / 40) * TAU * 2.6, rr = 0.11 - (i / 40) * 0.05;
-        coil.push([Math.cos(a) * rr, top + 0.018 + (i / 40) * 0.012, Math.sin(a) * rr]);
+      // the shore end: a sturdy sill sunk into the bank and a step block resting on it
+      parts.add(bar(W + 0.24, 0.16, 0.2, 0.03, 2), pal.post, { at: [0, top - plankT - 0.14, -0.06] });
+      parts.add(bar(W * 0.62, 0.11, 0.24, 0.025, 2), pal.deck[1], { at: [0, -0.075, -0.37] });
+
+      // spots: sitters at the end (0.5 apart, so heads don't touch), one on the side in the
+      // middle of a bay (legs between the posts), and standing places
+      const spots = { end: spot([0, top, L - 0.06], 0, 'sit') };
+      if (W >= 1.3) {
+        const ex = +Math.min(0.5, W / 2 - 0.2).toFixed(3);
+        spots.endLeft = spot([ex, top, L - 0.06], 0, 'sit');
+        spots.endRight = spot([-ex, top, L - 0.06], 0, 'sit');
       }
-      const coilX = -(W / 2 - 0.3), coilZ = L - 0.55;
-      parts.add(tube(coil, 0.017, { segments: 60, radial: 6 }), { slot: 'cloth', color: ropeCol }, { at: [coilX, 0, coilZ] });
-      parts.add(tube([[coilX + 0.1, top + 0.02, coilZ + 0.02], [coilX + 0.22, top + 0.03, coilZ + 0.18], [-(W / 2 + 0.06) + 0.02, 0.17, L - 0.12 + 0.02]], 0.016, { segments: 14, radial: 6 }), { slot: 'cloth', color: ropeCol });
-      parts.add(roundBox(0.2, 0.035, 0.05, 0.015, 1), PALETTE.iron, { at: [W / 2 - 0.22, top, L - 0.35] });
-      parts.add(roundBox(0.05, 0.04, 0.04, 0.012, 1), PALETTE.iron, { at: [W / 2 - 0.22, top - 0.005, L - 0.35] });
-      const spots = {
-        end: spot([0, top, L - 0.06], 0, 'sit'),
-        endLeft: spot([0.32, top, L - 0.06], 0, 'sit'),
-        endRight: spot([-0.32, top, L - 0.06], 0, 'sit'),
-        side: spot([-(W / 2 - 0.06), top, L * 0.55], -90, 'sit'),
-        along: spot([0, top, L * 0.5], 0, 'stand'),
-        shore: spot([0, top, 0.25], 0, 'stand'),
-      };
-      if (flag(p.ladder, true)) {
-        const lx = W / 2 + 0.03, lz = postZ.length > 1 ? (postZ[postZ.length - 1] + postZ[postZ.length - 2]) / 2 : L * 0.5;
-        const steel = '#c9d0d6';
+      let bay = 0;
+      while (bay < postZ.length - 2 && postZ[bay + 1] < L * 0.55) bay++;
+      const sideZ = +((postZ[bay] + postZ[bay + 1]) / 2).toFixed(3);
+      spots.side = spot([-(W / 2 - 0.06), top, sideZ], -90, 'sit');
+      spots.shore = spot([0, top, 0.25], 0, 'stand');
+
+      // a ladder down into the water in the last bay on the +X side
+      const ladderZ = withLadder ? (postZ[postZ.length - 1] + postZ[postZ.length - 2]) / 2 : null;
+      if (withLadder) {
+        const lx = W / 2 + 0.03, lz = ladderZ;
+        const steel = { slot: 'metal', color: '#c9d0d6' };
         for (const dz of [-0.13, 0.13]) {
-          parts.add(tube([[lx + 0.02, -0.75, lz + dz], [lx + 0.02, 0.05, lz + dz], [lx - 0.02, 0.27, lz + dz], [lx - 0.18, 0.3, lz + dz], [lx - 0.27, top + 0.01, lz + dz]], 0.018, { segments: 24, radial: 7 }), { slot: 'metal', color: steel });
+          parts.add(tube([[lx + 0.02, -0.75, lz + dz], [lx + 0.02, 0.05, lz + dz], [lx - 0.02, 0.27, lz + dz], [lx - 0.18, 0.3, lz + dz], [lx - 0.27, top + 0.01, lz + dz]], 0.018, { segments: 14, radial: 5 }), steel);
         }
-        for (let i = 0; i < 4; i++) {
-          parts.add(roundBox(0.06, 0.025, 0.28, 0.01, 1), { slot: 'metal', color: steel }, { at: [lx + 0.03, -0.12 - i * 0.17, lz] });
-        }
-        spots.ladder = spot([lx - 0.35, top, lz], 90, 'stand');
+        for (let i = 0; i < 4; i++) parts.add(bar(0.28, 0.025, 0.06, 0.01, 1), steel, { at: [lx + 0.03, -0.12 - i * 0.17, lz], rot: alongZ });
       }
+      // standing mid-deck, nudged along the deck away from the other spots; then the top of the
+      // ladder, if there is room left for it
+      const room = (x, z) => Math.min(...Object.values(spots).map((sp) => Math.hypot(sp.at[0] - x, sp.at[2] - z)));
+      let walkZ = L * 0.5, best = -1;
+      for (const dz of [0, 0.3, -0.3, 0.6, -0.6]) {
+        const z = L * 0.5 + dz;
+        if (z < 0.25 || z > L - 0.3) continue;
+        const d = room(0, z);
+        if (d > 0.48) { walkZ = z; break; }
+        if (d > best) { best = d; walkZ = z; }
+      }
+      spots.along = spot([0, top, +walkZ.toFixed(3)], 0, 'stand');
+      if (withLadder && room(W / 2 - 0.3, ladderZ) > 0.45) spots.ladder = spot([+(W / 2 - 0.3).toFixed(3), top, +ladderZ.toFixed(3)], 90, 'stand');
+
+      // a rope coiled by a cleat near the edge, clear of the sitters, the ladder and the walkway
+      const free = (side, z) => z + 0.25 < L - 0.45 && z - 0.25 > 0.45
+        && !(side < 0 && Math.abs(z - sideZ) < 0.5)
+        && !(side > 0 && ladderZ != null && Math.abs(z - ladderZ) < 0.55)
+        && postZ.every((pz) => Math.abs(z - pz) > 0.14)
+        && (W >= 1.2 || Math.abs(z - L * 0.5) > 0.45);
+      let coilAt = null;
+      for (const side of [-1, 1]) {
+        for (let z = L - 0.75; z > 0.6 && !coilAt; z -= 0.05) if (free(side, z)) coilAt = [side, z];
+        if (coilAt) break;
+      }
+      if (coilAt) {
+        const [side, zc] = coilAt;
+        const rope = { slot: 'cloth', color: '#e9d6a7' };
+        const iron = { slot: 'metal', color: '#a3aab3' };
+        // the cleat: two rounded horns on a low base, along the edge
+        const cx = side * (W / 2 - 0.08), cz = zc - 0.06;
+        parts.add(roundBox(0.05, 0.03, 0.08, 0.012, 1), iron, { at: [cx, top - 0.002, cz] });
+        parts.add(taper([[cx, top + 0.034, cz - 0.11], [cx, top + 0.044, cz - 0.05], [cx, top + 0.046, cz], [cx, top + 0.044, cz + 0.05], [cx, top + 0.034, cz + 0.11]], (u) => 0.011 + 0.007 * Math.sin(Math.PI * u), { segments: 8, radial: 6 }), iron);
+        // the coil inboard of it, its outer turn starting on the cleat's side, and the tail
+        const kx = side * (W / 2 - 0.3), kz = zc + 0.1, a0 = side < 0 ? Math.PI : 0;
+        const coil = [];
+        for (let i = 0; i <= 26; i++) {
+          const a = a0 + (i / 26) * TAU * 2.6, rr = 0.11 - (i / 26) * 0.05;
+          coil.push([kx + Math.cos(a) * rr, top + 0.018 + (i / 26) * 0.012, kz + Math.sin(a) * rr]);
+        }
+        parts.add(tube(coil, 0.017, { segments: 32, radial: 5 }), rope);
+        parts.add(tube([[kx + side * 0.11, top + 0.018, kz], [cx - side * 0.04, top + 0.024, cz + 0.06], [cx, top + 0.05, cz + 0.015]], 0.016, { segments: 8, radial: 5 }), rope);
+      }
+
       const lights = [];
-      if (flag(p.lamp, false)) {
-        const x = W / 2 + 0.06, z = L - 0.12;
-        parts.add(roundCyl(0.03, 0.95, { top: 0.026, bevel: 0.01, segments: 10, steps: 1 }), PALETTE.iron, { at: [x, 0.24, z] });
-        parts.add(roundCyl(0.055, 0.03, { bevel: 0.01, segments: 12, steps: 1 }), PALETTE.iron, { at: [x, 1.17, z] });
-        parts.add(roundCyl(0.075, 0.19, { top: 0.09, bevel: 0.02, segments: 14, steps: 2 }), { slot: 'lamp', color: '#fff0c8' }, { at: [x, 1.2, z] });
+      if (withLamp) {
+        const x = W / 2 + 0.06, z = postZ[postZ.length - 1];
+        parts.add(roundCyl(0.03, 0.95, { top: 0.026, bevel: 0.01, segments: 8, steps: 1 }), PALETTE.iron, { at: [x, 0.24, z] });
+        parts.add(roundCyl(0.055, 0.03, { bevel: 0.01, segments: 10, steps: 1 }), PALETTE.iron, { at: [x, 1.17, z] });
+        parts.add(roundCyl(0.075, 0.19, { top: 0.09, bevel: 0.02, segments: 12, steps: 2 }), { slot: 'lamp', color: '#fff0c8' }, { at: [x, 1.2, z] });
         for (let i = 0; i < 4; i++) {
           const a = (i / 4) * TAU + Math.PI / 4;
-          parts.add(roundBox(0.018, 0.21, 0.018, 0.006, 1), PALETTE.iron, { at: [x + Math.cos(a) * 0.09, 1.19, z + Math.sin(a) * 0.09] });
+          parts.add(stick([x + Math.cos(a) * 0.085, 1.19, z + Math.sin(a) * 0.085], [x + Math.cos(a) * 0.096, 1.4, z + Math.sin(a) * 0.096], 0.01, { segments: 5 }), PALETTE.iron);
         }
-        parts.add(lathe([[0, 0], [0.14, 0], [0.13, 0.02], [0.07, 0.08], [0.02, 0.11], [0, 0.11]], 14), PALETTE.iron, { at: [x, 1.39, z] });
+        parts.add(lathe([[0, 0], [0.14, 0], [0.13, 0.02], [0.07, 0.08], [0.02, 0.11], [0, 0.11]], 12), PALETTE.iron, { at: [x, 1.39, z] });
         parts.add(sphere(0.025, 8, 6), PALETTE.gold, { at: [x, 1.51, z] });
         lights.push(light([x, 1.3, z], { intensity: 1.2, distance: 7 }));
       }
       return finish(parts.build('dock'), {
-        footprint: { w: W + 0.5, d: Math.min(L, 2) * 2 },
+        footprint: { w: W + 0.5, d: 2 * Math.min(L, 3) },
         spots,
         lights,
-        height: flag(p.lamp, false) ? 1.55 : 0.25,
+        height: withLamp ? 1.55 : 0.25,
       });
     },
   },
@@ -755,7 +884,7 @@ export const WATERSIDE = {
   boat: {
     label: 'Rowboat',
     floats: true,
-    about: 'A wooden rowboat. Afloat it bobs on the water with its oars out (the origin is the waterline); beached it rests tilted on the shore with the oars inside (lift it if the shore is above the water); a wreck is faded, holed, weedy and half sunk. Three seats.',
+    about: 'A wooden rowboat. Afloat it bobs gently on the water with its oars resting in the oarlocks (the origin is the waterline; a hidden lid keeps the scene\u2019s water out of the hull); beached it rests tilted on the shore with the oars inside (lift it if the shore is above the water); a wreck is faded, holed, weedy and half sunk, with water inside, and has no spots. One sitter per thwart: row (the middle seat, facing the stern), stern (facing the rower) and bow (facing the rower\u2019s back).',
     params: {
       color: { default: 'blue', type: 'color', about: 'hull paint (a color name or #hex)' },
       state: { default: 'floating', options: ['floating', 'beached', 'wreck'], about: 'afloat, pulled up on the shore, or wrecked' },
@@ -787,7 +916,7 @@ export const WATERSIDE = {
       seats.forEach(([t, y], k) => {
         const z = h.zOf(t), hw = h.insideHalf(t, y) - 0.004;
         const broken = wreck && k === 1;
-        boat.add(roundBox(hw * 2, 0.035, 0.17, 0.014, 1), seatCol, { at: [0, y - 0.035 - (broken ? 0.07 : 0), z], rot: broken ? [0.05, 0, 0.3] : undefined });
+        boat.add(bar(hw * 2, 0.035, 0.17, 0.014, 2), seatCol, { at: [0, y - 0.035 - (broken ? 0.07 : 0), z], rot: broken ? [0.05, 0, 0.3] : undefined });
         if (!broken) boat.add(box(0.05, Math.max(0.02, y - 0.035 - h.keelY(t) - 0.03), 0.045), shade(seatCol, -0.08), { at: [0, h.keelY(t) + 0.03, z] });
         seatTops.push([z, y]);
       });
@@ -796,43 +925,47 @@ export const WATERSIDE = {
       for (const dx of [-0.09, 0, 0.09]) boat.add(box(0.075, 0.016, 0.7), shade(inside, -0.06), { at: [dx, fy, h.zOf(0.45)] });
       // oarlocks on the gunwale at the middle seat
       const zMid = h.zOf(0.5), yTop = h.topY(0.5);
+      const steel = { slot: 'metal', color: '#9aa3ab' };
       for (const s of [1, -1]) {
-        boat.add(ring(0.03, 0.009, { radial: 4, tubular: 8, arc: Math.PI }), { slot: 'metal', color: '#9aa3ab' }, { at: [s * h.half(0.5), yTop + 0.045, zMid], rot: [Math.PI / 2, 0, Math.PI / 2] });
-        boat.add(roundCyl(0.012, 0.03, { bevel: 0.004, segments: 6, steps: 1 }), { slot: 'metal', color: '#9aa3ab' }, { at: [s * h.half(0.5), yTop - 0.01, zMid] });
+        boat.add(ring(0.03, 0.009, { radial: 4, tubular: 8, arc: Math.PI }), steel, { at: [s * h.half(0.5), yTop + 0.045, zMid], rot: [Math.PI / 2, 0, Math.PI / 2] });
+        boat.add(roundCyl(0.012, 0.03, { bevel: 0.004, segments: 6, steps: 1 }), steel, { at: [s * h.half(0.5), yTop - 0.01, zMid] });
       }
-      // a mooring ring on the bow
-      if (!wreck) boat.add(ring(0.028, 0.008, { radial: 5, tubular: 12 }), { slot: 'metal', color: '#b8a070' }, { at: [0, h.topY(0.97) - 0.07, h.zOf(0.985) + 0.03], rot: [0, 0, Math.PI / 2] });
-      adopt(outer, boat.build('boat'));
-      // oars
+      // a brass mooring ring on an eye at the bow
+      if (!wreck) {
+        const brass = { slot: 'metal', color: '#d9a54a' };
+        const ey = h.topY(1) - 0.1, ez = h.zOf(1) + 0.036;
+        boat.add(sphere(0.017, 8, 6), brass, { at: [0, ey, ez], scale: [1, 1, 0.8] });
+        boat.add(ring(0.05, 0.011, { radial: 5, tubular: 16 }), brass, { at: [0, ey - 0.052, ez + 0.012], rot: [Math.PI / 2, 0, 0] });
+      }
+      // oars: afloat they rest in the oarlocks with the handles in front of the rower (who faces
+      // the stern) and the blades out toward the bow; beached they lie inside; a wreck has one broken
       if (flag(p.oars, true)) {
-        const op = new Parts();
         const wood = wreck ? '#a59c8b' : PALETTE.woodLight, tip = wreck ? '#b9b1a2' : paint;
         if (state === 'floating') {
           for (const s of [1, -1]) {
-            const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, s > 0 ? 0.3 : Math.PI - 0.3, -0.27, 'YXZ'));
-            const dir = new THREE.Vector3(1, 0, 0).applyQuaternion(q);
-            const piv = new THREE.Vector3(s * h.half(0.5), yTop + 0.045, zMid);
-            op.merge(oarParts(1.08, wood, tip), new THREE.Matrix4().compose(piv.addScaledVector(dir, -0.3), q, new THREE.Vector3(1, 1, 1)));
+            const pivot = new THREE.Vector3(s * h.half(0.5), yTop + 0.045, zMid);
+            const handle = new THREE.Vector3(s * 0.15, yTop + 0.115, zMid - 0.17);
+            const d = pivot.clone().sub(handle).normalize();
+            const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.atan2(-d.z, d.x), Math.asin(d.y), 'YXZ'));
+            boat.merge(oarParts(1.08, wood, tip), new THREE.Matrix4().compose(handle, q, new THREE.Vector3(1, 1, 1)));
           }
         } else if (wreck) {
-          op.merge(oarParts(1.08, wood, tip, true), xform([-0.05, 0.02, h.zOf(0.3)], [0.1, -Math.PI / 2 + 0.5, 0.15]));
+          boat.merge(oarParts(1.08, wood, tip, true), xform([-0.05, 0.02, h.zOf(0.3)], [0.1, -Math.PI / 2 + 0.5, 0.15]));
         } else {
-          op.merge(oarParts(1.08, wood, tip), xform([0.1, 0.16, h.zOf(0.18)], [0, -Math.PI / 2 + 0.06, 0]));
-          op.merge(oarParts(1.08, wood, tip), xform([-0.12, 0.165, h.zOf(0.16)], [0, -Math.PI / 2 - 0.05, 0]));
+          boat.merge(oarParts(1.08, wood, tip), xform([0.1, 0.16, h.zOf(0.18)], [0, -Math.PI / 2 + 0.06, 0]));
+          boat.merge(oarParts(1.08, wood, tip), xform([-0.12, 0.165, h.zOf(0.16)], [0, -Math.PI / 2 - 0.05, 0]));
         }
-        adopt(outer, op.build('oars'));
       }
       // wreck: splintered planks round the hole, weed trailing from the rails, barnacles
       if (wreck) {
-        const wp = new Parts();
         const [hx, hy, hz, hr] = hole;
         const tH = (hz + h.L / 2) / h.L;
         const sideX = hx * (h.insideHalf(tH, hy) + h.th);
-        wp.add(blob(hr, { detail: 1, amp: 0.28, freq: 2.4, seed: 5, squash: [0.12, 0.62, 1] }), '#3a2f27', { at: [sideX + hx * 0.004, hy, hz] });
+        boat.add(blob(hr, { detail: 1, amp: 0.28, freq: 2.4, seed: 5, squash: [0.12, 0.62, 1] }), '#3a2f27', { at: [sideX + hx * 0.004, hy, hz] });
         for (let i = 0; i < 6; i++) {
           const a = (i / 6) * TAU + r.float(-0.25, 0.25);
           const len = r.float(0.06, 0.11);
-          wp.add(box(len, 0.012, 0.03), '#b2a895', { at: [sideX + hx * 0.01, hy + Math.sin(a) * hr * 0.6, hz + Math.cos(a) * hr * 0.95], rot: [0, hx * r.float(0.1, 0.5), a + r.float(-0.4, 0.4)] });
+          boat.add(box(len, 0.012, 0.03), '#b2a895', { at: [sideX + hx * 0.01, hy + Math.sin(a) * hr * 0.6, hz + Math.cos(a) * hr * 0.95], rot: [0, hx * r.float(0.1, 0.5), a + r.float(-0.4, 0.4)] });
         }
         const weed = { slot: 'foliage', color: '#5d8f4c', sway: 0.25 };
         for (let i = 0; i < 6; i++) {
@@ -840,29 +973,41 @@ export const WATERSIDE = {
           const s = i % 2 ? 1 : -1;
           const x0 = s * (h.half(t) + 0.02), y0 = h.topY(t) - 0.01, z0 = h.zOf(t);
           const len = r.float(0.12, 0.24);
-          wp.add(taper([[x0, y0, z0], [x0 + s * 0.04, y0 - len * 0.4, z0 + 0.02], [x0 + s * 0.035, y0 - len, z0 - 0.01]], (u) => 0.016 * (1 - u * 0.6), { segments: 6, radial: 4, caps: false }), { ...weed, color: shade(weed.color, r.float(-0.05, 0.05)) });
+          boat.add(taper([[x0, y0, z0], [x0 + s * 0.04, y0 - len * 0.4, z0 + 0.02], [x0 + s * 0.035, y0 - len, z0 - 0.01]], (u) => 0.016 * (1 - u * 0.6), { segments: 6, radial: 4, caps: false }), { ...weed, color: shade(weed.color, r.float(-0.05, 0.05)) });
         }
         for (let i = 0; i < 9; i++) {
           const t = r.float(0.08, 0.9), s = r.sign();
           const y = r.float(-0.05, 0.03);
           const hw = h.insideHalf(t, y) + h.th + 0.004;
-          wp.add(sphere(r.float(0.013, 0.022), 5, 3), '#d9d3c4', { at: [s * hw, y, h.zOf(t)], scale: [0.6, 1, 1] });
+          boat.add(sphere(r.float(0.013, 0.022), 5, 3), '#d9d3c4', { at: [s * hw, y, h.zOf(t)], scale: [0.6, 1, 1] });
         }
-        adopt(outer, wp.build('wreck'));
+      } else {
+        // the waterline lid (depth only) keeps the water plane out of a sound hull
+        boat.add(h.lidGeo(LID_Y, 0, 0.9), WATERLINE);
       }
+      adopt(outer, orderLid(boat.build('boat')));
       const group = new THREE.Group();
       group.add(outer);
       let tick = null;
-      if (state === 'floating') tick = bobber(outer, phaseOf(ctx));
-      else if (state === 'beached') { outer.position.y = 0.1; outer.rotation.set(-0.04, 0, 0.12); }
+      if (state === 'floating') tick = bobber(outer, phaseOf(ctx), CREWED);
+      else if (state === 'beached') {
+        // tilted on the shore with the keel pressed into the sand, but the floor inside stays
+        // above the ground (or the ground shows through the hull)
+        outer.rotation.set(-0.04, 0, 0.12);
+        outer.updateMatrix();
+        const pos = h.innerGeo.attributes.position, v = new THREE.Vector3();
+        let low = Infinity;
+        for (let i = 0; i < pos.count; i++) low = Math.min(low, v.fromBufferAttribute(pos, i).applyMatrix4(outer.matrix).y);
+        outer.position.y = 0.015 - low;
+      }
       else { outer.position.y = -0.06; outer.rotation.set(0.12, 0.0, -0.34); }
       outer.updateMatrix();
+      // sit spots 0.035 behind the thwart's middle, toward the sitter's back (seats are 0.17 deep)
       const onSeat = (k, dz) => new THREE.Vector3(0, seatTops[k][1], seatTops[k][0] + dz).applyMatrix4(outer.matrix).toArray().map((v) => +v.toFixed(3));
-      const spots = wreck ? { look: spot([0.9, 0, 0.9], -135, 'stand') } : {
-        seat: spot(onSeat(1, -0.02), 0, 'sit'),
-        row: spot(onSeat(1, 0.02), 180, 'sit'),
-        stern: spot(onSeat(0, -0.02), 0, 'sit'),
-        bow: spot(onSeat(2, 0.02), 180, 'sit'),
+      const spots = wreck ? {} : {
+        row: spot(onSeat(1, 0.035), 180, 'sit'),
+        stern: spot(onSeat(0, -0.035), 0, 'sit'),
+        bow: spot(onSeat(2, 0.035), 180, 'sit'),
       };
       return finish(group, {
         footprint: { w: 1.0, d: 2.1 },
@@ -928,7 +1073,7 @@ export const WATERSIDE = {
   sailboat: {
     label: 'Sailboat',
     floats: true,
-    about: 'A small sailboat with a striped cloth sail that sways in the breeze and a pennant at the masthead; it bobs on the water (the origin is the waterline). Sit at the tiller or on the middle seat.',
+    about: 'A small sailboat with a striped cloth sail that sways in the breeze and a pennant at the masthead; it bobs gently on the water (the origin is the waterline; a hidden lid keeps the scene\u2019s water out of the hull). Sit at the tiller (the stern seat, the tiller ends behind you) or on the middle seat, both facing the bow.',
     params: {
       color: { default: 'white', type: 'color', about: 'hull paint' },
       sail: { default: 'cream', type: 'color', about: 'sail cloth' },
@@ -945,8 +1090,8 @@ export const WATERSIDE = {
       const seatT = [[0.2, 0.1], [0.45, 0.1]];
       const tops = seatT.map(([t, y]) => {
         const z = h.zOf(t), hw = h.insideHalf(t, y) - 0.004;
-        parts.add(roundBox(hw * 2, 0.034, 0.16, 0.013, 1), PALETTE.wood, { at: [0, y - 0.034, z] });
-        parts.add(roundBox(0.06, Math.max(0.02, y - 0.034 - h.keelY(t) - 0.03), 0.05, 0.015, 1), PALETTE.woodDark, { at: [0, h.keelY(t) + 0.03, z] });
+        parts.add(bar(hw * 2, 0.034, 0.16, 0.013, 2), PALETTE.wood, { at: [0, y - 0.034, z] });
+        parts.add(box(0.06, Math.max(0.02, y - 0.034 - h.keelY(t) - 0.03), 0.05), PALETTE.woodDark, { at: [0, h.keelY(t) + 0.03, z] });
         return [z, y];
       });
       // a foredeck from the mast forward
@@ -958,15 +1103,19 @@ export const WATERSIDE = {
         deck.push([[hw, y, h.zOf(t)], [0, y + 0.02, h.zOf(t)], [-hw, y, h.zOf(t)]]);
       }
       parts.add(loft(deck, { flip: true }), PALETTE.woodLight);
-      // mast, rudder and tiller
+      // mast, rudder and tiller: the rudder head stands above the transom and the tiller reaches
+      // forward over it, ending behind the helmsman's back
       const mastTop = 2.55;
       parts.add(roundCyl(0.036, mastTop - h.keelY(mastT), { top: 0.026, bevel: 0.012, segments: 10, steps: 1 }), PALETTE.woodLight, { at: [0, h.keelY(mastT) + 0.02, mz] });
       parts.add(sphere(0.04, 10, 6), accent, { at: [0, mastTop + 0.02, mz] });
       const sz = h.zOf(0) - 0.03;
-      parts.add(roundBox(0.03, 0.4, 0.17, 0.012, 1), PALETTE.wood, { at: [0, -0.24, sz - 0.07] });
-      parts.add(stick([0, 0.2, sz - 0.02], [0, 0.26, h.zOf(0.17)], 0.016, { segments: 6 }), PALETTE.woodDark);
-      parts.add(sphere(0.022, 8, 6), PALETTE.woodDark, { at: [0, 0.26, h.zOf(0.17)] });
-      adopt(boatG, parts.build('sailboat'));
+      parts.add(roundBox(0.03, 0.56, 0.17, 0.012, 1), PALETTE.wood, { at: [0, -0.26, sz - 0.07] });
+      const tillerEnd = tops[0][0] - 0.035 - 0.12 - 0.065;
+      parts.add(stick([0, 0.3, sz - 0.04], [0, 0.272, tillerEnd], 0.017, { segments: 6 }), PALETTE.woodDark);
+      parts.add(sphere(0.023, 8, 6), accent, { at: [0, 0.272, tillerEnd] });
+      // the waterline lid (depth only) keeps the water plane out of the hull
+      parts.add(h.lidGeo(LID_Y, 0, 0.9), WATERLINE);
+      adopt(boatG, orderLid(parts.build('sailboat')));
 
       // the mainsail and boom swing gently round the mast
       const swing = new THREE.Group();
@@ -1027,13 +1176,13 @@ export const WATERSIDE = {
 
       const group = new THREE.Group();
       group.add(boatG);
-      const bob = bobber(boatG, phaseOf(ctx), { heave: 0.016, roll: 0.04, pitch: 0.018, speed: 0.9 });
+      const bob = bobber(boatG, phaseOf(ctx), { ...CREWED, speed: 0.9 });
       const ph = phaseOf(ctx, 'sail');
       return finish(group, {
         footprint: { w: 1.0, d: 2.5 },
         spots: {
-          tiller: spot([0, tops[0][1], tops[0][0] - 0.02], 0, 'sit'),
-          seat: spot([0, tops[1][1], tops[1][0] - 0.02], 0, 'sit'),
+          tiller: spot([0, tops[0][1], +(tops[0][0] - 0.035).toFixed(3)], 0, 'sit'),
+          seat: spot([0, tops[1][1], +(tops[1][0] - 0.035).toFixed(3)], 0, 'sit'),
         },
         height: mastTop,
         tick(t) {
