@@ -3,7 +3,7 @@ import { Terrain, WATER_LEVEL, resolveFlatHeights } from './terrain.js';
 import { CATALOG, buildProp } from './props/index.js';
 import { PropLights } from './lights.js';
 import { spotTransform, placeCharacter, poseLift, POSE_CLIPS } from './blocking.js';
-import { Parts, blob, cone, roundCyl, instanced, rng, seasonal, PALETTE, hashString } from './kit.js';
+import { Parts, blob, cone, roundCyl, instanced, rng, seasonal, PALETTE, hashString, boundsOf } from './kit.js';
 import { yawTo } from './staging.js';
 import { createCharacter } from '../engine/character.js';
 import { SPECIES } from '../engine/species.js';
@@ -469,7 +469,7 @@ export class Director {
       }
       const object = this.set.objects.get(ref);
       if (object) {
-        const box = new THREE.Box3().setFromObject(object);
+        const box = boundsOf(object);
         const c = box.getCenter(new THREE.Vector3());
         const size = box.getSize(new THREE.Vector3());
         out.push({ center: c, head: c.clone().setY(box.max.y * 0.8 + c.y * 0.2), radius: Math.max(size.x, size.y, size.z) * 0.5, yaw: object.rotation.y, height: size.y });
@@ -690,7 +690,7 @@ export class Director {
     const boxes = [];
     for (const o of this.set.objects.values()) {
       if (o.position.distanceTo(near) > 30) continue;
-      const b = new THREE.Box3().setFromObject(o);
+      const b = boundsOf(o);
       if (!b.isEmpty() && b.max.y - b.min.y > 0.25) boxes.push(b);
     }
     const m = new THREE.Matrix4();

@@ -528,9 +528,35 @@ export function finish(group, { footprint, spots = {}, lights = [], tick = null,
   return group;
 }
 
+/**
+ * Bounding box of the visible parts of an object (Box3.setFromObject also counts hidden ones,
+ * like a lighthouse beam switched off by day).
+ */
+export function boundsOf(object) {
+  const box = new THREE.Box3();
+  const part = new THREE.Box3();
+  object.updateWorldMatrix(true, true);
+  const visit = (o) => {
+    if (!o.visible) return;
+    if (o.isMesh || o.isLine || o.isPoints) {
+      const g = o.geometry;
+      if (o.isInstancedMesh) {
+        o.computeBoundingBox?.();
+        if (o.boundingBox) box.union(part.copy(o.boundingBox).applyMatrix4(o.matrixWorld));
+      } else if (g) {
+        if (!g.boundingBox) g.computeBoundingBox();
+        box.union(part.copy(g.boundingBox).applyMatrix4(o.matrixWorld));
+      }
+    }
+    for (const c of o.children) visit(c);
+  };
+  visit(object);
+  return box;
+}
+
 /** A circle around everything in the group, from its bounding box. */
 export function footprintOf(object) {
-  const b = new THREE.Box3().setFromObject(object);
+  const b = boundsOf(object);
   if (b.isEmpty()) return { r: 0.3 };
   return { w: b.max.x - b.min.x, d: b.max.z - b.min.z, r: Math.hypot(b.max.x - b.min.x, b.max.z - b.min.z) / 2 };
 }
