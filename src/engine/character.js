@@ -1,10 +1,11 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { BASE_URL, SOCKETS } from './rig.js';
 import { buildClips } from './animations.js';
 import { Face } from './face.js';
 import { createBodyMaterial, applyOutfit } from './outfit.js';
+import { createHairMaterial, loadHairGeometry } from './hair.js';
+import { loadGLTF } from './loader.js';
 
 // A character is the canonical base + a spec. Everything that makes characters differ
 // lives in the spec; the mesh, skeleton and animations are shared.
@@ -12,6 +13,7 @@ export const DEFAULT_SPEC = {
   skin: '#f8d3b0',
   height: 1,          // overall scale (1 = base height)
   headScale: 1,
+  hair: null,         // { style: 'bob', color: '#4a2f22' }, see hair.js
   outfit: null,       // see outfit.js
   face: {},           // see face.js DEFAULT_FACE
 };
@@ -25,46 +27,11 @@ async function loadBase() {
   return base;
 }
 
-/**
- * Load a .gltf whose buffer is embedded as a data: URI. Pages with a strict content security
- * policy (like published artifacts) can't fetch data: URIs, so the buffer is decoded here and
- * the model is handed to the loader as an in-memory binary glTF instead.
- */
-async function loadGLTF(url) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-  const json = await res.json();
-  const uri = json.buffers?.[0]?.uri ?? '';
-  if (!uri.startsWith('data:')) return new GLTFLoader().parseAsync(JSON.stringify(json), new URL('.', url).href);
-  const bin = Uint8Array.from(atob(uri.slice(uri.indexOf(',') + 1)), (c) => c.charCodeAt(0));
-  delete json.buffers[0].uri;
-  return new GLTFLoader().parseAsync(packGLB(json, bin), '');
-}
-
-function packGLB(json, bin) {
-  const text = new TextEncoder().encode(JSON.stringify(json));
-  const textLen = Math.ceil(text.length / 4) * 4;
-  const binLen = Math.ceil(bin.length / 4) * 4;
-  const total = 12 + 8 + textLen + 8 + binLen;
-  const out = new ArrayBuffer(total);
-  const view = new DataView(out);
-  const bytes = new Uint8Array(out);
-  view.setUint32(0, 0x46546c67, true); // 'glTF'
-  view.setUint32(4, 2, true);
-  view.setUint32(8, total, true);
-  view.setUint32(12, textLen, true);
-  view.setUint32(16, 0x4e4f534a, true); // 'JSON'
-  bytes.set(text, 20);
-  bytes.fill(0x20, 20 + text.length, 20 + textLen);
-  view.setUint32(20 + textLen, binLen, true);
-  view.setUint32(24 + textLen, 0x004e4942, true); // 'BIN'
-  bytes.set(bin, 28 + textLen);
-  return out;
-}
-
 export async function createCharacter(spec = {}) {
   const { scene, clips } = await loadBase();
-  return new Character(cloneSkinned(scene), clips, spec);
+  const character = new Character(cloneSkinned(scene), clips, spec);
+  await character.ready;
+  return character;
 }
 
 export class Character {
@@ -90,6 +57,8 @@ export class Character {
       polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
     });
     this.face = new Face(this.faceMesh.material);
+    this.hairMaterial = createHairMaterial();
+    this.hairMesh = null;
 
     this.mixer = new THREE.AnimationMixer(model);
     this.clips = clips;
@@ -105,13 +74,36 @@ export class Character {
     this.apply(spec);
   }
 
-  /** Re-skin the character from a spec (colors, outfit, proportions, face). */
+  /** Re-skin the character from a spec (colors, hair, outfit, proportions, face). */
   apply(spec = {}) {
     this.spec = { ...DEFAULT_SPEC, ...spec };
     applyOutfit(this.bodyMesh.material, this.spec.skin, this.spec.outfit);
     this.root.scale.setScalar(this.spec.height);
     this.bones.Head.scale.setScalar(this.spec.headScale);
     this.face.setParams(this.spec.face);
+    this.ready = this.setHair(this.spec.hair);
+    return this.ready;
+  }
+
+  /** Swap the hair style and/or color; `null` removes the hair. */
+  async setHair(hair) {
+    this.spec.hair = hair;
+    this.hairRequest = hair;
+    if (!hair?.style) {
+      this.hairMesh?.removeFromParent();
+      this.hairMesh = null;
+      return;
+    }
+    const geometry = await loadHairGeometry(hair.style);
+    if (this.hairRequest !== hair) return; // a newer request won
+    if (!this.hairMesh) {
+      this.hairMesh = new THREE.Mesh(geometry, this.hairMaterial);
+      this.hairMesh.castShadow = true;
+      this.bones.Head.add(this.hairMesh);
+    } else {
+      this.hairMesh.geometry = geometry;
+    }
+    this.hairMaterial.color.set(hair.color ?? '#4a2f22');
   }
 
   get clipNames() { return this.clips.map((clip) => clip.name); }
@@ -137,7 +129,11 @@ export class Character {
   socket(name) { return this.bones[SOCKETS[name] ?? name]; }
 
   set showSkeleton(visible) { this.skeletonHelper.visible = visible; }
-  set wireframe(on) { this.bodyMesh.material.wireframe = on; this.faceMesh.visible = !on; }
+  set wireframe(on) {
+    this.bodyMesh.material.wireframe = on;
+    this.hairMaterial.wireframe = on;
+    this.faceMesh.visible = !on;
+  }
 
   update(dt) {
     this.mixer.update(dt);
@@ -148,6 +144,7 @@ export class Character {
     this.mixer.stopAllAction();
     this.bodyMesh.material.dispose();
     this.faceMesh.material.dispose();
+    this.hairMaterial.dispose();
     this.face.dispose();
     this.skeletonHelper.dispose?.();
     this.root.removeFromParent();

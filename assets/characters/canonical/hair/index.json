@@ -1,0 +1,30 @@
+[
+ {
+  "id": "spiky",
+  "label": "Spiky"
+ },
+ {
+  "id": "bob",
+  "label": "Bob"
+ },
+ {
+  "id": "swept",
+  "label": "Side part"
+ },
+ {
+  "id": "pigtails",
+  "label": "Pigtails"
+ },
+ {
+  "id": "ponytail",
+  "label": "Ponytail"
+ },
+ {
+  "id": "bun",
+  "label": "Top bun"
+ },
+ {
+  "id": "long",
+  "label": "Long"
+ }
+]

@@ -1,6 +1,7 @@
 import { Stage } from './engine/stage.js';
 import { createCharacter } from './engine/character.js';
 import { EXPRESSIONS } from './engine/face.js';
+import { HAIR_STYLES, HAIR_COLORS } from './engine/hair.js';
 
 // Example specs: everything here is built from the same canonical base.
 const PRESETS = [
@@ -69,7 +70,18 @@ try {
   const { bones, triangles, clips } = character.stats;
   $('stats').innerHTML = `${bones} joints<br>${triangles.toLocaleString()} triangles<br>${clips} animations`;
 
-  chipRow($('presets'), PRESETS.map((p) => p.label), (i) => character.apply(PRESETS[i].spec), 0);
+  // Hair is picked on its own and kept when switching characters.
+  const hair = { style: HAIR_STYLES[0].id, color: HAIR_COLORS[0].value };
+  chipRow($('presets'), PRESETS.map((p) => p.label), (i) => character.apply({ ...PRESETS[i].spec, hair: { ...hair } }), 0);
+  const styles = [{ id: null, label: 'None' }, ...HAIR_STYLES];
+  chipRow($('hair'), styles.map((h) => h.label), (i) => { hair.style = styles[i].id; character.setHair({ ...hair }); }, 1);
+  const swatches = chipRow($('hair-colors'), HAIR_COLORS.map(() => ''), (i) => { hair.color = HAIR_COLORS[i].value; character.setHair({ ...hair }); }, 0);
+  swatches.forEach((b, i) => {
+    b.classList.add('swatch');
+    b.style.setProperty('--c', HAIR_COLORS[i].value);
+    b.setAttribute('aria-label', HAIR_COLORS[i].label);
+    b.title = HAIR_COLORS[i].label;
+  });
   const names = character.clipNames;
   chipRow($('clips'), names, (i) => {
     character.play(names[i]);
@@ -81,6 +93,7 @@ try {
   toggle($('toggle-wire'), (on) => { character.wireframe = on; });
   toggle($('toggle-spin'), (on) => { stage.controls.autoRotate = on; });
 
+  window.lab = { stage, character }; // handy from the browser console
   $('status').hidden = true;
 } catch (err) {
   console.error(err);
