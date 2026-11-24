@@ -35,7 +35,7 @@ Everything autosaves into the repo so it can be versioned with git:
 
 A three.js engine that turns the story into 3D scenes.
 
-- `scene.html`: **Scene Viewer**. Stages any Story Canvas page in 3D: the place at its map pin, the moment (hour, weather, season), the cast on their marks, and the camera shots. Play runs the whole story page by page. It opens `data/staging.json` when there is one, otherwise the sample world in `samples/brindlewick/`.
+- `scene.html`: **Story Stage**. Stages any Story Canvas page in 3D: the place at its map pin, the moment (hour, weather, season), the cast on their marks, and the camera shots. Play runs the whole story page by page. It opens `data/staging.json` when there is one, then your `data/world.json` with automatic sets, otherwise the sample world in `samples/brindlewick/`.
 - `props.html`: **Prop Lab**. Every set piece scenes can use (nature, buildings, village, waterside, hand props), in every season and at any hour.
 - `lab.html`: **Character Lab**. The canonical character base with hair, faces, emotions, body types, species and animations.
 - `src/world/`: places, terrain, sky, weather, props, staging and continuity, director (see `docs/scenes.md`).

@@ -9,13 +9,14 @@ in 3D too.
 ```
 data/world.json      the Story Canvas (pins, characters, pages)       ← written in the canvas app
 data/staging.json    the 3D direction for it                           ← written from your descriptions
-scene.html           the Scene Viewer: stages any page, plays the story
+scene.html           the Story Stage: stages any page, plays the story
 props.html           the Prop Lab: every set piece, in every season and at any hour
 ```
 
 `samples/brindlewick/` is a small invented world (five places, six characters, eight pages from
-spring to winter) made to exercise all of this. The viewer opens `data/staging.json` when it
-exists, otherwise the sample; `scene.html?story=path/to/staging.json` opens any other.
+spring to winter) made to exercise all of this. The Story Stage opens `data/staging.json` when it
+exists, then `data/world.json` staged automatically, otherwise the sample;
+`scene.html?story=path/to/staging.json` opens any other. Each page has its own link: `scene.html#page-3`.
 
 ## The world is the map
 

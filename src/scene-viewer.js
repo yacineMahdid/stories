@@ -202,6 +202,10 @@ $('collapse').addEventListener('click', () => {
   $('collapse').innerHTML = card.classList.contains('collapsed') ? '+' : '&minus;';
 });
 $('play').addEventListener('click', () => (view.playing ? stopPlay() : startPlay()));
+window.addEventListener('hashchange', () => {
+  const n = /^#page-(\d+)$/.exec(location.hash)?.[1];
+  if (n && world && Number(n) - 1 !== view.index) go(Number(n) - 1);
+});
 window.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
   if (e.key === 'ArrowRight') go(view.index + 1);
@@ -228,9 +232,8 @@ function go(index, { fade = true } = {}) {
     }
     statusEl.hidden = true;
     renderAll();
-    const url = new URL(location.href);
-    url.searchParams.set('page', String(index + 1));
-    history.replaceState(null, '', url);
+    // Each page has its own link (#page-3); the artifact viewer only passes plain hashes.
+    try { history.replaceState(null, '', `#page-${index + 1}`); } catch { /* sandboxed frames may refuse */ }
     $('fade').classList.remove('on');
   });
   return going;
@@ -277,7 +280,8 @@ stage.onFrame = (() => {
     const { direction, snapshot } = await loadStory();
     world = new World(readCanvas(snapshot), direction);
     director = new Director(stage, world);
-    const page = Math.max(1, Math.min(Number(q.get('page') ?? 1), world.scenes.length)) - 1;
+    const fromHash = /^#page-(\d+)$/.exec(location.hash)?.[1];
+    const page = Math.max(1, Math.min(Number(fromHash ?? q.get('page') ?? 1), world.scenes.length)) - 1;
     const over = {};
     if (q.get('hour')) over.hour = Number(q.get('hour'));
     if (q.get('weather')) over.weather = q.get('weather');
