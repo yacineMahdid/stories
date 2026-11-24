@@ -308,12 +308,27 @@ export class Director {
 
   setKeyFor(state) {
     const things = [...state.things.values()].map((t) => JSON.stringify(t)).sort().join('|');
-    return `${state.place?.id}|${state.season}|${hashString(things)}`;
+    const ground = JSON.stringify(this.world.terrain) + JSON.stringify(this.world.direction.colors ?? {});
+    return `${state.place?.id}|${state.season}|${hashString(things)}|${hashString(ground)}`;
   }
 
   /** Stage scene `index`. `overrides` (hour, weather, season, ambient) come from the viewer. */
   async show(index, overrides = {}) {
-    const state = this.world.sceneState(index);
+    return this.showState(this.world.sceneState(index), overrides);
+  }
+
+  /** Stage a map place on its own (no page, no cast). */
+  async showPlace(ref, moment = {}) {
+    return this.showState(this.world.placeState(ref, moment), {});
+  }
+
+  /** Swap in a newer World (the canvas changed); the next show rebuilds what changed. */
+  setWorld(world) {
+    this.world = world;
+    if (this.set) this.set.world = world;
+  }
+
+  async showState(state, overrides = {}) {
     if (!state) return null;
     Object.assign(state, Object.fromEntries(Object.entries(overrides).filter(([, v]) => v != null)));
     this.state = state;
@@ -336,7 +351,10 @@ export class Director {
   /** Change the moment without restaging (the viewer's sliders). Season changes rebuild the set. */
   async retime({ hour, weather, season, ambient }) {
     if (!this.state) return;
-    if (season && season !== this.state.season) return this.show(this.state.index, { hour: hour ?? this.state.hour, weather: weather ?? this.state.weather, season, ambient });
+    if (season && season !== this.state.season) {
+      const moment = { hour: hour ?? this.state.hour, weather: weather ?? this.state.weather, season, ambient };
+      return this.state.index >= 0 ? this.show(this.state.index, moment) : this.showState(this.world.placeState(this.state.place.id, moment), {});
+    }
     if (hour != null) this.state.hour = hour;
     if (weather) this.state.weather = weather;
     if (ambient !== undefined) this.state.ambient = ambient;
@@ -735,6 +753,16 @@ export class Director {
 
   stageTime() {
     return this.stage.sky.uniforms.uTime.value;
+  }
+
+  /** Release the set and the cast (when a stage closes for good). */
+  dispose() {
+    this.set?.dispose();
+    this.set = null;
+    for (const c of this.characters.values()) c.dispose();
+    this.characters.clear();
+    this.cast.clear();
+    this.stage.remove(this);
   }
 }
 

@@ -60,8 +60,20 @@ export class WorldStage {
     this.onFrame = null;
 
     this.resize();
-    new ResizeObserver(() => this.resize()).observe(container);
+    this.resizeObserver = new ResizeObserver(() => this.resize());
+    this.resizeObserver.observe(container);
     this.renderer.setAnimationLoop((t) => this.tick(t));
+  }
+
+  /** Free the GPU: stop the loop and release the renderer and the baked sky light. */
+  dispose() {
+    this.renderer.setAnimationLoop(null);
+    this.resizeObserver.disconnect();
+    this.envTarget?.dispose();
+    this.pmrem.dispose();
+    this.renderer.dispose();
+    this.renderer.forceContextLoss?.();
+    this.renderer.domElement.remove();
   }
 
   add(thing) {
@@ -72,7 +84,8 @@ export class WorldStage {
   }
 
   remove(thing) {
-    (thing.root ?? thing.object ?? thing).removeFromParent();
+    const object = thing.root ?? thing.object ?? thing;
+    if (object.isObject3D) object.removeFromParent();
     this.updatables.delete(thing);
   }
 

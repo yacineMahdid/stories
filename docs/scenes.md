@@ -13,6 +13,11 @@ scene.html           the Story Stage: stages any page, plays the story
 props.html           the Prop Lab: every set piece, in every season and at any hour
 ```
 
+The Story Canvas app shows all of this too: select a character, a map pin or a page to see it in
+3D in the inspector, generate portraits and page stills onto the canvas, or open the full 3D stage
+from the top bar. Looks and place sets chosen there are written to `data/staging.json`, the same
+direction file described below.
+
 `samples/brindlewick/` is a small invented world (five places, six characters, eight pages from
 spring to winter) made to exercise all of this. The Story Stage opens `data/staging.json` when it
 exists, then `data/world.json` staged automatically, otherwise the sample;

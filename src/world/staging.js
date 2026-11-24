@@ -57,7 +57,9 @@ export class World {
     // Places: every pin, with its direction (or an automatic set when there is none).
     this.places = new Map();
     for (const pin of canvas.pins.values()) {
-      const dir = direction.places?.[pin.id] ?? this.placeDirectionByName(pin.name);
+      let dir = direction.places?.[pin.id] ?? this.placeDirectionByName(pin.name);
+      // { "preset": "forest" } picks an automatic set instead of guessing it from the pin's text.
+      if (dir?.preset && !dir.things) dir = { ...autoPlace(pin, dir.preset), ...dir };
       const place = {
         id: pin.id, pin, name: pin.name, kind: pin.kind, description: pin.description,
         pos: this.mapToWorld(pin.at),
@@ -361,6 +363,28 @@ export class World {
     };
   }
 
+  /**
+   * A place on its own, with no page: its things as they stand before the story starts,
+   * at a given moment. For previews of a map pin.
+   */
+  placeState(ref, { hour = 11, season = 'summer', weather = 'clear', day = 15 } = {}) {
+    const place = this.placeByName(ref);
+    if (!place) return null;
+    const things = new Map([...this.things].map(([k, v]) => [k, { ...v }]));
+    for (const t of things.values()) {
+      if (!t.facingTarget) continue;
+      const target = things.get(t.facingTarget);
+      const home = this.places.get(t.place) ?? place;
+      if (target) t.facing = yawTo(t.pos, target.pos);
+      else if (t.facingTarget === 'center' && home) t.facing = yawTo(t.pos, home.pos);
+    }
+    return {
+      index: -1, page: { id: `place:${place.id}`, title: place.name, when: '', at: {}, summary: place.description, path: '', characterIds: [], locationIds: [place.id] },
+      dir: {}, place, chain: [], hour, season, weather, ambient: null, day,
+      things, cast: [], shots: [{ shot: 'establishing', label: place.name }, { shot: 'wide', label: 'Closer' }], notes: [], allNotes: [], changes: [], warnings: [], looks: new Map(),
+    };
+  }
+
   resolveSceneIndex(ref) {
     if (this.sceneIndex.has(ref)) return this.sceneIndex.get(ref);
     if (this.sceneIndex.has(`shape:${ref}`)) return this.sceneIndex.get(`shape:${ref}`);
@@ -418,7 +442,9 @@ export function expandGroups(list, placeId) {
 }
 
 /** A modest automatic set for a pin nobody has staged yet, from its kind, name and description. */
-export function autoPlace(pin) {
+export const PLACE_PRESETS = ['town', 'forest', 'beach', 'river', 'lake', 'ruin', 'wild', 'hill', 'meadow'];
+
+export function autoPlace(pin, preset = null) {
   const SETS = [
     ['beach', ['beach', 'shore', 'coast', 'harbor', 'harbour', 'dock', 'pier', 'port', 'bay', 'sea']],
     ['river', ['river', 'mill', 'bridge', 'stream', 'brook', 'ford']],
@@ -432,7 +458,7 @@ export function autoPlace(pin) {
   // The name says what the place is; the description only helps when the name doesn't.
   const pick = (text) => SETS.find(([, words]) => words.some((w) => new RegExp(`\\b${w}`).test(text)))?.[0];
   const kindHint = { town: 'town', danger: 'wild', secret: 'ruin', landmark: null, region: 'forest', place: null }[pin.kind];
-  const set = pick(pin.name.toLowerCase()) ?? (pin.kind === 'town' ? 'town' : null) ?? pick(pin.description.toLowerCase()) ?? kindHint ?? 'meadow';
+  const set = (PLACE_PRESETS.includes(preset) ? preset : null) ?? pick(pin.name.toLowerCase()) ?? (pin.kind === 'town' ? 'town' : null) ?? pick(pin.description.toLowerCase()) ?? kindHint ?? 'meadow';
   const things = [];
   const terrain = [];
   let ground = null;

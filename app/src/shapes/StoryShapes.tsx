@@ -1,4 +1,4 @@
-import { BaseBoxShapeUtil, BaseFrameLikeShapeUtil, HTMLContainer, useEditor, useValue, type TLShape } from 'tldraw'
+import { BaseBoxShapeUtil, BaseFrameLikeShapeUtil, HTMLContainer, createShapePropsMigrationIds, createShapePropsMigrationSequence, useEditor, useValue, type TLShape } from 'tldraw'
 import {
   characterProps, containerProps, loreProps, pinProps, sceneProps,
   EMPTY_TIME, type BookShape, type ChapterShape, type CharacterShape, type ContainerShape, type LoreShape, type PinShape, type SceneShape, type StoryContainerShape,
@@ -121,12 +121,19 @@ export class LoreShapeUtil extends BaseBoxShapeUtil<LoreShape> {
 
 /* ───────────────────────────── Scene ───────────────────────────── */
 
+// Pages saved before stills existed get an empty one when they load.
+const sceneVersions = createShapePropsMigrationIds('scene', { AddStill: 1 })
+const sceneMigrations = createShapePropsMigrationSequence({
+  sequence: [{ id: sceneVersions.AddStill, up(props: any) { props.still = '' }, down(props: any) { delete props.still } }],
+})
+
 export class SceneShapeUtil extends BaseBoxShapeUtil<SceneShape> {
   static override type = 'scene' as const
   static override props = sceneProps
+  static override migrations = sceneMigrations
 
   getDefaultProps(): SceneShape['props'] {
-    return { w: 300, h: 260, title: '', when: '', at: { ...EMPTY_TIME }, summary: '', characterIds: [], locationIds: [], modifiers: {} }
+    return { w: 300, h: 260, title: '', when: '', at: { ...EMPTY_TIME }, summary: '', characterIds: [], locationIds: [], modifiers: {}, still: '' }
   }
   component(shape: SceneShape) {
     return <SceneCard shape={shape} />
@@ -147,7 +154,8 @@ function SceneCard({ shape }: { shape: SceneShape }) {
   const p = shape.props
   const where = info.path.split(' · ').slice(0, -1).join(' · ')
   return (
-    <HTMLContainer className="sc-card sc-scene" style={{ width: p.w, height: p.h }}>
+    <HTMLContainer className={`sc-card sc-scene${p.still ? ' has-still' : ''}`} style={{ width: p.w, height: p.h }}>
+      {p.still && <img className="sc-still" src={p.still} alt="" draggable={false} />}
       <header>
         <span className="sc-tag">Page {info.number}</span>
         {where && <small className="sc-path">{where}</small>}

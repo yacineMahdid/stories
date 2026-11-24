@@ -73,6 +73,8 @@ declare module 'tldraw' {
       characterIds: string[]
       locationIds: string[]
       modifiers: Record<string, SceneModifier>
+      /** A rendered 3D frame of the page ('' when there is none). */
+      still: string
     }
   }
 }
@@ -136,6 +138,7 @@ export const sceneProps = {
   characterIds: T.arrayOf(T.string),
   locationIds: T.arrayOf(T.string),
   modifiers: T.dict(T.string, T.object({ text: T.string, persist: T.boolean })),
+  still: T.string,
 }
 
 export const PIN_KINDS = ['place', 'town', 'landmark', 'region', 'danger', 'secret']

@@ -9,6 +9,8 @@ import { assetStore, loadWorld, startAutosave, type SaveState } from './lib/pers
 import { centerOfView, ensurePages, getCharacters, getLore, getPins, getScenes, PAGES } from './lib/world'
 import { exportStoryBible } from './lib/exportBible'
 import { addStructural } from './lib/structure'
+import { loadStaging } from './lib/staging'
+import { StageContext, StageOverlay } from './ui/ThreeViews'
 
 // The four workspaces replace tldraw's own page menu.
 const components: TLComponents = { PageMenu: null }
@@ -37,7 +39,7 @@ function addShape(editor: Editor) {
   if (created) editor.select(created.id)
 }
 
-function Header({ editor, save }: { editor: Editor; save: SaveState }) {
+function Header({ editor, save, onStage }: { editor: Editor; save: SaveState; onStage: () => void }) {
   const pageId = useValue('page', () => editor.getCurrentPageId(), [editor])
   const counts = useValue('counts', () => ({
     'page:characters': getCharacters(editor).length,
@@ -63,6 +65,7 @@ function Header({ editor, save }: { editor: Editor; save: SaveState }) {
             {STORY_ADD.map((a) => <button key={a.type} className={a.type === 'scene' ? 'primary' : ''} onClick={() => addStructural(editor, a.type)}>{a.label}</button>)}
           </div>
         )}
+        <button onClick={onStage} title="See the story's pages staged in 3D">3D stage</button>
         <button onClick={async () => { const where = await exportStoryBible(editor); setExported(where); setTimeout(() => setExported(''), 4000) }}>
           {exported ? `Saved → ${exported}` : 'Export story bible'}
         </button>
@@ -77,9 +80,18 @@ export default function App() {
   const [editor, setEditor] = useState<Editor | null>(null)
   const [save, setSave] = useState<SaveState>('saved')
 
+  const [stage, setStage] = useState<{ open: boolean; pageId?: string }>({ open: false })
+
   useEffect(() => {
+    loadStaging()
     loadWorld().then((data) => setWorld({ loaded: true, data }), (e) => setWorld({ loaded: true, data: null, error: String(e) }))
   }, [])
+
+  // The 3D stage opens at the given page, or at the selected page, or at the first one.
+  const openStage = (pageId?: string) => {
+    const sel = editor?.getOnlySelectedShape()
+    setStage({ open: true, pageId: pageId ?? (sel?.type === 'scene' ? sel.id : undefined) })
+  }
 
   useEffect(() => (editor ? startAutosave(editor, setSave) : undefined), [editor])
 
@@ -89,8 +101,9 @@ export default function App() {
   if (world.error) return <div className="loading">{world.error}<br />Start the app with <code>npm run dev</code> so it can read the data folder.</div>
 
   return (
+    <StageContext.Provider value={openStage}>
     <div className="layout">
-      {editor && <Header editor={editor} save={save} />}
+      {editor && <Header editor={editor} save={save} onStage={() => openStage()} />}
       <div className="main">
         <div className="canvas">
           <Tldraw
@@ -109,6 +122,8 @@ export default function App() {
       </div>
       {editor && pageId === 'page:story' && <Timeline editor={editor} />}
       {editor && pageId === 'page:backstory' && <Chronology editor={editor} />}
+      {editor && stage.open && <StageOverlay editor={editor} pageId={stage.pageId} onClose={() => setStage({ open: false })} />}
     </div>
+    </StageContext.Provider>
   )
 }

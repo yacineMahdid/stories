@@ -20,6 +20,15 @@ Then open http://localhost:5173.
 | **Backstory** | Global lore notes, each with a precise world date (year / month / day / hour) and an optional end for spans. It is fed to pages as hidden context and never stated in them. A **world chronology** strip puts lore and story pages on one timeline. |
 | **Story** | Nested boxes: **Story ⊃ Books ⊃ Chapters ⊃ Pages**. A page is a scene: its characters, map pins, exact world time and a description. Numbering and reading order come from the nesting; the outline and timeline strip follow it. Characters can get per-page modifiers, optionally carried into later pages of the same story. |
 
+**3D, right in the canvas.** Select something to see it in 3D in the inspector:
+- **Character:** its 3D look, with species, skin or fur, hair, eyes, body and outfit controls. *Add as portrait* renders the model into a new portrait iteration on the card.
+- **Map pin:** its place in 3D, where the pin sits on the map, with an automatic set or one you pick (town, forest, beach, river…).
+- **Page:** the page staged with its cast, place, time, weather and continuity. *Put this shot on the card* renders a still onto the page card, so the Story canvas reads like a storyboard.
+
+**3D stage** (top bar) plays the whole story full screen: pages, camera shots, time of day, weather, season.
+
+The 3D direction (looks, place sets, blocking, cameras) is saved in `data/staging.json` (format in `docs/scenes.md`).
+
 **Continuity checks** flag deleted references, missing time or places, a character in two places at the same moment, a character appearing before they are born, and pages that jump back in time.
 **Export story bible** writes `data/exports/story-bible.md`: lore in date order, characters, places, then the full Story → Book → Chapter → Page tree. Each page lists each character's age and effective look, plus which backstory is history, ongoing, or has not happened yet at that moment.
 
@@ -28,6 +37,7 @@ Then open http://localhost:5173.
 Everything autosaves into the repo so it can be versioned with git:
 
 - `data/world.json`: the whole canvas (all four tabs)
+- `data/staging.json`: the 3D direction (character looks, place sets, scene blocking)
 - `data/assets/`: uploaded images (portraits, maps, references)
 - `data/exports/`: exported story bibles
 

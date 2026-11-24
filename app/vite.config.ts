@@ -6,10 +6,14 @@ import crypto from 'node:crypto'
 import type { IncomingMessage } from 'node:http'
 
 // Everything the canvas creates is saved inside the repo so it can be versioned with git.
+const REPO_DIR = path.resolve(import.meta.dirname, '..')
 const DATA_DIR = path.resolve(import.meta.dirname, '../data')
 const ASSET_DIR = path.join(DATA_DIR, 'assets')
 const WORLD_FILE = path.join(DATA_DIR, 'world.json')
+const STAGING_FILE = path.join(DATA_DIR, 'staging.json')
 const EXPORT_DIR = path.join(DATA_DIR, 'exports')
+// The 3D engine lives at the repo root (src/, assets/) and imports three by its bare name.
+const THREE_DIR = path.resolve(import.meta.dirname, 'node_modules/three')
 
 const MIME: Record<string, string> = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
@@ -49,6 +53,19 @@ function storyDataApi(): Plugin {
             fs.renameSync(WORLD_FILE + '.tmp', WORLD_FILE)
             return res.end('ok')
           }
+          // The 3D direction (looks, places, staging): data/staging.json, see docs/scenes.md.
+          if (url.pathname === '/api/staging' && req.method === 'GET') {
+            if (!fs.existsSync(STAGING_FILE)) { res.statusCode = 404; return res.end() }
+            res.setHeader('content-type', 'application/json')
+            return res.end(fs.readFileSync(STAGING_FILE))
+          }
+          if (url.pathname === '/api/staging' && req.method === 'PUT') {
+            const body = await readBody(req)
+            const json = JSON.parse(body.toString('utf8')) // refuse to write invalid JSON
+            fs.writeFileSync(STAGING_FILE + '.tmp', JSON.stringify(json, null, 2) + '\n')
+            fs.renameSync(STAGING_FILE + '.tmp', STAGING_FILE)
+            return res.end('ok')
+          }
           if (url.pathname === '/api/upload' && req.method === 'POST') {
             const name = `${crypto.randomUUID().slice(0, 8)}-${safeName(url.searchParams.get('name') ?? 'file')}`
             fs.writeFileSync(path.join(ASSET_DIR, name), await readBody(req))
@@ -79,5 +96,15 @@ function storyDataApi(): Plugin {
 
 export default defineConfig({
   plugins: [react(), storyDataApi()],
-  server: { watch: { ignored: ['**/data/**'] } },
+  resolve: {
+    // One copy of three for the app and the engine files outside app/.
+    alias: [
+      { find: /^three$/, replacement: path.join(THREE_DIR, 'build/three.module.js') },
+      { find: /^three\/addons\/(.*)$/, replacement: path.join(THREE_DIR, 'examples/jsm/$1') },
+    ],
+  },
+  optimizeDeps: { exclude: ['three'] },
+  // The engine (src/, assets/) sits outside app/, so let the dev server read the repo.
+  server: { watch: { ignored: ['**/data/**'] }, fs: { allow: [REPO_DIR] } },
+  build: { target: 'esnext' }, // the prop catalog loads its families with top-level await
 })

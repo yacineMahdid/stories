@@ -6,6 +6,7 @@ import { ageAt, isSet, relation } from '../lib/time'
 import { addStructural, buildOutline, findNode, LEVEL, tidyAll, type OutlineNode } from '../lib/structure'
 import { uploadFile } from '../lib/persistence'
 import { findIssues } from '../lib/checks'
+import { CharacterLook, PagePreview, PlacePreview } from './ThreeViews'
 
 type Props<S extends TLShape> = { editor: Editor; shape: S }
 
@@ -101,6 +102,8 @@ function CharacterInspector({ editor, shape }: Props<CharacterShape>) {
         <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addPortraits(e.target.files); e.target.value = '' }} />
       </div>
       <small className="muted">Each upload is kept as a version so you can compare iterations. Click one to make it the base look. You can also drop sketches and references on the canvas around the card.</small>
+      <h3>3D look</h3>
+      <CharacterLook editor={editor} shape={shape} onPortrait={(url) => set({ portraits: [...p.portraits, url], activePortrait: p.portraits.length })} />
       <Field label="Base appearance" hint="The look every scene starts from. Scenes can add modifiers on top.">
         <textarea rows={5} value={p.appearance} placeholder="Build, face, hair, clothing, silhouette, palette…" onChange={(e) => set({ appearance: e.target.value })} />
       </Field>
@@ -128,6 +131,8 @@ function PinInspector({ editor, shape }: Props<PinShape>) {
       </Field>
       <Field label="Colour"><ColorPicker value={p.color} onChange={(color) => set({ color })} /></Field>
       <Field label="Description"><textarea rows={6} value={p.description} placeholder="What it looks like, who lives here, what matters about it…" onChange={(e) => set({ description: e.target.value })} /></Field>
+      <h3>In 3D</h3>
+      <PlacePreview editor={editor} shape={shape} />
       <h3>Scenes here</h3>
       <SceneLinks editor={editor} filter={(s) => s.props.locationIds.includes(shape.id)} />
     </>
@@ -188,6 +193,8 @@ function SceneInspector({ editor, shape }: Props<SceneShape>) {
       </Field>
       <WorldAtTime editor={editor} at={p.at} />
       <Field label="What happens"><textarea rows={6} value={p.summary} onChange={(e) => set({ summary: e.target.value })} /></Field>
+      <h3>In 3D</h3>
+      <PagePreview editor={editor} shape={shape} />
 
       <h3>Where</h3>
       {!data.pins.length && <p className="muted">Add pins on the Map tab first.</p>}
