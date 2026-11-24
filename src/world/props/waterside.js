@@ -1020,48 +1020,68 @@ export const WATERSIDE = {
 
   steppingstones: {
     label: 'Stepping stones',
-    about: 'A line of flat stones across shallow water or a garden path. The stones run along Z (length); their tops sit just above the origin and they reach down into the water.',
+    about: 'A line of rounded, mossy stepping stones across shallow water or a garden path. The stones run along Z (length), a stride apart; their domed tops sit just above the origin and they reach down into the water. Placed in water, the scene lifts them so the waterline falls on their wet, mossy band (about 0.2 to 0.3 below the tops).',
     params: {
       length: { default: 3, min: 1, max: 10, about: 'length of the line along Z' },
-      color: { default: PALETTE.stone, type: 'color', about: 'stone color' },
-      moss: { default: true, about: 'mossy sides' },
+      color: { default: '#a29c8f', type: 'color', about: 'stone color' },
+      moss: { default: true, about: 'a band of moss above the waterline' },
     },
-    examples: [{}, { length: 1.8 }, { length: 5, moss: false, color: '#c9b8a0' }],
+    examples: [{}, { length: 1.8 }, { length: 5, moss: false, color: '#b9a991' }],
     build(p, ctx) {
       const L = size(p.length, 3, 1, 10);
-      const base = colorOr(p.color, PALETTE.stone);
+      const base = colorOr(p.color, '#a29c8f');
       const mossy = flag(p.moss, true);
       const r = rand(ctx, 'stones');
       const parts = new Parts();
-      const n = Math.max(2, Math.round(L / 0.62) + 1);
+      // a stride apart (0.65 to 0.8), then fitted to the length
+      const n = Math.max(2, Math.round(L / 0.72) + 1);
+      const gaps = Array.from({ length: n - 1 }, () => r.float(0.65, 0.8));
+      const sum = gaps.reduce((a, b) => a + b, 0);
+      const zs = [-L / 2];
+      for (const g of gaps) zs.push(zs[zs.length - 1] + (g / sum) * L);
       const tops = [];
-      for (let i = 0; i < n; i++) {
-        const z = -L / 2 + (L * i) / (n - 1);
-        const x = (i % 2 ? 1 : -1) * r.float(0.04, 0.1);
-        const k = r.float(0.82, 1.06), topY = r.float(0.035, 0.06);
-        // a rounded boulder: a flat-ish worn top, bulging sides, tucked in below the water
-        const prof = [[0, -0.95], [0.21, -0.95], [0.29, -0.5], [0.3, -0.2], [0.275, -0.04], [0.22, 0.0], [0.13, 0.014], [0, 0.018]].map(([pr, py]) => [pr * k, py + topY - 0.018]);
-        const g = weld(lathe(prof, 11));
-        lumpy(g, { amp: 0.05 * k, freq: 3.2, seed: i * 7 + 3 });
-        g.scale(1, 1, r.float(0.8, 0.95));
+      const wet = shade(base, -0.2, { hue: 0.02, sat: 0.03 }), deep = shade(base, -0.26, { hue: 0.04 });
+      const mossCol = '#6f9a4f', mossDark = '#58803f';
+      zs.forEach((z, i) => {
+        const x = (i % 2 ? 1 : -1) * r.float(0.03, 0.09);
+        const k = r.float(0.84, 1.12), topY = r.float(0.05, 0.075);
+        // a soft dome on a round shoulder, bulging a little, tucked in deep under the water
+        // (bottom to top, so the lathe faces outward)
+        const prof = [[0.2, -0.95], [0.27, -0.45], [0.29, -0.22], [0.284, -0.11], [0.258, -0.05], [0.205, -0.012], [0.12, 0.014], [0, 0.026]]
+          .map(([pr, py]) => [pr * k, py + topY - 0.026]);
+        const g = weld(lathe(prof, 15));
+        // vertical lumps: the radius wobbles round the stone, slowly with height
+        const pos = g.attributes.position, o = r.float(0, 50);
+        for (let j = 0; j < pos.count; j++) {
+          const px = pos.getX(j), py = pos.getY(j), pz = pos.getZ(j);
+          const d = Math.hypot(px, pz);
+          if (d < 1e-4) continue;
+          const a = Math.atan2(pz, px);
+          const w = 1 + 0.07 * noise3(Math.cos(a) * 1.4 + o, py * 1.1, Math.sin(a) * 1.4) + 0.03 * noise3(Math.cos(a) * 3.1, py * 3 + o, Math.sin(a) * 3.1);
+          pos.setXYZ(j, px * w, py, pz * w);
+        }
+        g.scale(1, 1, r.float(0.82, 0.95));
         g.rotateY(r.angle());
         g.computeVertexNormals();
-        const tone = shade(base, r.float(-0.04, 0.04));
-        const moss = mix(tone, '#6f9a4f', 0.6);
-        const o = r.float(0, 10);
+        const tone = shade(base, r.float(-0.035, 0.035));
+        const mo = r.float(0, 10);
         addPainted(parts, g, tone, { at: [x, 0, z] }, (c, px, py, pz, nx, ny) => {
-          if (ny > 0.55) c.offsetHSL(0, 0, 0.04 + 0.03 * noise3(px * 9 + o, pz * 9, 1));
-          else {
-            c.offsetHSL(0, 0, -0.03);
-            if (mossy) c.lerp(C(moss), clamp(0.45 + noise3(px * 7 + o, py * 5, pz * 7) * 0.9, 0, 0.85) * smooth(topY - 0.01, topY - 0.12, py) * smooth(-0.45, -0.25, py));
-            if (py < -0.25) c.lerp(C(shade(tone, -0.12, { hue: 0.02 })), smooth(-0.25, -0.4, py));
+          const top = smooth(-0.04, 0.02, py - topY + 0.026);
+          // a dry, speckled top; darker flanks
+          const sp = noise3(px * 16 + mo, pz * 16, py * 4);
+          c.offsetHSL(0, 0, top * (0.012 + 0.025 * noise3(px * 7 + mo, pz * 7, 1)) - (1 - top) * 0.04 - (sp > 0.35 ? 0.05 : 0));
+          if (top > 0.5 && noise3(px * 5 - mo, pz * 5, 3) > 0.42) c.lerp(C('#b9b27e'), 0.35);
+          if (ny < 0.75) {
+            if (mossy) c.lerp(C(mix(mossCol, mossDark, clamp(0.5 + noise3(px * 11, py * 9, pz * 11 + mo), 0, 1))), clamp(0.5 + noise3(px * 7 + mo, py * 4, pz * 7) * 1.2, 0, 0.9) * smooth(-0.02, -0.07, py) * smooth(-0.24, -0.14, py));
+            c.lerp(C(wet), smooth(-0.11, -0.19, py) * 0.85);
+            c.lerp(C(deep), smooth(-0.3, -0.42, py));
           }
         });
-        tops.push([x, topY, z]);
-      }
+        tops.push([+x.toFixed(3), +topY.toFixed(3), +z.toFixed(3)]);
+      });
       const mid = tops[Math.floor((n - 1) / 2)];
       return finish(parts.build('steppingstones'), {
-        footprint: { w: 0.8, d: L + 0.5 },
+        footprint: { w: 0.8, d: L + 0.6 },
         spots: {
           start: spot(tops[0], 0, 'stand'),
           middle: spot(mid, 0, 'stand'),
@@ -1364,7 +1384,7 @@ export const WATERSIDE = {
 
   driftwood: {
     label: 'Driftwood',
-    about: 'A sea-bleached log or forked branch lying on the beach, worn smooth and pale, with knots and an old root flare. Two can sit on the log.',
+    about: 'A sea-worn log or forked branch lying on the beach: silver-grey wood with streaky grain, long shallow cracks that twist along it, knot holes and an old root flare. Two can sit on the log.',
     params: {
       variant: { default: 'log', options: ['log', 'branch'], about: 'a sitting log or a forked branch' },
       length: { default: 1.4, min: 0.5, max: 3, about: 'length along X' },
@@ -1374,47 +1394,133 @@ export const WATERSIDE = {
       const variant = oneOf(p.variant, ['log', 'branch'], 'log');
       const L = size(p.length, 1.4, 0.5, 3);
       const r = rand(ctx, 'drift');
-      const base = '#dcd0b9', grain = '#b4a68c', pale = '#eee6d5', knot = '#9c8c72';
+      const base = '#b9ad97', grain = '#7f715c', pale = '#d3c9b6', crack = '#4d4236', hole = '#4a3e31';
       const parts = new Parts();
-      const o = r.float(0, 20);
-      const painter = (end) => (c, x, y, z) => {
-        const n = noise3(x * 2.5 + o, y * 26, z * 26) * 0.6 + noise3(x * 1.1, y * 8 + o, z * 8) * 0.4;
-        c.lerp(C(grain), clamp(0.18 + n * 0.9, 0, 0.7));
-        c.lerp(C(pale), clamp((y - 0.1) * 2.5, 0, 0.35));
-        if (end && Math.abs(x) > end) {
-          const d = Math.hypot(y - 0.12, z);
-          c.copy(C(pale)).lerp(C(grain), Math.floor(d / 0.022) % 2 ? 0.35 : 0.05);
+      const o = r.float(0, 20), flip = r.sign();
+      const twist = r.float(1.0, 1.7) * r.sign(), gPh = r.angle();
+      // sun-bleached on top, a little darker and damp underneath
+      const weather = (c, up) => {
+        c.lerp(C(pale), clamp((up - 0.3) * 0.3, 0, 0.18));
+        if (up < -0.55) c.lerp(C('#a2927a'), 0.3);
+      };
+      const woodColor = (c, x, y, z, up) => {
+        const n = noise3(x * 1.3 + o, y * 6, z * 6) * 0.6 + noise3(x * 0.5, y * 3 + o, z * 3) * 0.4;
+        c.lerp(C(grain), clamp(0.15 + n * 1.2, 0, 0.7));
+        weather(c, up);
+      };
+      /**
+       * A worn trunk lying along X. Its vertex columns twist along it with the grain, and every
+       * few columns a shallow groove (a crack) runs down a column, so the cracks are crisp lines;
+       * each column gets its own grain tone, so the streaks run the length of the wood. The axis
+       * sags onto the ground and the ends are rounded and painted as end grain. Returns the axis
+       * and radius functions so knots and spots can be put on its surface.
+       */
+      const trunk = (len, radius, { segments = 18, grooves = 6, groove = 0.12, wander = 0.04 } = {}) => {
+        // columns per groove period: the crack's own column, two light ones hugging it (so the
+        // dark line stays narrow and crisp) and three across the face between cracks
+        const FR = [0, 0.05, 0.25, 0.5, 0.75, 0.95], per = FR.length, radial = grooves * per;
+        const turn = (u) => twist * u * 1.6 / grooves;
+        const thOf = (u, j) => ((Math.floor(j / per) + FR[j % per]) / grooves) * TAU - turn(u) - gPh / grooves;
+        const colOf = (u, th) => {
+          let ph = ((th + turn(u) + gPh / grooves) / TAU) * grooves;
+          ph = ((ph % grooves) + grooves) % grooves;
+          const k = Math.floor(ph), f = ph - k;
+          let m = 0;
+          for (let q = 1; q <= per; q++) if (Math.abs(f - (q < per ? FR[q] : 1)) < Math.abs(f - (m < per ? FR[m] : 1))) m = q;
+          return m === per ? ((k + 1) % grooves) * per : k * per + m;
+        };
+        const dent = (j) => (j % per === 0 ? 1 : 0);
+        const rad = (u, th) => radius(u, th);
+        const axis = (u) => [lerp(-len / 2, len / 2, u) * flip, rad(u, Math.PI) * 0.96, wander * Math.sin(u * Math.PI * 1.3 + o)];
+        const rows = [], tone = [];
+        // most of the wood is pale; a third of the columns run as darker streaks
+        for (let j = 0; j < radial; j++) tone.push(j % per && r.chance(0.35) ? r.float(0.6, 0.85) : r.float(0, 0.2));
+        for (let i = 0; i <= segments; i++) {
+          const u = i / segments, [ax, ay, az] = axis(u), row = [];
+          for (let j = 0; j <= radial; j++) {
+            const jj = j % radial, th = thOf(u, jj), rr = rad(u, th) * (1 - groove * dent(jj));
+            row.push([ax, ay + Math.cos(th) * rr, az + Math.sin(th) * rr]);
+          }
+          rows.push(row);
         }
+        // the loft runs along X (mirrored when flip < 0): wind it to face out either way
+        const side = loft(rows, { wrap: true, flip: flip > 0 });
+        // (Parts un-indexes the loft, so find each vertex's column from its angle)
+        addPainted(parts, side, base, undefined, (c, x, y, z) => {
+          const u = clamp((x * flip + len / 2) / len, 0, 1), [, ay, az] = axis(u);
+          const jj = colOf(u, Math.atan2(z - az, y - ay));
+          c.lerp(C(grain), clamp(tone[jj] + noise3(u * 3 + jj * 0.37, o, jj * 0.11) * 0.25, 0, 0.9));
+          weather(c, Math.cos(thOf(u, jj)));
+          if (dent(jj)) c.lerp(C(crack), 0.9);
+        });
+        // rounded, worn ends painted with growth rings
+        for (const end of [0, 1]) {
+          const [ax, ay, az] = axis(end), dir = (end ? 1 : -1) * flip, cap = [];
+          const rEnd = rad(end, 0);
+          for (const f of [1, 0.82, 0.5, 0]) {
+            const row = [];
+            for (let j = 0; j <= radial; j++) {
+              const jj = j % radial, th = thOf(end, jj), rr = rad(end, th) * (1 - groove * dent(jj)) * Math.max(f, 0.001);
+              row.push([ax + dir * 0.45 * rEnd * Math.sqrt(1 - f * f), ay + Math.cos(th) * rr, az + Math.sin(th) * rr]);
+            }
+            cap.push(row);
+          }
+          addPainted(parts, loft(cap, { wrap: true, flip: dir < 0 }), base, undefined, (c, x, y, z) => {
+            const d = Math.hypot(y - ay, z - az) / rEnd;
+            c.copy(C(pale)).lerp(C(grain), Math.floor(d * 4.5) % 2 ? 0.45 : 0.1).lerp(C(crack), d < 0.12 ? 0.5 : 0);
+          });
+        }
+        return { axis, rad };
+      };
+      /** A knot hole on the trunk's surface at (u, th): a dark pit in a raised rim. */
+      const knotHole = (t, u, th, size) => {
+        const [ax, ay, az] = t.axis(u), rr = t.rad(u, th);
+        const nrm = new THREE.Vector3(0, Math.cos(th), Math.sin(th));
+        const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), nrm);
+        const at = new THREE.Vector3(ax, ay, az).addScaledVector(nrm, rr);
+        parts.add(ring(size, size * 0.3, { radial: 5, tubular: 12 }), shade(base, -0.04), { matrix: new THREE.Matrix4().compose(at.clone().addScaledVector(nrm, -0.004), q, new THREE.Vector3(1, 1, 1.25)) });
+        parts.add(sphere(size * 0.95, 8, 5), hole, { matrix: new THREE.Matrix4().compose(at.clone().addScaledVector(nrm, -0.012), q, new THREE.Vector3(1, 0.35, 1.25)) });
       };
       const spots = {};
       if (variant === 'log') {
         const R = 0.11 + Math.min(0.03, L * 0.012);
-        const flip = r.sign();
-        const pts = [[-L / 2, R * 1.12, 0], [-L / 4, R * 1.04, r.float(-0.05, 0.05)], [0, R, r.float(-0.05, 0.05)], [L / 4, R * 0.98, r.float(-0.05, 0.05)], [L / 2, R * 0.92, 0]].map(([x, y, z]) => [x * flip, y, z]);
-        const rad = (u, a) => R * (1 + 0.32 * Math.pow(smooth(0.18, 0, u), 1.4) * (0.75 + 0.25 * Math.cos(a * 3))) * (0.92 + 0.06 * Math.sin(u * 9 + o)) * (1 + 0.07 * noise3(u * 5 + o, Math.cos(a) * 1.3, Math.sin(a) * 1.3));
-        addPainted(parts, taper(pts, rad, { segments: 20, radial: 12, capScale: 0.45 }), base, undefined, painter(L / 2 - 0.004));
-        // knots and stubs of old branches
-        for (const [u, side] of [[0.38, 1], [0.66, -1]]) {
-          const x = lerp(-L / 2, L / 2, u) * flip, a = side > 0 ? 0.6 : -0.9;
-          parts.add(sphere(0.034, 8, 6), knot, { at: [x, R + Math.sin(a) * R * 0.98, Math.cos(a) * R * 0.98 * side], scale: [1, 0.7, 1] });
-        }
-        parts.add(taper([[L * 0.12 * flip, R * 1.7, 0.04], [(L * 0.12 + 0.07) * flip, R * 2.5, 0.1]], [0.04, 0.026], { segments: 3, radial: 7, capScale: 0.5 }), base);
-        parts.add(taper([[-L * 0.25 * flip, R * 0.9, -R * 0.8], [-L * 0.28 * flip, R * 0.7, -R * 2.0]], [0.036, 0.022], { segments: 3, radial: 7, capScale: 0.5 }), base);
+        const t = trunk(L, (u, th) => R
+          * (1 + 0.3 * Math.pow(smooth(0.2, 0, u), 1.4) * (0.72 + 0.28 * Math.cos(th * 3 + o)))
+          * (1 - 0.24 * smooth(0.25, 1, u))
+          * (0.94 + 0.06 * Math.sin(u * 9 + o))
+          * (1 + 0.1 * noise3(u * 4 + o, Math.cos(th) * 1.2, Math.sin(th) * 1.2)));
+        knotHole(t, 0.38, 0.55, 0.038);
+        knotHole(t, 0.67, -1.05, 0.03);
+        // stubs of old branches, worn to rounded nubs
+        const stub = (u, th, len, rs) => {
+          const [ax, ay, az] = t.axis(u), rr = t.rad(u, th);
+          const nrm = [0, Math.cos(th), Math.sin(th)];
+          const a = [ax, ay + nrm[1] * rr * 0.6, az + nrm[2] * rr * 0.6];
+          const b = [ax + flip * len * 0.35, ay + nrm[1] * (rr + len), az + nrm[2] * (rr + len)];
+          addPainted(parts, taper([a, b], [rs, rs * 0.7], { segments: 3, radial: 8, capScale: 0.5 }), base, undefined, (c, x, y, z) => woodColor(c, x, y, z, 0.5, 0));
+        };
+        stub(0.56, 0.2, 0.09, 0.036);
+        stub(0.27, 2.2, 0.07, 0.032);
+        const top = (u) => +(t.axis(u)[1] + t.rad(u, 0) - 0.012).toFixed(3);
         if (L >= 1.0) {
-          spots.left = spot([L * 0.22, 2 * R - 0.01, 0.0], 0, 'sit');
-          spots.right = spot([-L * 0.22, 2 * R - 0.01, 0.0], 0, 'sit');
-        } else spots.seat = spot([0, 2 * R - 0.01, 0.0], 0, 'sit');
+          spots.left = spot([+(L * 0.22).toFixed(3), top(0.5 + 0.22 * flip), 0.0], 0, 'sit');
+          spots.right = spot([+(-L * 0.22).toFixed(3), top(0.5 - 0.22 * flip), 0.0], 0, 'sit');
+        } else spots.seat = spot([0, top(0.5), 0.0], 0, 'sit');
         spots.front = spot([0, 0, 0.6], 180, 'stand');
         return finish(parts.build('driftwood'), { footprint: { w: L + 0.1, d: R * 2 + 0.3 }, spots });
       }
-      // a forked branch
+      // a forked branch: a twisting main limb that thins out, a side fork and a twig
       const R = 0.058;
-      const main = [[-L / 2, R, 0], [-L / 6, R * 0.95, 0.06], [L / 6, R * 0.85, -0.04], [L / 2, R * 0.7, 0.03]];
-      addPainted(parts, taper(main, (u, a) => R * (1 - 0.45 * u) * (1 + 0.06 * noise3(u * 6 + o, Math.cos(a), Math.sin(a))), { segments: 14, radial: 8, capScale: 0.5 }), base, undefined, painter(0));
-      addPainted(parts, taper([[-L * 0.1, R * 0.9, 0.04], [L * 0.05, R * 0.8, 0.22], [L * 0.22, R * 0.72, 0.36]], (u) => R * (0.72 - 0.35 * u), { segments: 8, radial: 7, capScale: 0.5 }), base, undefined, painter(0));
-      addPainted(parts, taper([[L * 0.2, R * 0.72, -0.02], [L * 0.3, R * 0.68, -0.19]], (u) => R * (0.58 - 0.25 * u), { segments: 5, radial: 6, capScale: 0.5 }), base, undefined, painter(0));
+      const t = trunk(L, (u, th) => R * (1 - 0.45 * u) * (1 + 0.07 * noise3(u * 6 + o, Math.cos(th), Math.sin(th))) * (1 + 0.15 * Math.pow(smooth(0.12, 0, u), 1.5)), { segments: 14, grooves: 4, groove: 0.06, wander: 0.05 });
+      const limb = (pts, r0, r1, seg) => addPainted(parts, taper(pts, (u) => lerp(r0, r1, u), { segments: seg, radial: 7, capScale: 0.5 }), base, undefined, (c, x, y, z) => woodColor(c, x, y, z, 0.4, 0));
+      const at = (u, dz = 0) => { const [x, y, z] = t.axis(u); return [x, y, z + dz]; };
+      const fork = at(0.42);
+      limb([fork, [fork[0] + flip * L * 0.12, fork[1] - 0.004, fork[2] + 0.2], [fork[0] + flip * L * 0.28, fork[1] - 0.012, fork[2] + 0.36]], R * 0.68, R * 0.34, 8);
+      const twig = at(0.7);
+      limb([twig, [twig[0] + flip * L * 0.08, twig[1] + 0.01, twig[2] - 0.17]], R * 0.45, R * 0.26, 4);
+      knotHole(t, 0.25, 0.4, 0.022);
       spots.front = spot([0, 0, 0.6], 180, 'stand');
-      return finish(parts.build('driftwood'), { footprint: { w: L + 0.1, d: 0.6 }, spots });
+      return finish(parts.build('driftwood'), { footprint: { w: L + 0.1, d: 0.7 }, spots });
     },
   },
 
@@ -1744,7 +1850,7 @@ export const WATERSIDE = {
   'held-umbrella': {
     ...HELD,
     label: 'Umbrella (held)',
-    about: 'An open umbrella held up over the head (it stays upright while you walk), tipped a little to the side so it clears the hair. A plain canopy, stripes or polka dots.',
+    about: 'An open umbrella held up over the head; it stays upright while you walk. The hand hangs at the side, so the shaft leans out from the fist just enough to clear the hair, and the big canopy sits level over the whole head. A plain canopy, stripes or polka dots.',
     params: {
       color: { default: 'red', type: 'color', about: 'canopy color' },
       pattern: { default: 'plain', options: ['plain', 'stripes', 'dots'], about: 'canopy pattern' },
@@ -1753,24 +1859,31 @@ export const WATERSIDE = {
     build(p) {
       const col = colorOr(p.color, NAMED.red);
       const pattern = oneOf(p.pattern, ['plain', 'stripes', 'dots'], 'plain');
-      const light2 = '#f6f1e7';
+      const light2 = '#f6f1e7', steel = '#c9c3b6';
       const parts = new Parts();
-      const sx = -0.034, H = 0.9, R = 0.56, dome = 0.17, panels = 8;
-      // a hooked handle under the fist and the shaft up past the shoulder
-      parts.add(taper([[sx, 0.05, 0], [sx, -0.045, 0], [sx + 0.012, -0.08, 0], [sx + 0.04, -0.093, 0], [sx + 0.066, -0.08, 0], [sx + 0.072, -0.058, 0]], [0.016, 0.014], { segments: 14, radial: 7 }), PALETTE.woodDark);
-      parts.add(roundCyl(0.0095, H - dome + 0.02, { bevel: 0.004, segments: 7, steps: 1 }), '#c9c3b6', { at: [sx, 0.04, 0] });
+      // The shaft runs up the hand frame's Y through the outer side of the fist and the hold leans
+      // it out by LEAN (clearing a bob's widest point); the canopy is built round its apex and
+      // tilted back by LEAN - TILT so it sits nearly level in the world, centered over the head.
+      // A slight backward lean keeps the canopy centered over the head while the hand swings.
+      const LEAN = [-0.06, 0, 0.27], TILT = 0.03;
+      const sx = -0.055, H = 1.03, R = 0.75, dome = 0.235, panels = 8;
+      const level = new THREE.Quaternion().setFromEuler(new THREE.Euler(...LEAN)).invert().multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, TILT)));
+      const C2H = new THREE.Matrix4().compose(new THREE.Vector3(sx, H, 0), level, new THREE.Vector3(1, 1, 1));
+      const onCanopy = (x, y, z) => new THREE.Vector3(x, y, z).applyMatrix4(C2H);
+      // a hooked handle under the fist and the shaft up to the canopy's apex
+      parts.add(taper([[sx, 0.05, 0], [sx, -0.045, 0], [sx + 0.012, -0.08, 0], [sx + 0.04, -0.093, 0], [sx + 0.066, -0.08, 0], [sx + 0.072, -0.058, 0]], [0.016, 0.014], { segments: 12, radial: 7 }), PALETTE.woodDark);
+      parts.add(roundCyl(0.0095, H - 0.03, { bevel: 0.004, segments: 7, steps: 1 }), steel, { at: [sx, 0.04, 0] });
       // the canopy: panels sagging between ribs, with a light trim round the rim
       const rows = [], cols = panels * 3;
-      const fs = [0.04, 0.22, 0.42, 0.62, 0.8, 0.93, 1];
+      const fs = [0.04, 0.2, 0.38, 0.56, 0.72, 0.86, 0.95, 1];
+      const surf = (f, a) => {
+        const between = 1 - Math.abs(Math.cos((panels * a) / 2));
+        const rr = R * Math.sin(f * Math.PI / 2) * (1 - 0.05 * between * f);
+        return [Math.cos(a) * rr, -dome * (1 - Math.cos(f * Math.PI / 2)) - 0.035 * between * f * f, Math.sin(a) * rr];
+      };
       for (const f of fs) {
         const row = [];
-        for (let j = 0; j <= cols; j++) {
-          const a = (j / cols) * TAU;
-          const between = 1 - Math.abs(Math.cos((panels * a) / 2));
-          const rr = R * Math.sin(f * Math.PI / 2) * (1 - 0.06 * between * f);
-          const y = H - dome * (1 - Math.cos(f * Math.PI / 2)) - 0.035 * between * f * f;
-          row.push([sx + Math.cos(a) * rr, y, Math.sin(a) * rr]);
-        }
+        for (let j = 0; j <= cols; j++) row.push(onCanopy(...surf(f, (j / cols) * TAU)).toArray());
         rows.push(row);
       }
       const cloth = { slot: 'cloth', color: col, double: true };
@@ -1781,26 +1894,29 @@ export const WATERSIDE = {
         if (ringN === fs.length - 2) c.set(trim);
       }, true);
       if (pattern === 'dots') {
+        const qC = new THREE.Quaternion().setFromRotationMatrix(C2H);
         for (let k = 0; k < panels; k++) {
-          for (const [f, off] of [[0.45, 0.5], [0.85, 0]]) {
+          for (const [f, off] of [[0.42, 0.5], [0.8, 0]]) {
             const a = ((k + off) / panels) * TAU;
-            const rr = R * Math.sin(f * Math.PI / 2) * 0.985, y = H - dome * (1 - Math.cos(f * Math.PI / 2)) - (off ? 0.02 : 0.012) * f;
+            const [x, y, z] = surf(f, a);
             const n = new THREE.Vector3(Math.cos(a) * Math.sin(f * Math.PI / 2) * 0.55, 1, Math.sin(a) * Math.sin(f * Math.PI / 2) * 0.55).normalize();
-            const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), n);
-            parts.add(cyl(0.045, 0.006, { segments: 10 }), { ...cloth, color: light2 }, { matrix: new THREE.Matrix4().compose(new THREE.Vector3(sx + Math.cos(a) * rr, y + 0.004, Math.sin(a) * rr), q, new THREE.Vector3(1, 1, 1)) });
+            const q = qC.clone().multiply(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), n));
+            parts.add(cyl(0.055, 0.006, { segments: 10 }), { ...cloth, color: light2 }, { matrix: new THREE.Matrix4().compose(onCanopy(x * 0.985, y + 0.004, z * 0.985), q, new THREE.Vector3(1, 1, 1)) });
           }
         }
       }
-      // tip, top knob and the rib ends
-      parts.add(sphere(0.022, 8, 6), PALETTE.woodDark, { at: [sx, H + 0.02, 0] });
+      // tip knob, rib ends round the rim, and the struts from the runner on the shaft
+      parts.add(sphere(0.024, 8, 6), PALETTE.woodDark, { at: onCanopy(0, 0.016, 0).toArray() });
+      const runnerY = H - dome - 0.2;
       for (let k = 0; k < panels; k++) {
         const a = (k / panels) * TAU;
-        parts.add(sphere(0.011, 6, 4), '#c9c3b6', { at: [sx + Math.cos(a) * R, H - dome - 0.004, Math.sin(a) * R] });
-        parts.add(stick([sx, H - dome - 0.2, 0], [sx + Math.cos(a) * R * 0.5, H - dome * (1 - Math.cos(0.5 * Math.PI / 2)) - 0.02, Math.sin(a) * R * 0.5], 0.0045, { segments: 4 }), '#c9c3b6');
+        parts.add(sphere(0.012, 6, 4), steel, { at: onCanopy(Math.cos(a) * R, -dome - 0.004, Math.sin(a) * R).toArray() });
+        const rib = onCanopy(...surf(0.5, a)).add(new THREE.Vector3(0, -0.012, 0));
+        parts.add(stick([sx, runnerY, 0], rib.toArray(), 0.0045, { segments: 4 }), steel);
       }
-      parts.add(roundCyl(0.016, 0.03, { bevel: 0.006, segments: 8, steps: 1 }), '#c9c3b6', { at: [sx, H - dome - 0.215, 0] });
+      parts.add(roundCyl(0.016, 0.03, { bevel: 0.006, segments: 8, steps: 1 }), steel, { at: [sx, runnerY - 0.015, 0] });
       const g = parts.build('held-umbrella');
-      return finish(g, { footprint: { r: 0.1 }, spots: {}, tick: holdTick(g, { upright: 1, lean: [0, 0, 0.3] }) });
+      return finish(g, { footprint: { r: 0.1 }, spots: {}, tick: holdTick(g, { upright: 1, lean: LEAN }) });
     },
   },
 
@@ -2146,7 +2262,7 @@ export const WATERSIDE = {
   'held-shovel': {
     ...HELD,
     label: 'Shovel (held)',
-    about: 'A garden shovel carried at your side on a slant: blade down in front, the T grip up behind the arm. A painted collar and grip.',
+    about: 'A garden shovel carried at your side on a gentle slant: gripped near the blade, the blade low in front (it stays clear of the ground walking and running), the T grip up behind the arm. A painted collar and grip.',
     params: {
       color: { default: 'red', type: 'color', about: 'collar and grip color' },
     },
@@ -2154,21 +2270,24 @@ export const WATERSIDE = {
     build(p) {
       const col = colorOr(p.color, NAMED.red);
       const parts = new Parts();
-      const d = new THREE.Vector3(-0.07, -0.56, 0.83).normalize();
+      // gripped a short way above the collar, sloping about 22 degrees: the blade's tip hangs
+      // about 0.13 below the fist, so a hanging hand keeps it well off the ground
+      const d = new THREE.Vector3(-0.06, -0.38, 0.92).normalize();
       const side = new THREE.Vector3().crossVectors(d, new THREE.Vector3(0, 1, 0)).normalize();
       const up = new THREE.Vector3().crossVectors(side, d).normalize();
       const at = (k) => d.clone().multiplyScalar(k).toArray();
-      parts.add(taper([at(-0.25), at(0.27)], [0.016, 0.017], { segments: 3, radial: 8 }), PALETTE.woodLight);
+      parts.add(taper([at(-0.36), at(0.15)], [0.016, 0.017], { segments: 3, radial: 8 }), PALETTE.woodLight);
       // T grip at the top end
-      const gEnd = d.clone().multiplyScalar(-0.255);
+      const gEnd = d.clone().multiplyScalar(-0.365);
       parts.add(stick(gEnd.clone().addScaledVector(side, -0.042).toArray(), gEnd.clone().addScaledVector(side, 0.042).toArray(), 0.017, { segments: 8 }), col);
       // collar and blade
-      parts.add(stick(at(0.25), at(0.305), 0.022, { top: 0.026, segments: 10 }), col);
+      parts.add(stick(at(0.13), at(0.185), 0.022, { top: 0.026, segments: 10 }), col);
       const blade = extrude([[-0.05, 0], [0.05, 0], [0.056, 0.07], [0.042, 0.11], [0, 0.13], [-0.042, 0.11], [-0.056, 0.07]], 0.006, { bevel: 0.006, bevelSegments: 1, curveSegments: 4 });
-      const basisM = new THREE.Matrix4().makeBasis(side, d, up.clone().negate()).setPosition(...at(0.3));
+      const basisM = new THREE.Matrix4().makeBasis(side, d, up.clone().negate()).setPosition(...at(0.18));
       addPainted(parts, blade, { slot: 'solid', color: '#c3ccd3' }, { matrix: basisM.clone().multiply(xform([0, 0, 0], [0.1, 0, 0])) }, (c, x, y) => { if (y > 0.095) c.set('#e6ebee'); });
       const g = parts.build('held-shovel');
-      return finish(g, { footprint: { r: 0.12 }, spots: {}, tick: holdTick(g, { upright: 0.6 }) });
+      // mostly level with the holder, so the arm swing barely tips the blade toward the ground
+      return finish(g, { footprint: { r: 0.12 }, spots: {}, tick: holdTick(g, { upright: 0.85 }) });
     },
   },
 
@@ -2207,7 +2326,7 @@ export const WATERSIDE = {
   'held-axe': {
     ...HELD,
     label: 'Axe (held)',
-    about: 'A chunky woodcutter’s axe held near the end of its handle, head forward and up, blade facing down.',
+    about: 'A chunky woodcutter’s axe held near the end of its handle, carried low and a little out to the side: the head stays about chest high, clear of the face, even when running. The blade faces down.',
     params: {
       color: { default: 'red', type: 'color', about: 'painted band on the handle' },
     },
@@ -2215,7 +2334,8 @@ export const WATERSIDE = {
     build(p) {
       const col = colorOr(p.color, NAMED.red);
       const parts = new Parts();
-      const d = new THREE.Vector3(-0.08, 0.45, 0.89).normalize();
+      // the handle points forward, a little up and out to the side (-X, away from the body)
+      const d = new THREE.Vector3(-0.3, 0.3, 0.9).normalize();
       const v = new THREE.Vector3(0, 1, 0).addScaledVector(d, -d.y).normalize();
       const b = v.clone().negate();
       const x = new THREE.Vector3().crossVectors(d, b);
@@ -2235,7 +2355,7 @@ export const WATERSIDE = {
         else if (py < 0.015) c.set(col);
       });
       const g = parts.build('held-axe');
-      return finish(g, { footprint: { r: 0.12 }, spots: {}, tick: holdTick(g, { upright: 0.6 }) });
+      return finish(g, { footprint: { r: 0.12 }, spots: {}, tick: holdTick(g, { upright: 0.88 }) });
     },
   },
 
