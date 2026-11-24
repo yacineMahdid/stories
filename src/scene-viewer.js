@@ -299,7 +299,7 @@ stage.onFrame = (() => {
       stage.controls.update();
       stage.focus(stage.controls.target.clone().setY(0), 30);
     }
-    window.viewer = { stage, world, director, go, view, ready: true, check: async () => (await import('./world/check.js')).checkStory(world) };
+    window.viewer = { stage, world, director, go, view, ready: true, play: startPlay, stop: stopPlay, check: async () => (await import('./world/check.js')).checkStory(world) };
     if (q.get('still') === '1') {
       for (let i = 0; i < 4; i++) stage.step(1 / 30);
       stage.paused = true;
