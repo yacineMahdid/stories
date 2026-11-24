@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import {
   Parts, finish, spot, light, box, roundCyl, cyl, cone, sphere, lathe, blob, tube, extrude, ring, xform,
-  material, patchMaterial, PALETTE, SCALE, SEASONS, shade, mix, rng, noise3, signMaterial, waterMaterial, WORLD_UNIFORMS, boundsOf,
+  material, patchMaterial, PALETTE, SCALE, SEASONS, shade as kitShade, mix, rng, noise3, signMaterial, waterMaterial, WORLD_UNIFORMS, boundsOf,
 } from '../kit.js';
 
 // Prop family: village (street furniture and small props). See ../kit.js for the conventions:
@@ -19,6 +19,49 @@ const smooth = (e0, e1, x) => { const t = clamp((x - e0) / (e1 - e0), 0, 1); ret
 const fract = (x) => x - Math.floor(x);
 /** Deterministic hash in [0, 1) for painting patterns (no unseeded randomness anywhere). */
 const hash = (a, b = 0, c = 0) => fract(Math.sin(a * 127.1 + b * 311.7 + c * 74.7) * 43758.5453);
+
+/* ───────────────────────── shared look rules ───────────────────────── */
+// Kept word for word the same in every prop family (nature, buildings, village, waterside), so the
+// families agree on what a color name means, how dark a shaded color may get and how soft leaves look.
+
+/**
+ * Friendly color names in the kit's soft tones: a 'red' stall, a 'red' boat and a 'red' door match,
+ * and 'black', 'brown' or 'grey' never turn harsh.
+ */
+const SOFT_NAMES = {
+  red: PALETTE.cloth.red, blue: PALETTE.cloth.blue, green: PALETTE.cloth.green, yellow: PALETTE.cloth.yellow,
+  white: PALETTE.cloth.white, purple: PALETTE.cloth.purple, orange: PALETTE.cloth.orange, pink: PALETTE.cloth.pink,
+  teal: PALETTE.cloth.teal, cream: PALETTE.wallCream, brown: PALETTE.woodDark, tan: PALETTE.woodLight, wood: PALETTE.wood,
+  grey: '#9aa1a8', gray: '#9aa1a8', black: '#3a3a42', navy: '#3d5a8c', gold: PALETTE.gold, silver: '#c3c9d1',
+  bronze: '#a27c48', copper: PALETTE.copper, iron: PALETTE.iron, stone: PALETTE.stone, lilac: '#b9a3e3',
+  mint: '#8fd3b0', sky: '#8cc2ea', lemon: '#f5dc6e', peach: '#f4b48c', rose: '#ec8fa6', coral: '#f07a5f',
+};
+/** Any other CSS color name, softened into the kit's range: no neon, no pure black or white. */
+function softCss(name) {
+  const c = new THREE.Color(name);
+  const hsl = {};
+  c.getHSL(hsl, THREE.SRGBColorSpace);
+  c.setHSL(hsl.h, Math.min(hsl.s, 0.5), Math.min(Math.max(hsl.l, 0.2), 0.92), THREE.SRGBColorSpace);
+  return `#${c.getHexString()}`;
+}
+/**
+ * The kit's `shade` with a floor. It works in linear light, so darkening an already dark color (a dark
+ * wood, soot, a deep roof) used to clamp to pure black; now it stops at a deep tone of its own hue.
+ */
+const SHADE_FLOOR = 0.13;
+function shade(color, light = 0, opts) {
+  const out = kitShade(color, light, opts);
+  if (!(light < 0)) return out;
+  const c = new THREE.Color(out);
+  const hsl = {};
+  c.getHSL(hsl, THREE.SRGBColorSpace);
+  if (hsl.l >= SHADE_FLOOR) return out;
+  if (hsl.l < 0.005) new THREE.Color(color).getHSL(hsl, THREE.SRGBColorSpace);
+  c.setHSL(hsl.h, hsl.s, SHADE_FLOOR, THREE.SRGBColorSpace);
+  return `#${c.getHexString()}`;
+}
+/** Leaf sheen: the soft velvet of the nature family's canopies, for every other leaf, moss tuft and petal. */
+const LEAF_SHEEN = 0.28;
 
 /* ───────────────────────── params ───────────────────────── */
 
@@ -44,13 +87,8 @@ function flag(v, d) {
   return d;
 }
 const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
-/** Friendly color names, mapped to the family's soft tones. */
-const NAMED = {
-  ...PALETTE.cloth, cream: PALETTE.wallCream, brown: PALETTE.woodDark, tan: PALETTE.woodLight, wood: PALETTE.wood,
-  grey: '#9aa1a8', gray: '#9aa1a8', black: '#3a3a42', navy: '#3d5a8c', gold: PALETTE.gold, lilac: '#b9a3e3',
-  mint: '#8fd3b0', sky: '#8cc2ea', lemon: '#f5dc6e', peach: '#f4b48c', rose: '#ec8fa6', iron: PALETTE.iron,
-  stone: PALETTE.stone, copper: PALETTE.copper, silver: '#c3c9d1', bronze: '#a27c48', green: PALETTE.cloth.green,
-};
+/** Friendly color names: the shared soft tones (SOFT_NAMES above). */
+const NAMED = SOFT_NAMES;
 /** A usable color: '#rgb' / '#rrggbb', a PALETTE key ('roofRed'), a friendly name ('teal') or a CSS name. */
 function colorOr(v, d) {
   if (typeof v === 'number' && Number.isFinite(v)) return `#${new THREE.Color().setHex(v & 0xffffff).getHexString()}`;
@@ -60,7 +98,7 @@ function colorOr(v, d) {
   if (typeof PALETTE[s] === 'string') return PALETTE[s];
   const low = s.toLowerCase();
   if (NAMED[low]) return NAMED[low];
-  if (THREE.Color.NAMES && Object.prototype.hasOwnProperty.call(THREE.Color.NAMES, low)) return `#${new THREE.Color(low).getHexString()}`;
+  if (THREE.Color.NAMES && Object.prototype.hasOwnProperty.call(THREE.Color.NAMES, low)) return softCss(low);
   return d;
 }
 function textOr(v, d = '', max = 28) {
@@ -546,7 +584,7 @@ function fruitHeap(P, R, kind, { at = [0, 0, 0], rx = 0.15, rz = 0.12, r = 0.05,
   if ((kind === 'apple' || kind === 'pear') && top) {
     // a stem and a leaf on the top fruit
     P.add(cyl(r * 0.11, r * 0.55, { segments: 4 }), PALETTE.woodDark, { at: [top[0], top[1] + r * 0.8, top[2]] });
-    P.add(sphere(r * 0.38, 6, 4), { slot: 'foliage', color: '#62b356' }, { at: [top[0] + r * 0.35, top[1] + r * 1.15, top[2]], scale: [1.4, 0.4, 0.8], rot: [0, 0, 0.5] });
+    P.add(sphere(r * 0.38, 6, 4), { slot: 'foliage', sheen: LEAF_SHEEN, color: '#62b356' }, { at: [top[0] + r * 0.35, top[1] + r * 1.15, top[2]], scale: [1.4, 0.4, 0.8], rot: [0, 0, 0.5] });
   }
 }
 
@@ -1025,14 +1063,14 @@ function fish(P, R, at, color, s, yaw) {
 function bouquet(P, R, at, color, n = 7, spread = 0.1) {
   const bs = clamp(spread / 0.1, 0.8, 1.6);
   const [x0, y0, z0] = at;
-  P.add(blob(spread * 0.9, { detail: 1, amp: 0.2, seed: R.int(0, 99), squash: [1, 0.7, 1] }), { slot: 'foliage', color: '#5aa458' }, { at: [x0, y0 + spread * 0.35, z0] });
+  P.add(blob(spread * 0.9, { detail: 1, amp: 0.2, seed: R.int(0, 99), squash: [1, 0.7, 1] }), { slot: 'foliage', sheen: LEAF_SHEEN, color: '#5aa458' }, { at: [x0, y0 + spread * 0.35, z0] });
   for (let i = 0; i < n; i++) {
     const a = (i / n) * TAU + R.float(-0.3, 0.3);
     const r = i === 0 ? 0 : spread * R.float(0.45, 0.8);
     const c = shade(color, R.float(-0.05, 0.05));
     const bx = x0 + Math.cos(a) * r, bz = z0 + Math.sin(a) * r, by = y0 + spread * 0.8 + R.float(0, 0.05) - r * 0.4;
-    P.add(sphere(0.034, 5, 3), { slot: 'foliage', color: c }, { at: [bx, by, bz], scale: [bs, 0.8 * bs, bs], rot: [0, a, 0] });
-    P.add(sphere(0.014, 4, 2), { slot: 'foliage', color: '#f6d34a' }, { at: [bx, by + 0.024 * bs, bz], scale: bs });
+    P.add(sphere(0.034, 5, 3), { slot: 'foliage', sheen: LEAF_SHEEN, color: c }, { at: [bx, by, bz], scale: [bs, 0.8 * bs, bs], rot: [0, a, 0] });
+    P.add(sphere(0.014, 4, 2), { slot: 'foliage', sheen: LEAF_SHEEN, color: '#f6d34a' }, { at: [bx, by + 0.024 * bs, bz], scale: bs });
   }
 }
 
@@ -1185,6 +1223,8 @@ function buildStall(p, ctx) {
       customer: spot([0, 0, zc1 + 0.48], 180, 'stand'),
       customer2: spot([W * 0.32, 0, zc1 + 0.55], 195, 'stand'),
     },
+    // the hanging lantern lights the goods at night, like the other families' small lanterns
+    lights: [{ ...light([lx, ly + 0.02, lz], { intensity: 0.4, distance: 3.5 }), halo: 0.45 }],
     height: sign ? yA1 + 0.36 : yA0 + 0.06,
   });
 }
@@ -1469,11 +1509,22 @@ function sunflowerHead() {
   return starGeo;
 }
 
-/** A potted plant on top of soil at `at` (y = soil level), sized by `k`. */
+/**
+ * A potted plant on top of soil at `at` (y = soil level), sized by `k`. Like the window boxes,
+ * planters and flower beds of the other families it follows the season: the leaves yellow a little
+ * in autumn, and in winter the blooms are gone, leaving muted leaves, dry stems and seed heads (a
+ * cactus keeps its body). The plant has the same shape in every season.
+ */
 function plant(P, R, kind, at, color, k = 1, season = 'summer') {
   const [x0, y0, z0] = at;
-  const leaf = (x, y, z, len, yaw, tilt) => P.add(sphere(0.05, 7, 5), { slot: 'foliage', color: shade(LEAF, R.float(-0.04, 0.04)) }, { matrix: xform([x, y, z], [0, yaw, 0]).multiply(xform([0, 0, 0], [tilt, 0, 0])).multiply(xform([0, len * 0.5, 0], [0, 0, 0], [0.32 * k, len / 0.1, 0.75 * k])) });
-  const stem = (x, z, h, lean = [0, 0]) => { rod(P, [x, y0, z], [x + lean[0], y0 + h, z + lean[1]], 0.007 * k, { slot: 'foliage', color: '#4f9a4c' }, { seg: 5 }); return [x + lean[0], y0 + h, z + lean[1]]; };
+  const winter = season === 'winter', autumn = season === 'autumn';
+  const tone = (c) => (winter ? mix(c, '#8a9070', 0.6) : autumn ? mix(c, '#a89a48', 0.55) : c);
+  const leafC = tone(LEAF);
+  const stemC = winter ? '#9b8661' : tone('#4f9a4c');
+  // blooms: their arguments (and random draws) are made in every season, so the layout never shifts
+  const bloom = (...args) => { if (!winter) P.add(...args); };
+  const leaf = (x, y, z, len, yaw, tilt) => P.add(sphere(0.05, 7, 5), { slot: 'foliage', sheen: LEAF_SHEEN, color: shade(leafC, R.float(-0.04, 0.04)) }, { matrix: xform([x, y, z], [0, yaw, 0]).multiply(xform([0, 0, 0], [tilt, 0, 0])).multiply(xform([0, len * 0.5, 0], [0, 0, 0], [0.32 * k, len / 0.1, 0.75 * k])) });
+  const stem = (x, z, h, lean = [0, 0]) => { rod(P, [x, y0, z], [x + lean[0], y0 + h, z + lean[1]], 0.007 * k, { slot: 'foliage', sheen: LEAF_SHEEN, color: stemC }, { seg: 5 }); return [x + lean[0], y0 + h, z + lean[1]]; };
   if (kind === 'tulip') {
     const cup = lathe([[0, 0], [0.022, 0.006], [0.036, 0.028], [0.037, 0.05], [0.029, 0.07], [0.012, 0.062], [0, 0.058]], 10);
     for (let i = 0; i < 4; i++) leaf(x0 + R.float(-0.03, 0.03), y0, z0 + R.float(-0.03, 0.03), 0.15 * k, (i / 4) * TAU + R.float(-0.3, 0.3), 0.45);
@@ -1481,25 +1532,25 @@ function plant(P, R, kind, at, color, k = 1, season = 'summer') {
       const a = (i / 5) * TAU + R.float(-0.3, 0.3), r = i === 0 ? 0 : 0.05 * k;
       const h = (0.2 + R.float(-0.03, 0.05) + (i === 0 ? 0.05 : 0)) * k;
       const top = stem(x0 + Math.cos(a) * r * 0.5, z0 + Math.sin(a) * r * 0.5, h, [Math.cos(a) * r * 0.6, Math.sin(a) * r * 0.6]);
-      P.add(cup, { slot: 'foliage', color: shade(color, R.float(-0.05, 0.05)) }, { at: [top[0], top[1] - 0.01 * k, top[2]], scale: k });
+      bloom(cup, { slot: 'foliage', sheen: LEAF_SHEEN, color: shade(color, R.float(-0.05, 0.05)) }, { at: [top[0], top[1] - 0.01 * k, top[2]], scale: k });
     }
   } else if (kind === 'daisy') {
-    P.add(blob(0.09 * k, { detail: 1, amp: 0.18, seed: R.int(0, 99), squash: [1, 0.55, 1] }), { slot: 'foliage', color: LEAF }, { at: [x0, y0 + 0.03 * k, z0] });
+    P.add(blob(0.09 * k, { detail: 1, amp: 0.18, seed: R.int(0, 99), squash: [1, 0.55, 1] }), { slot: 'foliage', sheen: LEAF_SHEEN, color: leafC }, { at: [x0, y0 + 0.03 * k, z0] });
     for (let i = 0; i < 6; i++) {
       const a = (i / 6) * TAU + R.float(-0.2, 0.2), r = i === 0 ? 0 : 0.065 * k;
       const top = stem(x0 + Math.cos(a) * r * 0.5, z0 + Math.sin(a) * r * 0.5, (0.13 + R.float(0, 0.05)) * k, [Math.cos(a) * r * 0.5, Math.sin(a) * r * 0.5]);
       const H = xform(top, [R.float(-0.3, 0.3), R.angle(), R.float(-0.3, 0.3)], k * 1.25);
-      for (let j = 0; j < 8; j++) P.add(petalGeo(), { slot: 'foliage', color }, { matrix: H.clone().multiply(xform([0, 0, 0], [0, (j / 8) * TAU, 0])) });
-      P.add(sphere(0.017, 6, 4), { slot: 'foliage', color: '#f6c93a' }, { matrix: H.clone().multiply(xform([0, 0.008, 0], [0, 0, 0], [1, 0.6, 1])) });
+      for (let j = 0; j < 8; j++) bloom(petalGeo(), { slot: 'foliage', sheen: LEAF_SHEEN, color }, { matrix: H.clone().multiply(xform([0, 0, 0], [0, (j / 8) * TAU, 0])) });
+      bloom(sphere(0.017, 6, 4), { slot: 'foliage', sheen: LEAF_SHEEN, color: '#f6c93a' }, { matrix: H.clone().multiply(xform([0, 0.008, 0], [0, 0, 0], [1, 0.6, 1])) });
     }
   } else if (kind === 'rose') {
-    P.add(blob(0.11 * k, { detail: 2, amp: 0.16, seed: R.int(0, 99), squash: [1, 0.85, 1] }), { slot: 'foliage', color: '#4f9a4c' }, { at: [x0, y0 + 0.09 * k, z0] });
+    P.add(blob(0.11 * k, { detail: 2, amp: 0.16, seed: R.int(0, 99), squash: [1, 0.85, 1] }), { slot: 'foliage', sheen: LEAF_SHEEN, color: tone('#4f9a4c') }, { at: [x0, y0 + 0.09 * k, z0] });
     for (let i = 0; i < 8; i++) {
       const a = (i / 7) * TAU + R.float(-0.3, 0.3), up = i === 7 ? 1 : R.float(0.15, 0.75);
       const d = new THREE.Vector3(Math.cos(a) * (1 - up * 0.7), up, Math.sin(a) * (1 - up * 0.7)).normalize().multiplyScalar(0.11 * k);
       const c = shade(color, R.float(-0.05, 0.04));
-      P.add(sphere(0.036 * k, 8, 6), { slot: 'foliage', color: c }, { at: [x0 + d.x, y0 + 0.09 * k + d.y, z0 + d.z], scale: [1, 0.85, 1] });
-      P.add(sphere(0.016 * k, 6, 4), { slot: 'foliage', color: shade(c, -0.1) }, { at: [x0 + d.x * 1.25, y0 + 0.09 * k + d.y * 1.25, z0 + d.z * 1.25] });
+      bloom(sphere(0.036 * k, 8, 6), { slot: 'foliage', sheen: LEAF_SHEEN, color: c }, { at: [x0 + d.x, y0 + 0.09 * k + d.y, z0 + d.z], scale: [1, 0.85, 1] });
+      bloom(sphere(0.016 * k, 6, 4), { slot: 'foliage', sheen: LEAF_SHEEN, color: shade(c, -0.1) }, { at: [x0 + d.x * 1.25, y0 + 0.09 * k + d.y * 1.25, z0 + d.z * 1.25] });
     }
   } else if (kind === 'sunflower') {
     for (let i = 0; i < 2; i++) {
@@ -1510,30 +1561,31 @@ function plant(P, R, kind, at, color, k = 1, season = 'summer') {
       leaf(bx + lean[0] * 0.45, y0 + h * 0.45, z0 + lean[1] * 0.45, 0.12 * k, i * 2 + 0.5, 1.0);
       const yaw = i ? 0.5 : -0.3;
       const M = xform(top, [-0.35, yaw, 0], k * (i ? 0.85 : 1));
-      P.add(sunflowerHead(), { slot: 'foliage', color }, { matrix: M });
-      P.add(roundCyl(0.042, 0.022, { segments: 10, steps: 1, bevel: 0.01 }), { slot: 'foliage', color: '#8a5a35' }, { matrix: M.clone().multiply(xform([0, 0, 0.002], [Math.PI / 2, 0, 0])) });
+      bloom(sunflowerHead(), { slot: 'foliage', sheen: LEAF_SHEEN, color }, { matrix: M });
+      // the seed head stays through winter, dried
+      P.add(roundCyl(0.042, 0.022, { segments: 10, steps: 1, bevel: 0.01 }), { slot: 'foliage', sheen: LEAF_SHEEN, color: winter ? '#6d5236' : '#8a5a35' }, { matrix: M.clone().multiply(xform([0, 0, 0.002], [Math.PI / 2, 0, 0])) });
     }
   } else if (kind === 'lavender') {
-    P.add(blob(0.07 * k, { detail: 1, amp: 0.2, seed: R.int(0, 99), squash: [1.2, 0.5, 1.2] }), { slot: 'foliage', color: '#7fae7a' }, { at: [x0, y0 + 0.02 * k, z0] });
+    P.add(blob(0.07 * k, { detail: 1, amp: 0.2, seed: R.int(0, 99), squash: [1.2, 0.5, 1.2] }), { slot: 'foliage', sheen: LEAF_SHEEN, color: tone('#7fae7a') }, { at: [x0, y0 + 0.02 * k, z0] });
     for (let i = 0; i < 9; i++) {
       const a = (i / 9) * TAU + R.float(-0.2, 0.2), r = i === 0 ? 0 : 0.05 * k;
       const h = (0.2 + R.float(-0.03, 0.04)) * k;
       const top = stem(x0 + Math.cos(a) * r * 0.4, z0 + Math.sin(a) * r * 0.4, h, [Math.cos(a) * r, Math.sin(a) * r]);
-      P.add(sphere(0.02, 6, 4), { slot: 'foliage', color: shade(color, R.float(-0.05, 0.05)) }, { at: [top[0], top[1] + 0.02 * k, top[2]], scale: [k, 2.6 * k, k] });
+      bloom(sphere(0.02, 6, 4), { slot: 'foliage', sheen: LEAF_SHEEN, color: shade(color, R.float(-0.05, 0.05)) }, { at: [top[0], top[1] + 0.02 * k, top[2]], scale: [k, 2.6 * k, k] });
     }
   } else if (kind === 'fern') {
     for (let i = 0; i < 9; i++) {
       const a = (i / 9) * TAU + R.float(-0.2, 0.2);
       leaf(x0, y0, z0, (0.2 + R.float(-0.03, 0.03)) * k, a, 0.75 + R.float(-0.1, 0.15));
     }
-    P.add(blob(0.07 * k, { detail: 1, amp: 0.2, seed: R.int(0, 99) }), { slot: 'foliage', color: '#4c9447' }, { at: [x0, y0 + 0.06 * k, z0] });
+    P.add(blob(0.07 * k, { detail: 1, amp: 0.2, seed: R.int(0, 99) }), { slot: 'foliage', sheen: LEAF_SHEEN, color: tone('#4c9447') }, { at: [x0, y0 + 0.06 * k, z0] });
   } else if (kind === 'cactus') {
     const green = '#5f9e5a';
     const body = lathe([[0, 0], [0.06, 0.01], [0.075, 0.06], [0.075, 0.15], [0.06, 0.2], [0.03, 0.225], [0, 0.23]], 12);
     paint(P, body, green, { at: [x0, y0 - 0.01, z0], scale: k }, (c, x, y, z) => { if (Math.floor(fract(0.25 - Math.atan2(z - z0, x - x0) / TAU) * 12) % 2) c.set(shade(green, -0.07)); }, { flat: true });
     P.add(lathe([[0, 0], [0.03, 0.01], [0.035, 0.05], [0.028, 0.08], [0, 0.085]], 8), green, { at: [x0 + 0.075 * k, y0 + 0.08 * k, z0], rot: [0, 0, -0.5], scale: k });
-    P.add(daisyHead(), { slot: 'foliage', color }, { at: [x0, y0 + 0.22 * k, z0], scale: 0.9 * k });
-    P.add(sphere(0.014, 6, 4), { slot: 'foliage', color: '#f6c93a' }, { at: [x0, y0 + 0.228 * k, z0], scale: k });
+    bloom(daisyHead(), { slot: 'foliage', sheen: LEAF_SHEEN, color }, { at: [x0, y0 + 0.22 * k, z0], scale: 0.9 * k });
+    bloom(sphere(0.014, 6, 4), { slot: 'foliage', sheen: LEAF_SHEEN, color: '#f6c93a' }, { at: [x0, y0 + 0.228 * k, z0], scale: k });
   }
 }
 
@@ -1624,7 +1676,7 @@ function buildBasket(p, ctx) {
       const a = (i / 3) * TAU + 0.4;
       const M = xform([Math.cos(a) * 0.06 * k, top + 0.05 * k, Math.sin(a) * 0.06 * k], [0.9, a, 0], k);
       P.add(cone(0.028, 0.18, 8).rotateX(Math.PI).translate(0, 0.18, 0), '#f08a2e', { matrix: M });
-      P.add(sphere(0.03, 6, 4), { slot: 'foliage', color: '#5fb04f' }, { matrix: M.clone().multiply(xform([0, 0.2, 0], [0, 0, 0], [0.8, 1.4, 0.8])) });
+      P.add(sphere(0.03, 6, 4), { slot: 'foliage', sheen: LEAF_SHEEN, color: '#5fb04f' }, { matrix: M.clone().multiply(xform([0, 0.2, 0], [0, 0, 0], [0.8, 1.4, 0.8])) });
     }
     P.add(blob(0.065 * k, { detail: 1, amp: 0.15, seed: 9 }), '#8fcf6c', { at: [0.05 * k, top + 0.07 * k, -0.07 * k] });
   } else if (produce === 'mushrooms') {

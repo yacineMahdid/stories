@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
   Parts, finish, spot, light, roundBox, box, roundCyl, cyl, cone, sphere, lathe, blob, tube, extrude, ring, xform, material,
-  PALETTE, SEASONS, shade, mix, rng, noise3,
+  PALETTE, SEASONS, shade as kitShade, mix, rng, noise3,
 } from '../kit.js';
 
 // Prop family: waterside. Docks, boats, buoys, lily pads, beach things, and the hand props
@@ -15,6 +15,49 @@ const TAU = Math.PI * 2;
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 const smooth = (e0, e1, x) => { const t = clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };
+
+/* ───────────────────────── shared look rules ───────────────────────── */
+// Kept word for word the same in every prop family (nature, buildings, village, waterside), so the
+// families agree on what a color name means, how dark a shaded color may get and how soft leaves look.
+
+/**
+ * Friendly color names in the kit's soft tones: a 'red' stall, a 'red' boat and a 'red' door match,
+ * and 'black', 'brown' or 'grey' never turn harsh.
+ */
+const SOFT_NAMES = {
+  red: PALETTE.cloth.red, blue: PALETTE.cloth.blue, green: PALETTE.cloth.green, yellow: PALETTE.cloth.yellow,
+  white: PALETTE.cloth.white, purple: PALETTE.cloth.purple, orange: PALETTE.cloth.orange, pink: PALETTE.cloth.pink,
+  teal: PALETTE.cloth.teal, cream: PALETTE.wallCream, brown: PALETTE.woodDark, tan: PALETTE.woodLight, wood: PALETTE.wood,
+  grey: '#9aa1a8', gray: '#9aa1a8', black: '#3a3a42', navy: '#3d5a8c', gold: PALETTE.gold, silver: '#c3c9d1',
+  bronze: '#a27c48', copper: PALETTE.copper, iron: PALETTE.iron, stone: PALETTE.stone, lilac: '#b9a3e3',
+  mint: '#8fd3b0', sky: '#8cc2ea', lemon: '#f5dc6e', peach: '#f4b48c', rose: '#ec8fa6', coral: '#f07a5f',
+};
+/** Any other CSS color name, softened into the kit's range: no neon, no pure black or white. */
+function softCss(name) {
+  const c = new THREE.Color(name);
+  const hsl = {};
+  c.getHSL(hsl, THREE.SRGBColorSpace);
+  c.setHSL(hsl.h, Math.min(hsl.s, 0.5), Math.min(Math.max(hsl.l, 0.2), 0.92), THREE.SRGBColorSpace);
+  return `#${c.getHexString()}`;
+}
+/**
+ * The kit's `shade` with a floor. It works in linear light, so darkening an already dark color (a dark
+ * wood, soot, a deep roof) used to clamp to pure black; now it stops at a deep tone of its own hue.
+ */
+const SHADE_FLOOR = 0.13;
+function shade(color, light = 0, opts) {
+  const out = kitShade(color, light, opts);
+  if (!(light < 0)) return out;
+  const c = new THREE.Color(out);
+  const hsl = {};
+  c.getHSL(hsl, THREE.SRGBColorSpace);
+  if (hsl.l >= SHADE_FLOOR) return out;
+  if (hsl.l < 0.005) new THREE.Color(color).getHSL(hsl, THREE.SRGBColorSpace);
+  c.setHSL(hsl.h, hsl.s, SHADE_FLOOR, THREE.SRGBColorSpace);
+  return `#${c.getHexString()}`;
+}
+/** Leaf sheen: the soft velvet of the nature family's canopies, for every other leaf, moss tuft and petal. */
+const LEAF_SHEEN = 0.28;
 
 /* ───────────────────────── params ───────────────────────── */
 
@@ -40,18 +83,17 @@ function oneOf(v, options, d) {
   return options.includes(s) ? s : d;
 }
 const HEX = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;
-/** Friendly color names, in the family's soft saturated tones. */
-const NAMED = {
-  red: '#e0574c', coral: '#f07a5f', orange: '#f0913f', yellow: '#f5cb4a', lemon: '#f7e07a', green: '#5fae63',
-  mint: '#7fd0a6', teal: '#3fa6a2', blue: '#4f8fd0', sky: '#7cbbe6', navy: '#3d5e9e', purple: '#9a76cc',
-  lilac: '#bfa0e6', pink: '#f29cbc', rose: '#e8728f', white: '#f6f1e7', cream: '#f4e7cc', brown: '#9a6a44',
-  black: '#4a4550', grey: '#a9a49b', gray: '#a9a49b', gold: '#e0b04a',
-};
+/** Friendly color names: the shared soft tones (SOFT_NAMES above). */
+const NAMED = SOFT_NAMES;
+/** A color param: a friendly name, '#rgb' / '#rrggbb', a PALETTE key ('woodLight') or a CSS name (softened). */
 function colorOr(v, d) {
   if (typeof v !== 'string') return d;
-  const s = v.trim().toLowerCase();
+  const t = v.trim();
+  const s = t.toLowerCase();
   if (NAMED[s]) return NAMED[s];
   if (HEX.test(s)) return s;
+  if (typeof PALETTE[t] === 'string') return PALETTE[t];
+  if (THREE.Color.NAMES && Object.prototype.hasOwnProperty.call(THREE.Color.NAMES, s)) return softCss(s);
   return d;
 }
 const seasonOf = (ctx) => (SEASONS.includes(ctx?.season) ? ctx.season : 'summer');
@@ -388,7 +430,7 @@ function addLily(parts, at, color, { scale = 1, bud = false } = {}) {
   };
   if (bud) {
     ringOf(5, 0.05, 0.026, 1.25, 0, 0.0);
-    parts.add(sphere(0.03, 8, 6), { slot: 'foliage', color: '#6fae55' }, { at: [cx, cy + 0.012 * scale, cz], scale: [scale, scale * 0.6, scale] });
+    parts.add(sphere(0.03, 8, 6), { slot: 'foliage', sheen: LEAF_SHEEN, color: '#6fae55' }, { at: [cx, cy + 0.012 * scale, cz], scale: [scale, scale * 0.6, scale] });
     return;
   }
   ringOf(8, 0.075, 0.034, 0.22, 0, 0.0);
@@ -975,7 +1017,7 @@ export const WATERSIDE = {
           const len = r.float(0.06, 0.11);
           boat.add(box(len, 0.012, 0.03), '#b2a895', { at: [sideX + hx * 0.01, hy + Math.sin(a) * hr * 0.6, hz + Math.cos(a) * hr * 0.95], rot: [0, hx * r.float(0.1, 0.5), a + r.float(-0.4, 0.4)] });
         }
-        const weed = { slot: 'foliage', color: '#5d8f4c', sway: 0.25 };
+        const weed = { slot: 'foliage', sheen: LEAF_SHEEN, color: '#5d8f4c', sway: 0.25 };
         for (let i = 0; i < 6; i++) {
           const t = 0.12 + i * 0.15 + r.float(-0.04, 0.04);
           const s = i % 2 ? 1 : -1;
@@ -1318,7 +1360,7 @@ export const WATERSIDE = {
         placed.push([x, z, pr]);
         const base = r.pick(tones);
         const notch = r.float(0.35, 0.6), seg = 26, step = (TAU - notch) / seg;
-        addPainted(parts, padGeo(pr, notch, seg), { slot: 'foliage', color: base, snow: false }, { at: [x, 0.004 * (i % 3), z], rot: [0, r.angle(), 0] }, (c, px, py, pz) => {
+        addPainted(parts, padGeo(pr, notch, seg), { slot: 'foliage', sheen: LEAF_SHEEN, color: base, snow: false }, { at: [x, 0.004 * (i % 3), z], rot: [0, r.angle(), 0] }, (c, px, py, pz) => {
           const d = Math.hypot(px, pz) / pr;
           let a = Math.atan2(pz, px) - notch / 2;
           a = ((a % TAU) + TAU) % TAU;
@@ -2059,7 +2101,7 @@ export const WATERSIDE = {
           parts.add(petalCup(0.04, 0.03, 5, { rows: 2, per: 3, phase: r.angle() }), { slot: 'solid', color: cols[i], double: true }, { at: [x, inside + 0.035 + (i % 2) * 0.012, z], rot: [r.float(-0.3, 0.3), 0, r.float(-0.3, 0.3)] });
           parts.add(sphere(0.012, 6, 4), '#f4c542', { at: [x, inside + 0.045 + (i % 2) * 0.012, z] });
         }
-        for (const z of [-0.08, 0.075]) parts.add(sphere(0.04, 8, 6), { slot: 'foliage', color: '#6fae55' }, { at: [0, inside + 0.015, z], scale: [0.5, 0.45, 1] });
+        for (const z of [-0.08, 0.075]) parts.add(sphere(0.04, 8, 6), { slot: 'foliage', sheen: LEAF_SHEEN, color: '#6fae55' }, { at: [0, inside + 0.015, z], scale: [0.5, 0.45, 1] });
       } else if (contents === 'bread') {
         parts.add(taper([[0.01, inside + 0.0, -0.09], [0.0, inside + 0.07, 0.03], [-0.01, inside + 0.13, 0.11]], [0.026, 0.024], { segments: 6, radial: 8 }), '#d99a4e');
         parts.add(sphere(0.05, 10, 8), '#c9853f', { at: [0, inside + 0.015, -0.03], scale: [0.85, 0.65, 1] });
@@ -2223,7 +2265,7 @@ export const WATERSIDE = {
       });
       for (let i = 0; i < 6; i++) {
         const a = (i / 6) * TAU + 0.3;
-        add(sphere(1, 6, 4), { slot: 'foliage', color: i % 2 ? '#5fae55' : '#79c062' }, [Math.cos(a) * 0.07, 0.175, Math.sin(a) * 0.07], [Math.sin(a) * 0.6, 0, -Math.cos(a) * 0.6], [0.018, 0.045, 0.01]);
+        add(sphere(1, 6, 4), { slot: 'foliage', sheen: LEAF_SHEEN, color: i % 2 ? '#5fae55' : '#79c062' }, [Math.cos(a) * 0.07, 0.175, Math.sin(a) * 0.07], [Math.sin(a) * 0.6, 0, -Math.cos(a) * 0.6], [0.018, 0.045, 0.01]);
       }
       const g = parts.build('held-bouquet');
       return finish(g, { footprint: { r: 0.12 }, spots: {}, tick: holdTick(g, { upright: 0.7 }) });
@@ -2400,7 +2442,7 @@ export const WATERSIDE = {
       }
       if (contents === 'groceries') {
         parts.add(taper([[0.008, top - 0.08, -0.05], [0.004, top + 0.02, -0.045], [-0.006, top + 0.1, -0.03]], [0.022, 0.02], { segments: 5, radial: 8 }), '#d99a4e');
-        for (let i = 0; i < 3; i++) parts.add(sphere(0.03, 8, 6), { slot: 'foliage', color: i % 2 ? '#79c062' : '#5fae55' }, { at: [r.float(-0.01, 0.01), top + 0.005 + i * 0.012, 0.03 + i * 0.012], scale: [0.7, 1.3, 0.8] });
+        for (let i = 0; i < 3; i++) parts.add(sphere(0.03, 8, 6), { slot: 'foliage', sheen: LEAF_SHEEN, color: i % 2 ? '#79c062' : '#5fae55' }, { at: [r.float(-0.01, 0.01), top + 0.005 + i * 0.012, 0.03 + i * 0.012], scale: [0.7, 1.3, 0.8] });
         parts.add(sphere(0.028, 8, 6), '#e2483f', { at: [0.0, top + 0.0, 0.0] });
       } else if (contents === 'flowers') {
         const cols = [NAMED.pink, NAMED.yellow, NAMED.white];

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
   Parts, finish, spot, light, roundBox, box, cyl, sphere, lathe, blob, ring, xform, material,
-  PALETTE, SEASONS, shade, noise3, rng,
+  PALETTE, SEASONS, shade as kitShade, noise3, rng,
 } from '../kit.js';
 
 // Prop family: nature. Trees, bushes, flowers, grass, reeds, rocks, stumps, logs, mushrooms,
@@ -19,6 +19,49 @@ const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 const smooth = (e0, e1, x) => { const t = clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };
 const fract = (x) => x - Math.floor(x);
+
+/* ───────────────────────── shared look rules ───────────────────────── */
+// Kept word for word the same in every prop family (nature, buildings, village, waterside), so the
+// families agree on what a color name means, how dark a shaded color may get and how soft leaves look.
+
+/**
+ * Friendly color names in the kit's soft tones: a 'red' stall, a 'red' boat and a 'red' door match,
+ * and 'black', 'brown' or 'grey' never turn harsh.
+ */
+const SOFT_NAMES = {
+  red: PALETTE.cloth.red, blue: PALETTE.cloth.blue, green: PALETTE.cloth.green, yellow: PALETTE.cloth.yellow,
+  white: PALETTE.cloth.white, purple: PALETTE.cloth.purple, orange: PALETTE.cloth.orange, pink: PALETTE.cloth.pink,
+  teal: PALETTE.cloth.teal, cream: PALETTE.wallCream, brown: PALETTE.woodDark, tan: PALETTE.woodLight, wood: PALETTE.wood,
+  grey: '#9aa1a8', gray: '#9aa1a8', black: '#3a3a42', navy: '#3d5a8c', gold: PALETTE.gold, silver: '#c3c9d1',
+  bronze: '#a27c48', copper: PALETTE.copper, iron: PALETTE.iron, stone: PALETTE.stone, lilac: '#b9a3e3',
+  mint: '#8fd3b0', sky: '#8cc2ea', lemon: '#f5dc6e', peach: '#f4b48c', rose: '#ec8fa6', coral: '#f07a5f',
+};
+/** Any other CSS color name, softened into the kit's range: no neon, no pure black or white. */
+function softCss(name) {
+  const c = new THREE.Color(name);
+  const hsl = {};
+  c.getHSL(hsl, THREE.SRGBColorSpace);
+  c.setHSL(hsl.h, Math.min(hsl.s, 0.5), Math.min(Math.max(hsl.l, 0.2), 0.92), THREE.SRGBColorSpace);
+  return `#${c.getHexString()}`;
+}
+/**
+ * The kit's `shade` with a floor. It works in linear light, so darkening an already dark color (a dark
+ * wood, soot, a deep roof) used to clamp to pure black; now it stops at a deep tone of its own hue.
+ */
+const SHADE_FLOOR = 0.13;
+function shade(color, light = 0, opts) {
+  const out = kitShade(color, light, opts);
+  if (!(light < 0)) return out;
+  const c = new THREE.Color(out);
+  const hsl = {};
+  c.getHSL(hsl, THREE.SRGBColorSpace);
+  if (hsl.l >= SHADE_FLOOR) return out;
+  if (hsl.l < 0.005) new THREE.Color(color).getHSL(hsl, THREE.SRGBColorSpace);
+  c.setHSL(hsl.h, hsl.s, SHADE_FLOOR, THREE.SRGBColorSpace);
+  return `#${c.getHexString()}`;
+}
+/** Leaf sheen: the soft velvet of the nature family's canopies, for every other leaf, moss tuft and petal. */
+const LEAF_SHEEN = 0.28;
 
 /* ───────────────────────── params ───────────────────────── */
 
@@ -44,13 +87,17 @@ function flag(v, d) {
   return d;
 }
 const HEX = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;
-/** A usable color string, or `d`. `named` maps friendly names (red, pink…) to the family's own tones. */
+/**
+ * A usable color string, or `d`. `named` maps friendly names (red, pink…) to the prop's own tones
+ * (flower colors); other names use the shared soft tones, and CSS names are softened.
+ */
 function colorOr(v, d, named = null) {
   if (typeof v !== 'string') return d;
   const s = v.trim().toLowerCase();
   if (named && named[s]) return named[s];
   if (HEX.test(s)) return s;
-  if (THREE.Color.NAMES && Object.prototype.hasOwnProperty.call(THREE.Color.NAMES, s)) return s;
+  if (SOFT_NAMES[s]) return SOFT_NAMES[s];
+  if (THREE.Color.NAMES && Object.prototype.hasOwnProperty.call(THREE.Color.NAMES, s)) return softCss(s);
   if (/^(rgb|hsl)a?\([\d\s.,%+-]+\)$/.test(s)) return s;
   return d;
 }
@@ -1030,7 +1077,7 @@ function cherryTree(parts, o) {
       const pr = rand(o.ctx, 'petals');
       for (let i = 0; i < 16; i++) {
         const a = pr.angle(), d = pr.float(0.3, 1.9);
-        parts.add(sphere(pr.float(0.035, 0.05), 6, 3), { slot: 'foliage', color: pr.chance(0.5) ? '#f8c2d4' : '#fbdbe5' }, { at: [Math.cos(a) * d, 0.006, Math.sin(a) * d], scale: [1, 0.15, 0.7], rot: [0, pr.angle(), 0] });
+        parts.add(sphere(pr.float(0.035, 0.05), 6, 3), { slot: 'foliage', color: pr.chance(0.5) ? '#f8c2d4' : '#fbdbe5', sheen: LEAF_SHEEN }, { at: [Math.cos(a) * d, 0.006, Math.sin(a) * d], scale: [1, 0.15, 0.7], rot: [0, pr.angle(), 0] });
       }
       // soft paler puffs of bloom half sunk in the cloud
       for (const d of spiralDirs(7, -0.3, 0.8, rand(o.ctx, 'puffs'), 0.6)) {
@@ -1894,8 +1941,8 @@ function buildFlowers(parts, ctx, { species, color, count, spread, season }) {
       const [x, z] = spots[i];
       const h = STEM_H[species] * r.float(0.6, 0.85);
       const lean = r.float(-0.04, 0.04);
-      parts.add(taper([[x, 0, z], [x + lean * 0.5, h * 0.6, z], [x + lean, h, z + 0.02]], 0.007, 0.005, { radial: 3, tip: false, segments: 2 }), { slot: 'foliage', color: brown, sway: 1.4 });
-      parts.add(blob(0.018, { detail: 0, amp: 0.2, seed: i, squash: [1, 1.3, 1] }), { slot: 'foliage', color: '#6f5a3f', sway: 1.4 }, { at: [x + lean, h + 0.012, z + 0.02] });
+      parts.add(taper([[x, 0, z], [x + lean * 0.5, h * 0.6, z], [x + lean, h, z + 0.02]], 0.007, 0.005, { radial: 3, tip: false, segments: 2 }), { slot: 'foliage', color: brown, sway: 1.4, sheen: LEAF_SHEEN });
+      parts.add(blob(0.018, { detail: 0, amp: 0.2, seed: i, squash: [1, 1.3, 1] }), { slot: 'foliage', color: '#6f5a3f', sway: 1.4, sheen: LEAF_SHEEN }, { at: [x + lean, h + 0.012, z + 0.02] });
     }
     return;
   }
@@ -1991,7 +2038,7 @@ function buildLog(parts, ctx, { L, R, moss, mushrooms, season }) {
     const top = [bx + 0.035, R * 2.36, bz - 0.11];
     for (let i = 0; i < 2; i++) {
       const a = i * Math.PI + 0.6;
-      parts.add(ribbon([top, [top[0] + Math.cos(a) * 0.06, top[1] + 0.05, top[2] + Math.sin(a) * 0.06], [top[0] + Math.cos(a) * 0.11, top[1] + 0.04, top[2] + Math.sin(a) * 0.11]], 0.05, { side: [-Math.sin(a), 0, Math.cos(a)], segments: 3 }), { slot: 'foliage', color: '#79bd57', sway: 0.15, double: true });
+      parts.add(ribbon([top, [top[0] + Math.cos(a) * 0.06, top[1] + 0.05, top[2] + Math.sin(a) * 0.06], [top[0] + Math.cos(a) * 0.11, top[1] + 0.04, top[2] + Math.sin(a) * 0.11]], 0.05, { side: [-Math.sin(a), 0, Math.cos(a)], segments: 3 }), { slot: 'foliage', color: '#79bd57', sway: 0.15, double: true, sheen: LEAF_SHEEN });
     }
   }
   if (mushrooms) mushroomCluster(parts, rand(ctx, 'log-shrooms'), { variant: 'brown', at: [x0 + 0.18, 0, R * 1.05], scale: 0.75, count: 3 });
