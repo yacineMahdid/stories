@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import {
   Parts, finish, spot, light, roundBox, box, roundCyl, cyl, cone, sphere, lathe, blob, ring, xform,
-  PALETTE, seasonal, shade, mix, noise3, signMaterial, WORLD_UNIFORMS,
+  PALETTE, SCALE, seasonal, shade, mix, noise3, signMaterial, WORLD_UNIFORMS,
 } from '../kit.js';
 
 // Prop family: buildings. Cottages, mills, barns, towers, bridges and walls in a chunky,
@@ -208,6 +208,7 @@ function hipRoofGeometry(ex, ez, yE, yR, tf) {
 /* ───────────────────────── looks ───────────────────────── */
 
 const TRIM = '#fbf4e6';
+const MOSS = { spring: '#86c46a', summer: '#69a957', autumn: '#929a4c', winter: '#7d8a6c' };
 const HOLE = '#2c2521';
 const SOOT = '#3a3330';
 function glassLook(kind) {
@@ -516,6 +517,7 @@ const STATES = ['intact', 'boarded', 'ruined', 'burnt'];
  * A `notch` { u0, u1, h } cuts a doorway; when no lintel would survive, the wall splits in two.
  */
 function crumbleWall(P, { len, t, height, rand, color, matrix, notch = null, step = [0.1, 0.22], jitter = 0.07 }) {
+  const ledges = [];
   const piece = (a0, a1, cut) => {
     if (a1 - a0 < 0.08) return;
     const tops = [];
@@ -530,6 +532,7 @@ function crumbleWall(P, { len, t, height, rand, color, matrix, notch = null, ste
     if (cut) pts.push([cut.u0, 0], [cut.u0, cut.h], [cut.u1, cut.h], [cut.u1, 0]);
     pts.push([a1, 0]);
     for (let i = tops.length - 1; i >= 0; i--) pts.push([tops[i][1], tops[i][2]], [tops[i][0], tops[i][2]]);
+    ledges.push(...tops);
     const clean = pts.filter((p, i) => {
       const q = pts[(i + pts.length - 1) % pts.length];
       return Math.abs(p[0] - q[0]) + Math.abs(p[1] - q[1]) > 1e-4;
@@ -549,6 +552,7 @@ function crumbleWall(P, { len, t, height, rand, color, matrix, notch = null, ste
     if (lowest > notch.h + 0.3) piece(0, len, notch);
     else { piece(0, notch.u0, null); piece(notch.u1, len, null); }
   } else piece(0, len, null);
+  return ledges;
 }
 
 /**
@@ -603,7 +607,7 @@ function rubble(P, rand, { count = 8, x0, x1, z0, z1, color, wood = null }) {
 
 /** Weeds and moss tufts (seasonal) for ruins. */
 function weeds(P, rand, season, spots) {
-  const leaf = season === 'winter' ? '#7d8a6c' : season === 'autumn' ? '#a39a4e' : seasonal(PALETTE.leaf, season);
+  const leaf = seasonal(MOSS, season);
   spots.forEach(([x, y, z, r = 0.14], i) => {
     P.add(blob(r, { detail: 1, amp: 0.18, seed: i * 5 + 11, squash: [1.25, 0.62, 1.1] }), { slot: 'foliage', color: shade(leaf, rand.float(-0.06, 0.04)) }, { at: [x, y + r * 0.25, z] });
   });
@@ -835,13 +839,16 @@ const HOUSE = {
     let porchSpot = null;
     let porchLamp = null;
     if (porch) {
-      const pw = Math.min(W - 0.2, 2.3), pd = 1.0, px = doorX;
+      let pa = Math.max(-W / 2 + 0.06, doorX - 1.15), pb = Math.min(W / 2 - 0.06, doorX + 1.15);
+      if (display) pb = Math.min(pb, display.x - display.w / 2 - 0.12);
+      const pw = Math.max(1.1, pb - pa), pd = 1.0, px = (pa + pb) / 2;
       const deck = 0.16, front = c + pd + 0.12;
       P.add(roundBox(pw, deck, pd, 0.03, 1), PALETTE.wood, { at: [px, 0, c + pd / 2] });
       for (let i = 1; i < 5; i++) P.add(box(pw - 0.04, 0.012, 0.014), PALETTE.woodDark, { at: [px, deck - 0.008, c + (i * pd) / 5] });
       P.add(roundBox(0.8, 0.08, 0.3, 0.025, 1), PALETTE.woodDark, { at: [px, 0, c + pd + 0.14] });
-      const s = 0.2;
-      const yAt = (z) => roof.eaveBottom - 0.05 - (z - roof.eaveZ) * s;
+      // the canopy tucks under the eave of a cottage, or sits over the ground floor of a two-storey house
+      const s = stories === 2 ? 0.3 : 0.2;
+      const yAt = stories === 2 ? (z) => 2.1 - (z - c) * s : (z) => roof.eaveBottom - 0.05 - (z - roof.eaveZ) * s;
       const y1 = yAt(front);
       for (const sx of [-1, 1]) {
         const x = px + sx * (pw / 2 - 0.08);
@@ -853,11 +860,11 @@ const HOUSE = {
       plank(P, [px - pw / 2 - 0.15, y1 - 0.06, front], [px + pw / 2 + 0.15, y1 - 0.06, front], 0.07, 0.12, trim);
       porchSpot = spot([px + pw / 2 - 0.4, deck, c + pd * 0.55], 0, 'stand');
       const lz = c + 0.55;
-      porchLamp = [px, yAt(lz) - 0.38, lz];
+      porchLamp = [doorX, yAt(lz) - 0.38, lz];
       if (state === 'intact') {
-        rod(P, [px, porchLamp[1] + 0.1, lz], [px, yAt(lz) - 0.08, lz], 0.012, METAL(), { seg: 6 });
+        rod(P, [doorX, porchLamp[1] + 0.1, lz], [doorX, yAt(lz) - 0.08, lz], 0.012, METAL(), { seg: 6 });
         P.add(sphere(0.1, 12, 10), lit ? LAMP : { slot: 'glass', color: '#e9e2cf', glowAmount: 0 }, { at: porchLamp });
-        P.add(cone(0.11, 0.07, 12), METAL(), { at: [px, porchLamp[1] + 0.06, lz] });
+        P.add(cone(0.11, 0.07, 12), METAL(), { at: [doorX, porchLamp[1] + 0.06, lz] });
       }
     }
 
@@ -999,6 +1006,7 @@ const WINDMILL = {
     sails: { default: '#f7f1e4', type: 'color', about: 'sail cloth color' },
     state: { default: 'intact', options: ['intact', 'broken'], about: 'intact (turning) or broken (snapped sails, not turning)' },
     speed: { default: 0.5, min: 0, max: 2.5, about: 'how fast the sails turn (radians per second)' },
+    lit: { default: true, about: 'windows and a door lantern glow at night' },
   },
   examples: [
     {},
@@ -1038,7 +1046,11 @@ const WINDMILL = {
     };
     P.merge(doorParts({ color: broken ? '#7d6a58' : '#7d5236', frame: trim, arch: true, glass: broken ? 'hole' : 'lit', state: broken ? 'open' : 'closed', w: 0.66, h: 1.15 }), mount(baseH));
     P.add(roundBox(1.0, 0.16, 0.42, 0.04, 1), PALETTE.stoneDark, { at: [0, 0, 1.55 * cos8 + 0.12] });
-    const win = windowParts({ w: 0.42, h: 0.42, shape: 'round', frame: trim, glass: broken ? 'hole' : 'lit', sill: false });
+    const lit = boolOr(p.lit, true) && !broken;
+    const wl = new Parts();
+    wallLantern(wl, [0, 0, 0], lit);
+    P.merge(wl, mount(1.5).multiply(xform([0.62, 0, 0])));
+    const win = windowParts({ w: 0.42, h: 0.42, shape: 'round', frame: trim, glass: broken ? 'hole' : lit ? 'lit' : 'dark', sill: false });
     P.merge(win, mount(2.45).multiply(xform([0, 0, 0])));
     P.merge(win, mount(3.55, Math.PI / 2));
     P.merge(win, mount(2.2, -Math.PI / 2));
@@ -1092,8 +1104,9 @@ const WINDMILL = {
     group.add(P.build('windmill'));
     const tick = broken || speed === 0 ? null : (t) => { spin.rotation.z = -t * speed; };
     return finish(group, {
-      footprint: { r: 1.75 },
+      footprint: { r: 1.85 },
       spots: { door: spot([0, 0, 1.55 * cos8 + 0.55], 0, 'stand') },
+      lights: lit ? [light([0.62, 1.4, 1.55 * cos8 + 0.7], { intensity: 0.55, distance: 3.5 })] : [],
       tick,
       height: hubY + L,
     });
@@ -1237,6 +1250,7 @@ const BARN = {
     trim: { default: '#f6efe2', type: 'color', about: 'trim and door braces' },
     state: { default: 'intact', options: ['intact', 'old'], about: 'intact or old (faded, patched, a door hanging)' },
     doors: { default: 'closed', options: ['closed', 'open'], about: 'big doors closed or swung open' },
+    lit: { default: true, about: 'a gooseneck lamp over the doors glows at night' },
   },
   examples: [
     {},
@@ -1328,8 +1342,14 @@ const BARN = {
       if (old && sign === -1) { ang = open ? ang : 0.14; roll = 0.07; }
       P.merge(leaf(sign), xform([hingeX, 0.25, dz + 0.04], [0, ang, roll]));
     }
-    // the sliding-door rail over the doors
+    // the sliding-door rail over the doors, a gooseneck lamp above it
     P.add(roundBox(dw + 0.9, 0.12, 0.1, 0.03, 1), trim, { at: [0, 0.25 + dh + 0.04, c + 0.05] });
+    const lit = boolOr(p.lit, true) && !old;
+    const ly0 = 0.25 + dh + 0.42;
+    const neck = [[0, ly0 - 0.1, c + 0.02], [0, ly0 + 0.14, c + 0.06], [0, ly0 + 0.2, c + 0.22], [0, ly0 + 0.08, c + 0.36]];
+    P.add(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(neck.map((q) => new THREE.Vector3(...q))), 10, 0.022, 6, false), METAL(PALETTE.iron));
+    P.add(lathe([[0, 0], [0.2, -0.02], [0.18, 0.03], [0.06, 0.1], [0, 0.11]], 14), METAL(old ? '#6f6a5e' : '#4d6b5a'), { at: [0, ly0 - 0.04, c + 0.38] });
+    P.add(sphere(0.07, 10, 6), lit ? LAMP : { slot: 'glass', color: '#e9e2cf', glowAmount: 0 }, { at: [0, ly0 - 0.06, c + 0.38], scale: [1, 0.6, 1] });
     // hay loft door, hay peeking out, a pulley beam at the peak
     const ly = 3.05, lw = 0.95, lh = 0.9;
     P.add(roundBox(lw + 0.2, lh + 0.2, 0.06, 0.03, 1), trim, { at: [0, ly - 0.1, c + 0.02] });
@@ -1381,6 +1401,7 @@ const BARN = {
     }
     group.add(P.build('barn'));
     return finish(group, {
+      lights: lit ? [light([0, ly0 - 0.25, c + 0.5], { intensity: 1.0, distance: 5 })] : [],
       footprint: { w: W + 1.8, d: D + 1.2 },
       spots: {
         door: spot([0, 0, c + 0.7], 0, 'stand'),
@@ -1476,7 +1497,7 @@ const TOWER = {
       lights = [light([0, cy + 0.7, 0], { intensity: 0.8, distance: 4 })];
       const wave = wavingFlag(group, [0.03, fy + 1.15, 0], { w: 0.78, h: 0.46, color: flagC, stripe: PALETTE.cloth.white });
       group.add(P.build('tower'));
-      return finish(group, { footprint: { r: 1.5 }, spots: { door: spot([0, 0, r0 + 0.95], 0, 'stand') }, lights, tick: wave, height: top });
+      return finish(group, { footprint: { r: 1.85 }, spots: { door: spot([0, 0, r0 + 0.95], 0, 'stand') }, lights, tick: wave, height: top });
     }
     // wizard: three wonky drums, a bent hat, stars and glowing round windows
     const drums = [[0.98, 0, 2.1], [0.9, 2.1, 2.0], [0.84, 4.1, 1.7]];
@@ -1547,7 +1568,7 @@ const TOWER = {
     const wave = wavingFlag(group, [tc[0] - 0.1, hatY + 2.85, tc[2]], { w: 0.62, h: 0.36, color: flagC, stripe: '#ffd76a' });
     lights = [light([tc[0], tc[1] + 0.9, tc[2] + tc[3] + 0.3], { color: '#d9b8ff', intensity: 0.9, distance: 4.5 })];
     group.add(P.build('tower'));
-    return finish(group, { footprint: { r: 1.4 }, spots: { door: spot([0, 0, 1.75], 0, 'stand') }, lights, tick: wave, height: hatY + 3 });
+    return finish(group, { footprint: { r: 1.5 }, spots: { door: spot([0, 0, 1.75], 0, 'stand') }, lights, tick: wave, height: hatY + 3 });
   },
 };
 
@@ -1674,7 +1695,7 @@ const LIGHTHOUSE = {
       };
     }
     return finish(group, {
-      footprint: { r: 2.1 },
+      footprint: { r: 2.35 },
       spots: {
         door: spot([0, 0, 2.15], 0, 'stand'),
         gallery: spot([0, H + 0.12, gR - 0.32], 0, 'stand'),
@@ -1695,6 +1716,7 @@ const TENT = {
     variant: { default: 'aframe', options: ['aframe', 'dome'], about: 'ridge tent or dome tent' },
     color: { default: PALETTE.cloth.orange, type: 'color', about: 'canvas color' },
     open: { default: true, about: 'door rolled open (false = zipped shut)' },
+    lit: { default: true, about: 'a lantern inside makes the canvas glow at night' },
   },
   examples: [
     {},
@@ -1706,8 +1728,16 @@ const TENT = {
     const dome = oneOf(p.variant, ['aframe', 'dome'], 'aframe') === 'dome';
     const color = colorOr(p.color, PALETTE.cloth.orange);
     const open = boolOr(p.open, true);
+    const lit = boolOr(p.lit, true);
     const P = new Parts();
-    const cloth = { slot: 'cloth', color };
+    const glowCanvas = (c, extra = {}) => (lit ? { slot: 'glass', color: c, rough: 0.9, glow: mix(color, '#ffc26e', 0.45), glowAmount: 0.36, snow: true, wet: true, ...extra } : { slot: 'cloth', color: c, ...extra });
+    const cloth = glowCanvas(color);
+    const lights = [];
+    const lantern = (at) => {
+      P.add(roundCyl(0.05, 0.11, { top: 0.06, bevel: 0.015, segments: 8, steps: 1 }), lit ? LAMP : { slot: 'glass', color: '#e9e2cf', glowAmount: 0 }, { at: [at[0], at[1] - 0.06, at[2]] });
+      P.add(cone(0.075, 0.05, 8), METAL(), { at: [at[0], at[1] + 0.05, at[2]] });
+      if (lit) lights.push(light([at[0], at[1], at[2]], { intensity: 0.5, distance: 3 }));
+    };
     const darker = shade(color, -0.1);
     const trimC = shade(color, -0.18, { sat: -0.1 });
     const rope = '#e8dcc0';
@@ -1727,7 +1757,9 @@ const TENT = {
       rod(P, [0, H + 0.02, z0 - 0.02], [0, H + 0.02, z1 + 0.02], 0.035, trimC, { seg: 8 });
       // back wall
       const tri = outlineShape([[-hw + 0.03, 0.03], [hw - 0.03, 0.03], [0, H - 0.03]]);
-      P.add(slab(tri, 0.03, { bevel: 0.01, seg: 1 }), darker, { at: [0, 0, z0 + 0.02] });
+      P.add(slab(tri, 0.03, { bevel: 0.01, seg: 1 }), glowCanvas(darker), { at: [0, 0, z0 + 0.02] });
+      rod(P, [0, H - 0.02, -0.25], [0, H - 0.22, -0.25], 0.008, METAL(), { seg: 4 });
+      lantern([0, H - 0.3, -0.25]);
       if (open) {
         // flaps rolled back to the sides and tied
         for (const s of [-1, 1]) {
@@ -1737,7 +1769,7 @@ const TENT = {
       } else {
         for (const s of [-1, 1]) {
           const flap = outlineShape([[0, 0.03], [s * (hw - 0.03), 0.03], [0, H - 0.04]]);
-          P.add(slab(flap, 0.03, { bevel: 0.01, seg: 1 }), shade(color, 0.03), { at: [s * 0.005, 0, z1 - 0.02] });
+          P.add(slab(flap, 0.03, { bevel: 0.01, seg: 1 }), glowCanvas(shade(color, 0.03)), { at: [s * 0.005, 0, z1 - 0.02] });
         }
         P.add(roundBox(0.035, H - 0.12, 0.02, 0.01, 1), trimC, { at: [0, 0.05, z1 + 0.005] });
         P.add(sphere(0.03, 6, 4), METAL(PALETTE.ironLight), { at: [0.04, 0.45, z1 + 0.02] });
@@ -1766,8 +1798,10 @@ const TENT = {
         (inDoor(cx, cy, cz) ? door : keep).push(...tri);
       }
       const mk = (arr) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(arr, 3)); g.computeVertexNormals(); return g; };
-      P.add(mk(keep), { slot: 'cloth', color, double: true });
-      if (!open) P.add(mk(door).scale(1.01, 1.0, 1.01), { slot: 'cloth', color: shade(color, 0.06), double: true });
+      P.add(mk(keep), glowCanvas(color, { double: true }));
+      if (!open) P.add(mk(door).scale(1.01, 1.0, 1.01), glowCanvas(shade(color, 0.06), { double: true }));
+      rod(P, [0, Hd - 0.02, -0.1], [0, Hd - 0.2, -0.1], 0.008, METAL(), { seg: 4 });
+      lantern([0, Hd - 0.28, -0.1]);
       // door trim following the arch on the shell
       const arch = [];
       for (let i = 0; i <= 16; i++) {
@@ -1800,6 +1834,7 @@ const TENT = {
     return finish(P.build('tent'), {
       footprint: dome ? { r: 1.75 } : { w: 2.6, d: 3.6 },
       spots,
+      lights,
     });
   },
 };
@@ -1844,6 +1879,7 @@ const HUT = {
     roof: { default: PALETTE.thatch, type: 'color', about: 'thatch color' },
     curtain: { default: PALETTE.cloth.teal, type: 'color', about: 'door curtain color' },
     stilts: { default: false, about: 'raised on stilts with a deck and a ladder' },
+    lit: { default: true, about: 'a warm glow in the doorway and windows at night' },
   },
   examples: [
     {},
@@ -1854,6 +1890,8 @@ const HUT = {
     const rand = ctx.rng;
     const walls = colorOr(p.walls, '#dcbb88'), roofC = colorOr(p.roof, PALETTE.thatch), curtain = colorOr(p.curtain, PALETTE.cloth.teal);
     const stilts = boolOr(p.stilts, false);
+    const lit = boolOr(p.lit, true);
+    const inside = lit ? { slot: 'glass', color: '#3b2f27', rough: 0.95, glow: '#ffb85c', glowAmount: 1.1 } : HOLE;
     const P = new Parts();
     const lift = stilts ? 0.8 : 0;
     const R = 1.15, Hw = 1.38;
@@ -1888,7 +1926,7 @@ const HUT = {
     for (const y of [0.42, 1.0]) P.add(ring(R + 0.03, 0.03, { radial: 4, tubular: 30 }), '#b08a55', { at: [0, lift + y, 0] });
     // doorway: a dark opening framed by poles, with a curtain tied to one side
     const dW = 0.74, dH = 1.18;
-    P.add(roundBox(dW, dH, 0.06, 0.02, 1), HOLE, { at: [0, lift + 0.02, R - 0.04] });
+    P.add(roundBox(dW, dH, 0.06, 0.02, 1), inside, { at: [0, lift + 0.02, R - 0.04] });
     for (const s of [-1, 1]) rod(P, [s * (dW / 2 + 0.05), lift, R + 0.02], [s * (dW / 2 + 0.05), lift + dH + 0.12, R + 0.02], 0.05, pole, { seg: 8 });
     rod(P, [-dW / 2 - 0.16, lift + dH + 0.06, R + 0.04], [dW / 2 + 0.16, lift + dH + 0.06, R + 0.04], 0.045, pole, { seg: 8 });
     plank(P, [-dW / 2 + 0.12, lift + dH + 0.02, R + 0.06], [-dW / 2 + 0.06, lift + 0.08, R + 0.07], 0.22, 0.03, { slot: 'cloth', color: curtain }, { up: [0, 0, 1], r: 0.012 });
@@ -1897,7 +1935,7 @@ const HUT = {
     // two little windows, side and back
     for (const a of [Math.PI / 2 + 0.3, -Math.PI / 2 - 0.2]) {
       const m = new THREE.Matrix4().makeRotationY(a).multiply(xform([0, lift + 0.82, R - 0.02]));
-      P.add(roundBox(0.36, 0.32, 0.05, 0.03, 1), HOLE, { matrix: m.clone().multiply(xform([0, -0.16, 0])) });
+      P.add(roundBox(0.36, 0.32, 0.05, 0.03, 1), inside, { matrix: m.clone().multiply(xform([0, -0.16, 0])) });
       P.add(roundBox(0.46, 0.05, 0.08, 0.02, 1), pole, { matrix: m.clone().multiply(xform([0, -0.2, 0.03])) });
     }
     // shaggy thatch in three tiers with a topknot
@@ -1910,6 +1948,7 @@ const HUT = {
     for (const [y, r] of [[ry + 0.12, 1.66], [ry + 0.86, 1.08]]) P.add(ring(r, 0.028, { radial: 4, tubular: 30 }), shade(roofC, -0.2), { at: [0, y + 0.05, 0] });
     const doorSpot = stilts ? spot([0, lift, R + 0.38], 0, 'stand') : spot([0, 0, R + 0.45], 0, 'stand');
     return finish(P.build('hut'), {
+      lights: lit ? [light([0, lift + 0.7, R + 0.35], { intensity: 0.6, distance: 3.5 })] : [],
       footprint: { r: stilts ? 1.9 : 1.75 },
       spots: stilts ? { door: doorSpot, ladder: spot([0.55, 0, 2.3], 0, 'stand') } : { door: doorSpot },
       height: ry + 2.35,
@@ -2011,7 +2050,6 @@ const HALL = {
     rod(P, [0, topY + 2.05, tz - tw / 2], [0, topY + 3.0, tz - tw / 2], 0.025, METAL(PALETTE.ironLight), { seg: 6 });
     const wave = wavingFlag(group, [0.025, topY + 2.95, tz - tw / 2], { w: 0.8, h: 0.48, color: flagC, stripe: PALETTE.cloth.white });
     // tall arched windows on both floors of each wing
-    const glassLit = glassLook('lit');
     const win = windowParts({ w: 0.6, h: 1.0, shape: 'arch', frame: trim, glass: 'lit', season, rand, flowerbox: false });
     const winBox = windowParts({ w: 0.6, h: 1.0, shape: 'arch', frame: trim, glass: 'lit', season, rand, flowerbox: true });
     for (const sx of [-1, 1]) {
@@ -2056,6 +2094,869 @@ const HALL = {
   },
 };
 
+/* ───────────────────────── bridge ───────────────────────── */
+
+/** An outline in XY between a top curve y(x) and that curve dropped by `thick`, from x0 to x1. */
+function bandShape(yTop, x0, x1, thick, n = 16) {
+  const top = [], bot = [];
+  for (let i = 0; i <= n; i++) {
+    const x = x0 + ((x1 - x0) * i) / n;
+    top.push([x, yTop(x)]);
+    bot.push([x, yTop(x) - thick]);
+  }
+  return outlineShape([...bot, ...top.reverse()]);
+}
+/** A curved beam along X following y(x) (its top), `w` deep in Z, centered at z. */
+function bandBeam(P, yTop, x0, x1, thick, w, z, look, n = 16) {
+  if (x1 - x0 < 0.05) return;
+  const bev = Math.min(0.02, thick * 0.3, w * 0.3);
+  P.add(slab(bandShape((x) => yTop(x) - bev, x0 + bev, x1 - bev, Math.max(thick - 2 * bev, 0.005), n), Math.max(w - 2 * bev, 0.005), { bevel: bev, seg: 1 }), look, { at: [0, 0, z] });
+}
+
+const BRIDGE = {
+  label: 'Bridge',
+  about: 'A bridge across a river, running along local X: wooden planks on pilings, a humped stone arch, or a swaying rope bridge. The ends rest on the banks (y = 0), the middle crosses over the water (surface y = -0.3) and posts or piers reach the river bed (about -1). Broken: missing planks, a gap in the middle and a snapped rail. New: fresh pale wood.',
+  params: {
+    length: { default: 5, min: 2.5, max: 12, about: 'span along X, bank to bank' },
+    width: { default: 1.6, min: 0.9, max: 3.5, about: 'deck width' },
+    style: { default: 'wood', options: ['wood', 'stone', 'rope'], about: 'wooden plank bridge, stone arch or rope bridge' },
+    state: { default: 'intact', options: ['intact', 'broken', 'new'], about: 'intact, broken (gap in the middle) or brand new' },
+  },
+  examples: [
+    {},
+    { style: 'stone' },
+    { style: 'rope', length: 6, width: 1.2 },
+    { state: 'broken' },
+    { state: 'new', length: 4 },
+    { style: 'stone', state: 'broken', length: 6 },
+    { style: 'rope', state: 'broken' },
+  ],
+  build(p, ctx) {
+    const rand = ctx.rng;
+    const season = seasonOf(ctx);
+    const style = oneOf(p.style, ['wood', 'stone', 'rope'], 'wood');
+    const state = oneOf(p.state, ['intact', 'broken', 'new'], 'intact');
+    const L = numOr(p.length, 5, 2.5, 12), Wd = numOr(p.width, 1.6, 0.9, 3.5);
+    const broken = state === 'broken';
+    const hw = Wd / 2;
+    const gapHalf = Math.min(0.5, L * 0.1);
+    const inGap = (x) => broken && Math.abs(x) < gapHalf;
+    const P = new Parts();
+    let yAt;
+    let wood = state === 'new' ? '#e6c690' : broken ? '#9c8468' : PALETTE.wood;
+    const woodD = shade(wood, -0.1);
+    const plankRow = (yTop, { skip = 0, ropeGap = 0.02, thick = 0.07, jitter = 0.04 } = {}) => {
+      const n = Math.max(6, Math.round(L / 0.2));
+      const pw = L / n;
+      for (let i = 0; i < n; i++) {
+        const x = -L / 2 + pw * (i + 0.5);
+        if (inGap(x) || (broken && rand.chance(skip))) continue;
+        const s = (yTop(x + 0.01) - yTop(x - 0.01)) / 0.02;
+        const tilt = rand.float(-jitter, jitter);
+        const y = yTop(x) - thick / 2;
+        const up = new THREE.Vector3(-s + tilt, 1, 0).normalize();
+        plank(P, [x - up.x * thick / 2, y - thick / 2 * up.y + thick / 2, -hw + rand.float(0, 0.03)], [x - up.x * thick / 2, y - thick / 2 * up.y + thick / 2, hw - rand.float(0, 0.03)], pw - ropeGap, thick, shade(wood, rand.float(-0.05, 0.04)), { up: [up.x, up.y, 0], r: 0.018 });
+      }
+    };
+    const spotsFor = (y) => {
+      const mx = broken ? -(gapHalf + 0.38) : 0;
+      return {
+        middle: spot([mx, y(mx), 0], 0, 'stand'),
+        left: spot([-L / 2 + 0.35, y(-L / 2 + 0.35), 0], 90, 'stand'),
+        right: spot([L / 2 - 0.35, y(L / 2 - 0.35), 0], -90, 'stand'),
+      };
+    };
+    let spots;
+    if (style === 'wood') {
+      const rise = Math.min(0.5, 0.07 * L);
+      yAt = (x) => rise * (1 - (2 * x / L) ** 2);
+      // stone abutments on the banks
+      for (const sx of [-1, 1]) P.add(roundBox(0.7, 0.55, Wd + 0.3, 0.06, 1), PALETTE.stone, { at: [sx * (L / 2 - 0.2), -0.5, 0] });
+      // stringers under the deck
+      const under = (x) => yAt(x) - 0.07;
+      for (const z of [-hw + 0.16, 0, hw - 0.16]) {
+        if (broken) { bandBeam(P, under, -L / 2, -gapHalf - 0.15, 0.16, 0.12, z, woodD); bandBeam(P, under, gapHalf + 0.15, L / 2, 0.16, 0.12, z, woodD); }
+        else bandBeam(P, under, -L / 2, L / 2, 0.16, 0.12, z, woodD);
+      }
+      plankRow(yAt, { skip: 0.15 });
+      // pilings with a cap beam and cross braces, standing on the river bed
+      const nPile = Math.max(2, Math.round((L - 1.4) / 2.1));
+      for (let k = 0; k < nPile; k++) {
+        const x = -L / 2 + 1.0 + ((L - 2.0) * k) / Math.max(nPile - 1, 1);
+        if (inGap(x)) continue;
+        const top = under(x) - 0.16;
+        for (const z of [-hw + 0.12, hw - 0.12]) rod(P, [x, -1.1, z], [x, top, z], 0.085, woodD, { seg: 10 });
+        plank(P, [x, top, -hw - 0.05], [x, top, hw + 0.05], 0.16, 0.13, woodD);
+        plank(P, [x, -0.85, -hw + 0.12], [x, top - 0.08, hw - 0.12], 0.06, 0.08, shade(woodD, -0.05), { up: [1, 0, 0] });
+        plank(P, [x, -0.85, hw - 0.12], [x, top - 0.08, -hw + 0.12], 0.06, 0.08, shade(woodD, -0.05), { up: [1, 0, 0] });
+      }
+      // railings: posts, a top rail and a middle rail on each side
+      const railH = SCALE.rail + 0.05;
+      const nPost = Math.max(3, Math.round(L / 0.85) + 1);
+      for (const sz of [-1, 1]) {
+        const z = sz * (hw - 0.04);
+        const snapped = broken && sz > 0;
+        for (let k = 0; k < nPost; k++) {
+          const x = -L / 2 + 0.1 + ((L - 0.2) * k) / (nPost - 1);
+          if (inGap(x) || (snapped && Math.abs(x) < gapHalf + 0.3)) continue;
+          P.add(roundBox(0.1, railH + 0.16, 0.1, 0.03, 1), wood, { at: [x, yAt(x) - 0.14, z] });
+          P.add(roundBox(0.13, 0.06, 0.13, 0.025, 1), shade(wood, 0.05), { at: [x, yAt(x) + railH + 0.02, z] });
+        }
+        const topRail = (x) => yAt(x) + railH;
+        const midRail = (x) => yAt(x) + railH * 0.5;
+        const a0 = -L / 2 + 0.05, a1 = L / 2 - 0.05;
+        if (!broken) {
+          bandBeam(P, topRail, a0, a1, 0.08, 0.08, z, wood);
+          bandBeam(P, midRail, a0, a1, 0.06, 0.05, z, wood);
+        } else {
+          const cut = snapped ? gapHalf + 0.38 : gapHalf;
+          bandBeam(P, topRail, a0, -cut, 0.08, 0.08, z, wood);
+          bandBeam(P, topRail, cut, a1, 0.08, 0.08, z, wood);
+          bandBeam(P, midRail, a0, -cut, 0.06, 0.05, z, wood);
+          bandBeam(P, midRail, cut, a1, 0.06, 0.05, z, wood);
+          if (snapped) {
+            // the snapped rail droops toward the water
+            plank(P, [-cut, topRail(-cut) - 0.03, z], [-cut + 0.45, topRail(-cut) - 0.42, z + 0.06], 0.07, 0.07, shade(wood, 0.06));
+            plank(P, [cut, midRail(cut) - 0.02, z], [cut - 0.38, midRail(cut) - 0.5, z + 0.04], 0.05, 0.06, shade(wood, 0.06));
+          }
+        }
+      }
+      if (broken) {
+        // planks dangling into the gap and a couple floating below
+        plank(P, [-gapHalf, yAt(-gapHalf) - 0.04, -0.2], [-gapHalf + 0.25, yAt(0) - 0.6, -0.05], 0.18, 0.06, shade(wood, 0.05), { up: [1, 0.4, 0] });
+        plank(P, [gapHalf, yAt(gapHalf) - 0.04, 0.35], [gapHalf - 0.15, yAt(0) - 0.55, 0.5], 0.18, 0.06, shade(wood, -0.03), { up: [-1, 0.4, 0] });
+      }
+      spots = spotsFor(yAt);
+    } else if (style === 'stone') {
+      const stone = state === 'new' ? PALETTE.stoneLight : broken ? mix(PALETTE.stone, '#8f877c', 0.35) : PALETTE.stone;
+      const rise = Math.min(0.75, 0.11 * L);
+      yAt = (x) => rise * (1 - (2 * x / L) ** 2);
+      const a = L * 0.31, by = -1.08, crown = yAt(0) - 0.46, bArch = crown - by;
+      const archPt = (th) => [a * Math.cos(th), by + bArch * Math.sin(th)];
+      const deckY = (x) => yAt(x) - 0.06;
+      const ex = L / 2 + 0.12;
+      const half = (side) => {
+        // one side of the body (side -1 left, +1 right); whole when not broken
+        const pts = [];
+        const g = broken ? gapHalf : 0;
+        const thG = Math.acos(THREE.MathUtils.clamp(g / a, -1, 1));
+        if (side < 0) {
+          pts.push([-ex, by - 0.05], [-a, by - 0.05]);
+          const th0 = Math.PI, th1 = broken ? Math.PI - thG : 0;
+          for (let i = 0; i <= 14; i++) pts.push(archPt(th0 + (th1 - th0) * (i / 14)));
+          if (broken) {
+            const yb = archPt(th1)[1], yt = deckY(-g);
+            for (let k = 1; k <= 5; k++) pts.push([-g - (k % 2 ? 0.1 : 0.02) * rand.float(0.6, 1.3), yb + (yt - yb) * (k / 6)]);
+            pts.push([-g, yt]);
+          } else {
+            pts.push([a, by - 0.05], [ex, by - 0.05]);
+          }
+          const xEnd = broken ? -g : ex;
+          for (let i = 0; i <= 16; i++) { const x = xEnd + (-ex - xEnd) * (i / 16); pts.push([x, deckY(x)]); }
+        } else {
+          pts.push([a, by - 0.05], [ex, by - 0.05]);
+          for (let i = 0; i <= 16; i++) { const x = ex + (gapHalf - ex) * (i / 16); pts.push([x, deckY(x)]); }
+          const yt = deckY(gapHalf), yb = archPt(thG)[1];
+          for (let k = 1; k <= 5; k++) pts.push([gapHalf + (k % 2 ? 0.1 : 0.02) * rand.float(0.6, 1.3), yt + (yb - yt) * (k / 6)]);
+          for (let i = 0; i <= 8; i++) pts.push(archPt(thG * (1 - i / 8)));
+        }
+        const clean = pts.filter((q, i) => { const r = pts[(i + pts.length - 1) % pts.length]; return Math.abs(q[0] - r[0]) + Math.abs(q[1] - r[1]) > 1e-4; });
+        P.add(slab(outlineShape(clean), Wd - 0.08, { bevel: 0.04, seg: 1 }), stone);
+      };
+      half(-1);
+      if (broken) half(1);
+      // voussoirs around the arch on both faces, with a keystone
+      const nv = 13;
+      for (const sz of [-1, 1]) {
+        for (let k = 1; k < nv; k++) {
+          const th = Math.PI * (1 - k / nv);
+          const [x, y] = archPt(th);
+          if (inGap(x)) continue;
+          const nx = Math.cos(th) / a, ny = Math.sin(th) / bArch;
+          const nl = Math.hypot(nx, ny);
+          const key = k === Math.floor(nv / 2) || k === Math.ceil(nv / 2);
+          const ang = Math.atan2(ny / nl, nx / nl) - Math.PI / 2;
+          P.add(roundBox(key ? 0.28 : 0.22, key ? 0.38 : 0.3, 0.07, 0.03, 1), shade(stone, k % 2 ? 0.05 : -0.03), { matrix: new THREE.Matrix4().makeRotationZ(ang).setPosition(x + (nx / nl) * 0.03, y + (ny / nl) * 0.03 - (key ? 0.04 : 0), sz * (Wd / 2 - 0.01)) });
+        }
+        for (let i = 0; i < Math.round(L * 1.4); i++) {
+          const x = rand.float(-L / 2 + 0.3, L / 2 - 0.3), y = rand.float(-0.25, deckY(x) - 0.2);
+          if (inGap(x)) continue;
+          const ell = (x / (a + 0.25)) ** 2 + ((y - by) / (bArch + 0.25)) ** 2;
+          if (ell < 1) continue;
+          P.add(roundBox(rand.float(0.22, 0.36), rand.float(0.14, 0.2), 0.06, 0.03, 1), shade(stone, rand.float(-0.07, 0.04)), { at: [x, y, sz * (Wd / 2 - 0.01)] });
+        }
+      }
+      // parapets with coping, a path along the top, end posts with balls
+      const parTop = (x) => yAt(x) + 0.42;
+      for (const sz of [-1, 1]) {
+        const z = sz * (hw - 0.1);
+        const segs = broken ? (sz > 0 ? [[-ex, -gapHalf - 0.5], [gapHalf + 0.2, ex]] : [[-ex, -gapHalf], [gapHalf, ex]]) : [[-ex, ex]];
+        for (const [x0, x1] of segs) {
+          bandBeam(P, parTop, x0, x1, 0.5, 0.2, z, shade(stone, 0.02), 14);
+          bandBeam(P, (x) => parTop(x) + 0.07, x0 - 0.03, x1 + 0.03, 0.1, 0.28, z, shade(stone, 0.1), 14);
+        }
+        for (const sx of [-1, 1]) {
+          P.add(roundBox(0.36, 0.72, 0.36, 0.06, 1), shade(stone, 0.06), { at: [sx * (ex - 0.06), yAt(sx * ex) - 0.06, z] });
+          P.add(sphere(0.15, 12, 9), shade(stone, 0.1), { at: [sx * (ex - 0.06), yAt(sx * ex) + 0.8, z] });
+        }
+      }
+      const path = shade(PALETTE.dirt, 0.12);
+      const pathSegs = broken ? [[-ex + 0.05, -gapHalf], [gapHalf, ex - 0.05]] : [[-ex + 0.05, ex - 0.05]];
+      for (const [x0, x1] of pathSegs) bandBeam(P, (x) => yAt(x) + 0.0, x0, x1, 0.08, Wd - 0.42, 0, path, 14);
+      if (broken) {
+        for (let i = 0; i < 6; i++) P.add(blob(rand.float(0.14, 0.24), { detail: 1, amp: 0.2, seed: i + 5, squash: [1.2, 0.8, 1] }), shade(stone, rand.float(-0.06, 0.03)), { at: [rand.float(-0.5, 0.5), -0.42 + rand.float(0, 0.12), rand.float(-hw, hw)] });
+      }
+      if (season !== 'winter') {
+        const moss = seasonal(MOSS, season);
+        for (const sx of [-1, 1]) P.add(blob(0.16, { detail: 1, amp: 0.2, seed: sx + 9, squash: [1.4, 0.5, 1] }), { slot: 'foliage', color: shade(moss, -0.05) }, { at: [sx * (ex - 0.25), yAt(sx * ex) + 0.42, hw - 0.1] });
+      }
+      spots = spotsFor(yAt);
+    } else {
+      // rope bridge: planks on two foot ropes, hand ropes sagging between end posts
+      const sag = Math.min(0.22, 0.025 * L);
+      yAt = (x) => -sag * (1 - (2 * x / L) ** 2);
+      const rope = state === 'new' ? '#efe2c4' : broken ? '#b8a580' : '#d8c59c';
+      const postC = state === 'new' ? '#d9b27a' : woodD;
+      plankRow(yAt, { skip: 0.18, ropeGap: 0.05, thick: 0.06, jitter: 0.08 });
+      const curve = (fn, x0, x1, n = 14) => { const pts = []; for (let i = 0; i <= n; i++) { const x = x0 + ((x1 - x0) * i) / n; pts.push(new THREE.Vector3(x, ...fn(x))); } return pts; };
+      const ropeT = (pts, r) => P.add(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), Math.max(8, pts.length * 2), r, 6, false), rope);
+      const px = L / 2 + 0.14;
+      const handY = (x) => yAt(x) + 0.62 + 0.3 * (2 * x / L) ** 2;
+      for (const sz of [-1, 1]) {
+        const z = sz * (hw - 0.07), zh = sz * (hw + 0.02);
+        if (!broken) ropeT(curve((x) => [yAt(x) - 0.07, z], -px, px), 0.028);
+        else { ropeT(curve((x) => [yAt(x) - 0.07, z], -px, -gapHalf + 0.05, 8), 0.028); ropeT(curve((x) => [yAt(x) - 0.07, z], gapHalf - 0.05, px, 8), 0.028); }
+        const snapped = broken && sz > 0;
+        if (!snapped) ropeT(curve((x) => [handY(x), zh], -px, px, 18), 0.032);
+        else {
+          ropeT([...curve((x) => [handY(x), zh], -px, -0.3, 10), new THREE.Vector3(-0.2, handY(-0.3) - 0.45, zh + 0.05), new THREE.Vector3(-0.15, yAt(0) - 0.25, zh + 0.1)], 0.032);
+          ropeT([new THREE.Vector3(0.35, yAt(0) - 0.15, zh + 0.08), new THREE.Vector3(0.5, handY(0.6) - 0.3, zh + 0.04), ...curve((x) => [handY(x), zh], 0.6, px, 8)], 0.032);
+        }
+        for (let k = 1; k < Math.round(L / 0.5); k++) {
+          const x = -L / 2 + (k * L) / Math.round(L / 0.5);
+          if (inGap(x) || (snapped && x > -0.35 && x < 0.65)) continue;
+          rod(P, [x, yAt(x) - 0.06, z], [x, handY(x), zh], 0.012, rope, { seg: 4 });
+        }
+        for (const sx of [-1, 1]) {
+          rod(P, [sx * px, -0.35, sz * (hw + 0.08)], [sx * px, 1.02, sz * (hw + 0.08)], 0.075, postC, { seg: 10 });
+          P.add(sphere(0.09, 10, 8), postC, { at: [sx * px, 1.04, sz * (hw + 0.08)] });
+          for (const y of [0.9, 0.82]) P.add(ring(0.085, 0.022, { radial: 4, tubular: 12 }), rope, { at: [sx * px, y, sz * (hw + 0.08)] });
+        }
+      }
+      // planks resting on the banks at each end
+      for (const sx of [-1, 1]) P.add(roundBox(0.6, 0.1, Wd + 0.1, 0.03, 1), PALETTE.stone, { at: [sx * (L / 2 + 0.05), -0.12, 0] });
+      spots = spotsFor(yAt);
+    }
+    return finish(P.build('bridge'), {
+      footprint: { w: L + 0.4, d: Wd + 0.6 },
+      spots,
+      height: (yAt?.(0) ?? 0) + 1,
+    });
+  },
+};
+
+/* ───────────────────────── wall ───────────────────────── */
+
+const WALL = {
+  label: 'Wall',
+  about: 'A wall segment along local X: rounded fieldstones with capstones, neat brick with a coping, or a crumbling mossy ruin. Low walls can be sat on.',
+  params: {
+    length: { default: 3, min: 0.8, max: 12, about: 'length along X' },
+    height: { default: 0.9, min: 0.3, max: 3, about: 'height' },
+    style: { default: 'stone', options: ['stone', 'brick', 'ruined'], about: 'fieldstone, brick or ruined' },
+    color: { default: '', type: 'color', about: 'stone or brick color (empty = by style)' },
+  },
+  examples: [
+    {},
+    { style: 'brick' },
+    { style: 'ruined', length: 4, height: 1.6 },
+    { length: 2, height: 0.55 },
+    { style: 'brick', height: 1.8, length: 2.4, color: '#b8765a' },
+  ],
+  build(p, ctx) {
+    const rand = ctx.rng;
+    const season = seasonOf(ctx);
+    const style = oneOf(p.style, ['stone', 'brick', 'ruined'], 'stone');
+    const L = numOr(p.length, 3, 0.8, 12), H = numOr(p.height, 0.9, 0.3, 3);
+    const P = new Parts();
+    let T = 0.36;
+    if (style === 'brick') {
+      const brick = colorOr(p.color, PALETTE.brick);
+      T = 0.3;
+      P.add(roundBox(L + 0.06, 0.16, T + 0.08, 0.04, 1), PALETTE.stoneDark);
+      P.add(box(L - 0.02, H - 0.24, T - 0.04), '#e4dccb', { at: [0, 0.14, 0] });
+      const rows = Math.min(16, Math.max(1, Math.round((H - 0.26) / 0.13)));
+      const rh = (H - 0.26) / rows;
+      const per = Math.min(36, Math.max(2, Math.ceil(L / 0.28)));
+      const bw = L / per;
+      for (const sz of [-1, 1]) {
+        for (let r = 0; r < rows; r++) {
+          const off = r % 2 ? bw / 2 : 0;
+          for (let i = -1; i < per; i++) {
+            let x0 = -L / 2 + i * bw + off, x1 = x0 + bw;
+            x0 = Math.max(x0, -L / 2 + 0.005); x1 = Math.min(x1, L / 2 - 0.005);
+            if (x1 - x0 < 0.04) continue;
+            P.add(box(x1 - x0 - 0.024, rh - 0.024, 0.05), shade(brick, rand.float(-0.06, 0.04)), { at: [(x0 + x1) / 2, 0.15 + r * rh + 0.012, sz * (T / 2 - 0.01)] });
+          }
+        }
+      }
+      P.add(roundBox(L + 0.08, 0.13, T + 0.14, 0.04, 1), PALETTE.stoneLight, { at: [0, H - 0.13, 0] });
+    } else if (style === 'stone') {
+      const stone = colorOr(p.color, PALETTE.stone);
+      P.add(roundBox(L - 0.04, H - 0.1, T - 0.08, 0.04, 1), shade(stone, -0.12), { at: [0, 0, 0] });
+      const sh = Math.max(0.24, (H - 0.16) / 6), rows = Math.max(1, Math.round((H - 0.16) / sh));
+      const rh = (H - 0.16) / rows;
+      const target = Math.max(0.42, L / 14);
+      for (const sz of [-1, 1]) {
+        for (let r = 0; r < rows; r++) {
+          let x = -L / 2;
+          while (x < L / 2 - 0.05) {
+            let w = target * rand.float(0.75, 1.25);
+            if (L / 2 - (x + w) < target * 0.4) w = L / 2 - x;
+            P.add(roundBox(w - 0.035, rh - 0.035, 0.14, Math.min(0.06, rh * 0.3), 1), shade(stone, rand.float(-0.07, 0.05)), { at: [x + w / 2, r * rh + 0.01, sz * (T / 2 - 0.05)] });
+            x += w;
+          }
+        }
+      }
+      // rounded capstones
+      let x = -L / 2;
+      while (x < L / 2 - 0.05) {
+        let w = target * rand.float(0.8, 1.2);
+        if (L / 2 - (x + w) < target * 0.4) w = L / 2 - x;
+        P.add(roundBox(w - 0.03, 0.17, T + 0.06, 0.07, 1), shade(stone, rand.float(-0.02, 0.07)), { at: [x + w / 2, H - 0.18, 0] });
+        x += w;
+      }
+    } else {
+      const stone = colorOr(p.color, mix(PALETTE.stone, '#9e968a', 0.3));
+      const dips = [{ u: rand.float(0.3, 0.7), w: rand.float(0.12, 0.22), d: rand.float(0.45, 0.7) }, { u: rand.chance(0.5) ? 0.05 : 0.95, w: 0.12, d: 0.35 }];
+      const prof = (u) => { let k = 0; for (const d of dips) k = Math.max(k, d.d * Math.exp(-((u - d.u) ** 2) / (2 * d.w * d.w))); return H * (1 - k); };
+      const ledges = crumbleWall(P, { len: L, t: T, height: (u) => prof(u / L), rand, color: stone, matrix: new THREE.Matrix4().makeTranslation(-L / 2, 0, 0), step: [0.12, 0.26], jitter: 0.1 });
+      const n = Math.min(40, Math.round(L * H * 3));
+      for (let i = 0; i < n; i++) {
+        const sz = rand.sign(), u = rand.float(0.05, 0.95), x = -L / 2 + u * L, y = rand.float(0.05, prof(u) - 0.3);
+        if (y < 0.05) continue;
+        P.add(roundBox(rand.float(0.22, 0.38), rand.float(0.14, 0.22), 0.06, 0.03, 1), shade(stone, rand.float(-0.07, 0.05)), { at: [x, y, sz * (T / 2 + 0.005)] });
+      }
+      for (let i = 0; i < Math.round(L * 1.5); i++) {
+        const r = rand.float(0.08, 0.18);
+        P.add(blob(r, { detail: 1, amp: 0.2, seed: i + 3, squash: [1.2, 0.75, 1] }), shade(stone, rand.float(-0.08, 0.02)), { at: [rand.float(-L / 2 - 0.2, L / 2 + 0.2), r * 0.4, rand.sign() * rand.float(T / 2 + 0.15, T / 2 + 0.6)] });
+      }
+      const mossC = seasonal(MOSS, season);
+      for (const [a, b, h] of ledges) {
+        if (!rand.chance(0.32)) continue;
+        const r = Math.min(0.16, (b - a) * 0.55);
+        P.add(blob(r, { detail: 1, amp: 0.22, seed: Math.round(a * 37), squash: [1.3, 0.42, 1.3] }), { slot: 'foliage', color: shade(mossC, rand.float(-0.06, 0.04)) }, { at: [-L / 2 + (a + b) / 2, h + 0.01, rand.float(-0.04, 0.04)] });
+      }
+      for (let i = 0; i < Math.round(L * 1.2); i++) {
+        const r = rand.float(0.1, 0.17);
+        P.add(blob(r, { detail: 1, amp: 0.22, seed: i * 3 + 1, squash: [1.4, 0.6, 1.1] }), { slot: 'foliage', color: shade(mossC, rand.float(-0.06, 0.04)) }, { at: [rand.float(-L / 2, L / 2), r * 0.3, rand.sign() * (T / 2 + 0.06)] });
+      }
+    }
+    const spots = { lean: spot([0, 0, T / 2 + 0.2], 0, 'lean'), back: spot([0, 0, -T / 2 - 0.2], 180, 'lean') };
+    if (H <= 0.7 && style !== 'ruined') spots.sit = spot([L > 1.6 ? -L / 4 : 0, H, T / 2 - 0.1], 0, 'sit');
+    return finish(P.build('wall'), { footprint: { w: L + 0.1, d: T + 0.3 }, spots, height: H });
+  },
+};
+
+/* ───────────────────────── gate ───────────────────────── */
+
+const GATE = {
+  label: 'Gate',
+  about: 'A village entrance arch to walk through: round posts with a curved beam, a flower garland and a hanging name board (wood), or stone pillars with a keystone arch and lanterns (stone).',
+  params: {
+    variant: { default: 'wood', options: ['wood', 'stone'], about: 'wooden arch or stone arch' },
+    width: { default: 2.6, min: 1.4, max: 6, about: 'clear width between the posts' },
+    sign: { default: 'Welcome', about: 'text on the board (empty = none)' },
+    color: { default: '', type: 'color', about: 'wood or stone color (empty = by variant)' },
+  },
+  examples: [
+    {},
+    { variant: 'stone', sign: 'Maple Village' },
+    { sign: '', width: 2.0, color: PALETTE.woodRed },
+    { variant: 'stone', width: 3.6, sign: '' },
+  ],
+  build(p, ctx) {
+    const rand = ctx.rng;
+    const season = seasonOf(ctx);
+    const stoneV = oneOf(p.variant, ['wood', 'stone'], 'wood') === 'stone';
+    const Wg = numOr(p.width, 2.6, 1.4, 6);
+    const sign = textOr(p.sign, 'Welcome');
+    const P = new Parts();
+    const hx = Wg / 2;
+    const lights = [];
+    let topY;
+    if (!stoneV) {
+      const wood = colorOr(p.color, PALETTE.wood), dark = shade(wood, -0.12);
+      const H = 2.75;
+      for (const sx of [-1, 1]) {
+        const x = sx * (hx + 0.16);
+        P.add(roundCyl(0.3, 0.3, { top: 0.25, bevel: 0.06, segments: 14, steps: 1 }), PALETTE.stone, { at: [x, 0, 0] });
+        P.add(roundCyl(0.16, H, { top: 0.14, bevel: 0.05, segments: 14, steps: 1 }), wood, { at: [x, 0.25, 0] });
+        for (const y of [0.9, 1.7]) P.add(ring(0.155, 0.025, { radial: 4, tubular: 14 }), dark, { at: [x, y, 0] });
+        P.add(sphere(0.16, 12, 9), dark, { at: [x, H + 0.32, 0] });
+      }
+      // a curved top beam and a straight one below
+      const span = hx + 0.55;
+      const arc = (x) => H + 0.28 + 0.24 * (1 - (x / span) ** 2);
+      bandBeam(P, arc, -span, span, 0.2, 0.22, 0, wood, 18);
+      plank(P, [-hx - 0.3, H - 0.18, 0], [hx + 0.3, H - 0.18, 0], 0.16, 0.15, dark);
+      for (const sx of [-1, 1]) plank(P, [sx * (hx + 0.12), H - 0.65, 0.03], [sx * (hx - 0.45), H - 0.12, 0.03], 0.09, 0.08, dark, { up: [0, 0, 1] });
+      // garland of leaves and flowers along the curved beam (seasonal)
+      const leaf = season === 'winter' ? PALETTE.pine.winter : season === 'autumn' ? PALETTE.leaf.autumn : seasonal(PALETTE.leaf, season);
+      const cols = flowerColors(season, rand);
+      const n = Math.round(Wg * 4);
+      for (let i = 0; i <= n; i++) {
+        const x = -span + 0.15 + ((2 * span - 0.3) * i) / n;
+        P.add(blob(0.1, { detail: 1, amp: 0.2, seed: i + 2 }), { slot: 'foliage', color: shade(leaf, rand.float(-0.06, 0.04)) }, { at: [x, arc(x) + 0.04, 0.1] });
+        if (cols.length && i % 2 === 0) P.add(sphere(0.055, 6, 4), { slot: 'foliage', color: cols[(i / 2) % cols.length] }, { at: [x + 0.03, arc(x) + 0.08, 0.18] });
+      }
+      if (sign) {
+        const sw = Math.min(Wg * 0.62, 1.8), sh = 0.4;
+        const sy = H - 0.62;
+        for (const sx of [-1, 1]) rod(P, [sx * sw * 0.36, sy + sh / 2 - 0.02, 0.0], [sx * sw * 0.36, H - 0.26, 0.0], 0.014, METAL(), { seg: 5 });
+        P.add(roundBox(sw + 0.12, sh + 0.12, 0.08, 0.04, 1), dark, { at: [0, sy - (sh + 0.12) / 2, 0] });
+        const face = signMaterial(sign, { bg: '#f6ead0', fg: '#5a3a22', border: '#b7864e', borderWidth: 8, font: 'bold 88px Georgia, "Times New Roman", serif' });
+        P.add(new THREE.PlaneGeometry(sw, sh), face, { at: [0, sy, 0.042] });
+        P.add(new THREE.PlaneGeometry(sw, sh), face, { at: [0, sy, -0.042], rot: [0, Math.PI, 0] });
+      }
+      // small lanterns hanging from the posts
+      for (const sx of [-1, 1]) {
+        const x = sx * (hx + 0.16), z = 0.24;
+        plank(P, [x, 1.95, 0.1], [x, 1.95, z + 0.02], 0.035, 0.035, METAL(), { r: 0.012 });
+        P.add(roundCyl(0.065, 0.15, { top: 0.08, bevel: 0.02, segments: 10, steps: 1 }), LAMP, { at: [x, 1.72, z] });
+        P.add(cone(0.1, 0.08, 10), METAL(), { at: [x, 1.86, z] });
+        lights.push(light([x, 1.78, z + 0.1], { intensity: 0.7, distance: 4 }));
+      }
+      topY = H + 0.6;
+    } else {
+      const stone = colorOr(p.color, PALETTE.stoneLight), dark = shade(stone, -0.1);
+      const pw = 0.62, ph = 2.3;
+      for (const sx of [-1, 1]) {
+        const x = sx * (hx + pw / 2);
+        P.add(roundBox(pw + 0.16, 0.24, pw + 0.16, 0.05, 1), dark, { at: [x, 0, 0] });
+        P.add(roundBox(pw, ph, pw, 0.06, 2), stone, { at: [x, 0.2, 0] });
+        for (let k = 0; k < 4; k++) P.add(box(pw + 0.02, 0.03, pw + 0.02), dark, { at: [x, 0.7 + k * 0.5, 0] });
+        P.add(roundBox(pw + 0.14, 0.16, pw + 0.14, 0.05, 1), shade(stone, 0.06), { at: [x, ph + 0.18, 0] });
+        // lantern on a bracket facing out
+        const lz = pw / 2 + 0.18;
+        plank(P, [x, 1.75, pw / 2], [x, 1.75, lz + 0.03], 0.04, 0.04, METAL(), { r: 0.012 });
+        P.add(roundCyl(0.075, 0.17, { top: 0.09, bevel: 0.02, segments: 10, steps: 1 }), LAMP, { at: [x, 1.5, lz] });
+        P.add(cone(0.12, 0.09, 10), METAL(), { at: [x, 1.66, lz] });
+        lights.push(light([x, 1.56, lz + 0.12], { intensity: 0.8, distance: 4.5 }));
+      }
+      // semicircular arch of voussoirs with a keystone, spanning between the pillars
+      const r0 = hx, cy = ph + 0.3;
+      const n = Math.max(9, Math.round(Wg * 4.2)) | 1;
+      for (let k = 0; k < n; k++) {
+        const th = Math.PI * (1 - (k + 0.5) / n);
+        const key = k === (n - 1) / 2;
+        const rr = r0 + 0.2;
+        P.add(roundBox(Math.PI * rr / n - 0.03, key ? 0.52 : 0.42, pw - 0.08, 0.04, 1), shade(stone, key ? 0.08 : (k % 2 ? 0.03 : -0.03)), { matrix: new THREE.Matrix4().makeRotationZ(th - Math.PI / 2).setPosition(Math.cos(th) * (r0 - (key ? 0.02 : 0)), cy + Math.sin(th) * (r0 - (key ? 0.02 : 0)), 0) });
+      }
+      // spandrel fill above the arch up to a flat cornice
+      const capY = cy + r0 + 0.55;
+      const fill = [[-hx - pw + 0.04, cy - 0.02]];
+      for (let i = 0; i <= 14; i++) { const th = Math.PI * (1 - i / 14); fill.push([Math.cos(th) * (r0 + 0.12), cy + Math.sin(th) * (r0 + 0.12)]); }
+      fill.push([hx + pw - 0.04, cy - 0.02], [hx + pw - 0.04, capY], [-hx - pw + 0.04, capY]);
+      P.add(slab(outlineShape(fill), pw - 0.16, { bevel: 0.03, seg: 1 }), shade(stone, -0.02));
+      P.add(roundBox(Wg + 2 * pw + 0.2, 0.2, pw + 0.1, 0.05, 1), shade(stone, 0.06), { at: [0, capY, 0] });
+      for (const sx of [-1, 1]) {
+        P.add(sphere(0.2, 12, 9), shade(stone, 0.08), { at: [sx * (hx + pw / 2), capY + 0.38, 0] });
+        P.add(roundCyl(0.14, 0.12, { bevel: 0.03, segments: 10, steps: 1 }), shade(stone, 0.04), { at: [sx * (hx + pw / 2), capY + 0.16, 0] });
+      }
+      if (sign) {
+        const sw = Math.min(Wg * 0.7, 2.0), sh = 0.32;
+        P.add(roundBox(sw + 0.1, sh + 0.1, 0.06, 0.03, 1), PALETTE.gold, { at: [0, capY - 0.5 - sh / 2, pw / 2 - 0.06] });
+        P.add(new THREE.PlaneGeometry(sw, sh), signMaterial(sign, { bg: '#fbf3df', fg: '#4f3a26', border: '#c99b44', borderWidth: 7, font: 'bold 80px Georgia, "Times New Roman", serif' }), { at: [0, capY - 0.5, pw / 2 + 0.03] });
+      }
+      if (season !== 'winter') {
+        const ivy = seasonal(PALETTE.leaf, season);
+        for (let i = 0; i < 7; i++) P.add(blob(0.12, { detail: 1, amp: 0.2, seed: i + 7, squash: [1.2, 1, 0.6] }), { slot: 'foliage', color: shade(ivy, rand.float(-0.08, 0.03)) }, { at: [-(hx + pw) + 0.05 + rand.float(-0.05, 0.1), 0.25 + i * 0.3, pw / 2 + 0.02] });
+      }
+      topY = capY + 0.6;
+    }
+    return finish(P.build('gate'), {
+      footprint: { w: Wg + 1.6, d: 1.0 },
+      spots: {
+        through: spot([0, 0, 0], 0, 'stand'),
+        front: spot([0, 0, 1.1], 180, 'stand'),
+        left: spot([-hx - 0.9, 0, 0.7], 0, 'stand'),
+        right: spot([hx + 0.9, 0, 0.7], 0, 'stand'),
+      },
+      lights,
+      height: topY,
+    });
+  },
+};
+
+/* ───────────────────────── ruin ───────────────────────── */
+
+function column(P, { h, r = 0.25, stone, broken = false, rand, capital = true }) {
+  P.add(roundBox(r * 2.5, 0.18, r * 2.5, 0.04, 1), shade(stone, -0.04));
+  P.add(lathe([[0, 0.17], [r * 1.12, 0.17], [r * 1.12, 0.25], [r, 0.3], [r, 0.3]], 16), shade(stone, 0.02));
+  const shaftTop = broken ? h : h - 0.36;
+  P.add(roundCyl(r, shaftTop - 0.3, { top: r * 0.92, bevel: 0.03, segments: 14, steps: 1 }), stone, { at: [0, 0.3, 0] });
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2;
+    P.add(box(0.035, shaftTop - 0.42, 0.03), shade(stone, -0.07), { at: [Math.sin(a) * r * 0.97, 0.36, Math.cos(a) * r * 0.97], rot: [0, a, 0] });
+  }
+  if (!broken && capital) {
+    P.add(lathe([[0, 0], [r * 0.95, 0], [r * 1.25, 0.16], [r * 1.3, 0.2], [0, 0.2]], 16), shade(stone, 0.04), { at: [0, shaftTop, 0] });
+    P.add(roundBox(r * 2.8, 0.16, r * 2.8, 0.04, 1), shade(stone, 0.06), { at: [0, shaftTop + 0.2, 0] });
+  } else if (broken) {
+    // a jagged broken top: a tilted stub and a chip
+    P.add(roundCyl(r * 0.9, 0.22, { top: r * 0.6, bevel: 0.04, segments: 12, steps: 1 }), shade(stone, 0.03), { at: [rand.float(-0.03, 0.03), shaftTop - 0.05, 0], rot: [rand.float(-0.3, 0.3), 0, rand.float(-0.3, 0.3)] });
+  }
+}
+
+const RUIN = {
+  label: 'Ruin',
+  about: 'Crumbled ancient walls with an archway, broken columns on a cracked stone floor, a fallen column in pieces, rubble and moss.',
+  params: {
+    size: { default: 'medium', options: ['small', 'medium', 'large'], about: 'how much of it is left' },
+    stone: { default: '#d2c9b6', type: 'color', about: 'stone color' },
+    moss: { default: true, about: 'moss and weeds (seasonal)' },
+  },
+  examples: [{}, { size: 'small' }, { size: 'large', stone: '#cbc3d4' }],
+  build(p, ctx) {
+    const rand = ctx.rng;
+    const season = seasonOf(ctx);
+    const size = oneOf(p.size, ['small', 'medium', 'large'], 'medium');
+    const stone = colorOr(p.stone, '#d2c9b6');
+    const mossOn = boolOr(p.moss, true);
+    const P = new Parts();
+    const [Wf, Df] = size === 'small' ? [3.2, 2.6] : size === 'large' ? [6.4, 4.6] : [4.8, 3.6];
+    const fy = 0.24;
+    // cracked floor slabs on a low platform, steps at the front
+    const nx = Math.round(Wf / 1.1), nz = Math.round(Df / 1.1);
+    const sw = Wf / nx, sd = Df / nz;
+    for (let i = 0; i < nx; i++) for (let k = 0; k < nz; k++) {
+      if (rand.chance(0.08)) continue;
+      const x = -Wf / 2 + sw * (i + 0.5), z = -Df / 2 + sd * (k + 0.5);
+      P.add(roundBox(sw - 0.05, fy + rand.float(-0.03, 0.03), sd - 0.05, 0.04, 1), shade(stone, rand.float(-0.08, 0.02)), { at: [x, 0, z], rot: [rand.float(-0.02, 0.02), 0, rand.float(-0.02, 0.02)] });
+    }
+    for (let s = 0; s < 2; s++) P.add(roundBox(Wf * 0.55 - s * 0.3, fy * (0.66 - s * 0.33) + 0.02, 0.32, 0.04, 1), shade(stone, -0.04 - s * 0.02), { at: [0, 0, Df / 2 + 0.14 + s * 0.3] });
+    // columns along the front and sides, some whole, most broken
+    const cols = [];
+    const nFront = size === 'small' ? 2 : size === 'large' ? 4 : 3;
+    for (let i = 0; i < nFront; i++) cols.push([-Wf / 2 + 0.5 + ((Wf - 1) * i) / Math.max(nFront - 1, 1), Df / 2 - 0.45]);
+    if (size !== 'small') cols.push([Wf / 2 - 0.5, 0], [-Wf / 2 + 0.5, 0.1]);
+    cols.forEach(([x, z], i) => {
+      const whole = i === 1 || (size === 'large' && i === 3);
+      const h = whole ? 2.7 : rand.float(0.7, 2.1);
+      const C = new Parts();
+      column(C, { h, stone, broken: !whole, rand });
+      P.merge(C, xform([x, fy, z], [0, rand.float(0, 1), 0]));
+      if (mossOn && season !== 'winter' && rand.chance(0.6)) P.add(blob(0.2, { detail: 1, amp: 0.2, seed: i + 1, squash: [1.3, 0.45, 1.3] }), { slot: 'foliage', color: shade(seasonal(MOSS, season), -0.06) }, { at: [x, fy + (whole ? h + 0.36 : h + 0.1), z] });
+    });
+    // a lintel still resting on two columns when there is a whole pair
+    if (size === 'large') plank(P, [cols[1][0] - 0.4, fy + 3.06 + 0.12, cols[1][1]], [cols[3][0] - 0.2, fy + 3.06 - 0.25, cols[3][1]], 0.5, 0.3, shade(stone, 0.04));
+    // back wall with an arched doorway, and a side wall
+    const wallH = size === 'small' ? 1.9 : 2.6;
+    const backL = Wf - 0.2;
+    const dips = [{ u: rand.float(0.65, 0.85), w: 0.12, d: 0.55 }, { u: 0.06, w: 0.08, d: 0.3 }];
+    const prof = (u) => { let k = 0; for (const d of dips) k = Math.max(k, d.d * Math.exp(-((u - d.u) ** 2) / (2 * d.w * d.w))); return wallH * (1 - k); };
+    const doorU0 = backL * 0.3, doorU1 = backL * 0.3 + 0.9, doorH = 1.5;
+    crumbleWall(P, { len: backL, t: 0.4, height: (u) => (u > doorU0 - 0.25 && u < doorU1 + 0.25 ? Math.max(prof(u / backL), doorH + 0.8) : prof(u / backL)), rand, color: stone, matrix: new THREE.Matrix4().makeTranslation(-backL / 2, fy, -Df / 2 + 0.3), notch: { u0: doorU0, u1: doorU1, h: doorH }, step: [0.14, 0.3], jitter: 0.12 });
+    // the arch over the doorway
+    const ax = -backL / 2 + (doorU0 + doorU1) / 2, ar = (doorU1 - doorU0) / 2;
+    for (const sz of [-1, 1]) {
+      for (let k = 0; k < 7; k++) {
+        const th = Math.PI * (1 - (k + 0.5) / 7);
+        P.add(roundBox(0.22, 0.26, 0.08, 0.03, 1), shade(stone, k === 3 ? 0.08 : 0.03), { matrix: new THREE.Matrix4().makeRotationZ(th - Math.PI / 2).setPosition(ax + Math.cos(th) * (ar + 0.1), fy + doorH - ar + 0.15 + Math.sin(th) * (ar + 0.1), -Df / 2 + 0.3 + sz * 0.2) });
+      }
+    }
+    if (size !== 'small') {
+      const sideL = Df * 0.6;
+      const sp = (u) => wallH * 0.8 * (1 - 0.65 * u) - rand.float(0, 0.05);
+      crumbleWall(P, { len: sideL, t: 0.36, height: (u) => Math.max(0.3, sp(u / sideL)), rand, color: shade(stone, -0.02), matrix: new THREE.Matrix4().makeRotationY(-Math.PI / 2).setPosition(Wf / 2 - 0.25, fy, -Df / 2 + 0.5), step: [0.14, 0.3], jitter: 0.12 });
+    }
+    // a fallen column in pieces
+    const fx = size === 'small' ? 0.4 : 0.9, fz = Df / 2 + 1.0;
+    const drums = size === 'small' ? 2 : 3;
+    for (let i = 0; i < drums; i++) {
+      P.add(roundCyl(0.25, 0.62, { bevel: 0.04, segments: 14, steps: 1 }), shade(stone, rand.float(-0.04, 0.03)), { at: [fx + i * 0.68 - 0.31, 0.25, fz + i * 0.05 + rand.float(-0.04, 0.04)], rot: [0, rand.float(-0.15, 0.15), Math.PI / 2] });
+    }
+    // rubble and moss
+    for (let i = 0; i < Math.round(Wf * 2.5); i++) {
+      const r = rand.float(0.08, 0.2);
+      const onFloor = rand.chance(0.5);
+      P.add(blob(r, { detail: 1, amp: 0.2, seed: i * 7 + 2, squash: [1.25, 0.7, 1] }), shade(stone, rand.float(-0.1, 0.02)), { at: [rand.float(-Wf / 2 - 0.4, Wf / 2 + 0.4), (onFloor ? fy : 0) + r * 0.4, onFloor ? rand.float(-Df / 2 + 0.6, Df / 2 - 0.2) : rand.sign() * rand.float(Df / 2 + 0.3, Df / 2 + 1.2)] });
+    }
+    if (mossOn) {
+      const mossC = seasonal(MOSS, season);
+      for (let i = 0; i < Math.round(Wf * 2.4); i++) {
+        const r = rand.float(0.12, 0.26);
+        P.add(blob(r, { detail: 1, amp: 0.22, seed: i * 5 + 3, squash: [1.4, 0.45, 1.2] }), { slot: 'foliage', color: shade(mossC, rand.float(-0.07, 0.04)) }, { at: [rand.float(-Wf / 2, Wf / 2), fy - 0.02 + r * 0.15, rand.float(-Df / 2 + 0.5, Df / 2)] });
+      }
+      for (let i = 0; i < 5; i++) P.add(blob(0.18, { detail: 1, amp: 0.2, seed: i + 40, squash: [1.3, 0.5, 0.9] }), { slot: 'foliage', color: shade(mossC, -0.04) }, { at: [-backL / 2 + rand.float(0.2, backL - 0.2), fy + rand.float(0.6, 1.4), -Df / 2 + 0.52] });
+    }
+    return finish(P.build('ruin'), {
+      footprint: { w: Wf + 1.2, d: Df + 2.4 },
+      spots: {
+        center: spot([-0.2, fy, 0.3], 0, 'stand'),
+        steps: spot([0, 0, Df / 2 + 0.85], 0, 'stand'),
+        sit: spot([fx + 0.37, 0.5, fz + 0.03 - 0.1], 0, 'sit'),
+        arch: spot([ax, fy, -Df / 2 + 0.3], 0, 'stand'),
+      },
+      height: wallH + fy,
+    });
+  },
+};
+
+/* ───────────────────────── shed ───────────────────────── */
+
+const SHED = {
+  label: 'Shed',
+  about: 'A little wooden garden shed with board siding, a Z-braced door, a small window and tools leaning by the door: a shovel, a rake, a watering can and flower pots.',
+  params: {
+    walls: { default: '#8fb5a0', type: 'color', about: 'board color' },
+    roof: { default: PALETTE.roofBrown, type: 'color', about: 'roof color' },
+    door: { default: '', type: 'color', about: 'door color (empty = trim)' },
+    open: { default: false, about: 'door left ajar' },
+  },
+  examples: [{}, { walls: PALETTE.wood, roof: PALETTE.roofGreen, open: true }, { walls: '#d9b9a0', roof: PALETTE.roofRed, door: '#5d8fc4' }],
+  build(p, ctx) {
+    const rand = ctx.rng;
+    const season = seasonOf(ctx);
+    const walls = colorOr(p.walls, '#8fb5a0'), roofC = colorOr(p.roof, PALETTE.roofBrown);
+    const trim = '#f6efe0';
+    const doorC = colorOr(p.door, null) ?? shade(walls, 0.12);
+    const open = boolOr(p.open, false);
+    const P = new Parts();
+    const W = 1.9, D = 1.6, H = 1.7, c = D / 2;
+    P.add(roundBox(W + 0.12, 0.14, D + 0.12, 0.04, 1), PALETTE.stoneDark);
+    P.add(roundBox(W, H, D, 0.05, 2), walls, { at: [0, 0.1, 0] });
+    // board grooves
+    for (let x = -W / 2 + 0.2; x < W / 2 - 0.1; x += 0.2) {
+      if (Math.abs(x + 0.35) < 0.42) continue;
+      P.add(box(0.02, H - 0.2, 0.01), shade(walls, -0.1), { at: [x, 0.2, c + 0.002] });
+    }
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) P.add(roundBox(0.1, H - 0.05, 0.1, 0.03, 1), trim, { at: [sx * (W / 2 - 0.03), 0.12, sz * (c - 0.03)] });
+    const roof = addRoof(P, { style: 'gable', W, D, y0: H + 0.1, rise: 0.62, over: 0.26, overX: 0.22, t: 0.16, color: roofC, trim, walls, shingles: true });
+    // Z-braced door, opened a little when asked
+    const dw = 0.68, dh = 1.32, dx = -0.35;
+    P.add(roundBox(dw + 0.04, dh + 0.02, 0.03, 0.01, 1), HOLE, { at: [dx, 0.12, c + 0.005] });
+    const leaf = new Parts();
+    leaf.add(roundBox(dw, dh, 0.06, 0.02, 1), doorC, { at: [dw / 2, 0, 0] });
+    for (let x = 0.17; x < dw - 0.05; x += 0.17) leaf.add(box(0.015, dh - 0.1, 0.01), shade(doorC, -0.12), { at: [x, 0.05, 0.032] });
+    for (const y of [0.14, dh - 0.24]) leaf.add(roundBox(dw - 0.06, 0.1, 0.03, 0.015, 1), trim, { at: [dw / 2, y, 0.045] });
+    plank(leaf, [0.08, 0.24, 0.05], [dw - 0.08, dh - 0.24, 0.05], 0.09, 0.03, trim, { up: [0, 0, 1] });
+    leaf.add(sphere(0.035, 8, 6), METAL(PALETTE.gold), { at: [dw - 0.1, dh * 0.48, 0.07] });
+    P.merge(leaf, xform([dx - dw / 2, 0.12, c + 0.02], [0, open ? -0.9 : 0, 0]));
+    P.add(roundBox(dw + 0.18, 0.08, 0.06, 0.02, 1), trim, { at: [dx, 0.12 + dh, c + 0.03] });
+    // a small window
+    P.merge(windowParts({ w: 0.42, h: 0.42, shape: 'square', frame: trim, glass: 'lit', sill: true, flowerbox: true, season, rand }), xform([0.48, 1.05, c]));
+    P.merge(windowParts({ w: 0.36, h: 0.36, shape: 'square', frame: trim, glass: 'dark', sill: true }), xform([W / 2, 1.05, 0], [0, Math.PI / 2, 0]));
+    // tools leaning on the wall, a watering can and pots
+    const handle = PALETTE.woodLight;
+    rod(P, [-0.92, 0.02, c + 0.32], [-0.84, 1.3, c + 0.06], 0.022, handle, { seg: 6 });
+    P.add(roundBox(0.2, 0.24, 0.03, 0.03, 1), METAL(PALETTE.ironLight), { at: [-0.92, 0.0, c + 0.33], rot: [-0.2, 0, 0] });
+    rod(P, [W / 2 + 0.22, 0.02, c - 0.2], [W / 2 + 0.06, 1.35, c - 0.35], 0.02, handle, { seg: 6 });
+    P.add(roundBox(0.36, 0.04, 0.04, 0.015, 1), METAL(PALETTE.iron), { at: [W / 2 + 0.23, 0.02, c - 0.19] });
+    for (let i = 0; i < 6; i++) P.add(box(0.015, 0.09, 0.015), METAL(PALETTE.iron), { at: [W / 2 + 0.08 + i * 0.06, 0.0, c - 0.17] });
+    const cx = 0.75, cz = c + 0.45;
+    P.add(roundCyl(0.13, 0.22, { top: 0.11, bevel: 0.03, segments: 14, steps: 1 }), METAL('#6fa3c9'), { at: [cx, 0, cz] });
+    rod(P, [cx + 0.1, 0.12, cz], [cx + 0.3, 0.3, cz], 0.02, METAL('#6fa3c9'), { seg: 6 });
+    P.add(ring(0.08, 0.016, { radial: 4, tubular: 12 }), METAL('#6fa3c9'), { at: [cx - 0.02, 0.3, cz], rot: [Math.PI / 2, 0, 0] });
+    const cols = flowerColors(season, rand);
+    for (const [x, z, s] of [[1.12, c + 0.1, 1], [1.2, c - 0.3, 0.8]]) {
+      P.add(roundCyl(0.12 * s, 0.18 * s, { top: 0.14 * s, bevel: 0.02, segments: 12, steps: 1 }), '#c8754a', { at: [x, 0, z] });
+      P.add(blob(0.12 * s, { detail: 1, amp: 0.15, seed: 3 }), { slot: 'foliage', color: season === 'winter' ? '#6f7f5f' : seasonal(PALETTE.leaf, season) }, { at: [x, 0.24 * s, z] });
+      if (cols.length) P.add(sphere(0.05, 6, 4), { slot: 'foliage', color: cols[0] }, { at: [x + 0.03, 0.32 * s, z + 0.05] });
+    }
+    return finish(P.build('shed'), {
+      footprint: { w: W + 0.9, d: D + 1.0 },
+      spots: { door: spot([dx, 0, c + 0.55], 0, 'stand'), tools: spot([0.4, 0, c + 0.75], 180, 'stand') },
+      height: roof.ridge,
+    });
+  },
+};
+
+/* ───────────────────────── greenhouse ───────────────────────── */
+
+const GREENHOUSE = {
+  label: 'Greenhouse',
+  about: 'A glass greenhouse on a low brick base: white frames, a glass gable roof with a ridge vent, and potting benches of seasonal plants and flowers inside. Someone can stand at the bench.',
+  params: {
+    frame: { default: '#f7f3ea', type: 'color', about: 'frame color' },
+    base: { default: PALETTE.brick, type: 'color', about: 'base wall color' },
+    size: { default: 'medium', options: ['small', 'medium', 'large'], about: 'small 2.2 × 2.6, medium 2.6 × 3.4, large 3.2 × 4.4' },
+  },
+  examples: [{}, { frame: '#5f8f6e', base: PALETTE.stone, size: 'small' }, { size: 'large', frame: '#e9dcc0' }],
+  build(p, ctx) {
+    const rand = ctx.rng;
+    const season = seasonOf(ctx);
+    const frame = colorOr(p.frame, '#f7f3ea'), baseC = colorOr(p.base, PALETTE.brick);
+    const size = oneOf(p.size, ['small', 'medium', 'large'], 'medium');
+    const [W, D] = size === 'small' ? [2.2, 2.6] : size === 'large' ? [3.2, 4.4] : [2.6, 3.4];
+    const P = new Parts();
+    const glassL = { slot: 'clear', color: '#d8eef2', opacity: 0.32 };
+    const bh = 0.45, H = 1.85, hw = W / 2, c = D / 2;
+    const rise = W * 0.36;
+    // brick base with a stone cap, a path tile floor
+    for (const [w, d, x, z] of [[W, 0.16, 0, c - 0.08], [W, 0.16, 0, -c + 0.08], [0.16, D - 0.3, hw - 0.08, 0], [0.16, D - 0.3, -hw + 0.08, 0]]) {
+      if (z > 0) {
+        for (const sx of [-1, 1]) P.add(roundBox((W - 0.8) / 2, bh, 0.16, 0.03, 1), baseC, { at: [sx * (0.4 + (W - 0.8) / 4), 0, z] });
+      } else P.add(roundBox(w, bh, d, 0.03, 1), baseC, { at: [x, 0, z] });
+    }
+    P.add(roundBox(W + 0.06, 0.06, 0.24, 0.02, 1), PALETTE.stoneLight, { at: [0, bh, -c + 0.08] });
+    for (const sx of [-1, 1]) {
+      P.add(roundBox(0.24, 0.06, D + 0.06, 0.02, 1), PALETTE.stoneLight, { at: [sx * (hw - 0.08), bh, 0] });
+      P.add(roundBox((W - 0.8) / 2 + 0.04, 0.06, 0.24, 0.02, 1), PALETTE.stoneLight, { at: [sx * (0.4 + (W - 0.8) / 4), bh, c - 0.08] });
+    }
+    P.add(roundBox(W - 0.3, 0.03, D - 0.3, 0.01, 1), '#cdbb97', { at: [0, 0, 0] });
+    // glass walls and roof
+    const gy = bh + 0.06;
+    for (const sx of [-1, 1]) P.add(box(0.02, H - gy, D - 0.1), glassL, { at: [sx * (hw - 0.08), gy, 0] });
+    P.add(box(W - 0.16, H - gy, 0.02), glassL, { at: [0, gy, -c + 0.08] });
+    for (const sx of [-1, 1]) P.add(box((W - 0.84) / 2, H - gy, 0.02), glassL, { at: [sx * (0.42 + (W - 0.84) / 4), gy, c - 0.08] });
+    P.add(box(0.8, H - 1.95 + 0.6, 0.02), glassL, { at: [0, 1.95, c - 0.08] });
+    const gab = outlineShape([[-hw + 0.08, H], [hw - 0.08, H], [0, H + rise - 0.04]]);
+    for (const z of [c - 0.08, -c + 0.08]) P.add(slab(gab, 0.02, { bevel: 0 }), glassL, { at: [0, 0, z] });
+    const slopeL = Math.hypot(hw, rise);
+    for (const sx of [-1, 1]) plank(P, [0, H + rise, 0], [sx * hw, H, 0], D, 0.02, glassL, { up: [sx * rise, hw, 0], r: 0.005 });
+    // white frame: corner posts, mullions, rafters, ridge with a vent
+    const fr = (a, b, w = 0.07) => plank(P, a, b, w, w, frame, { r: 0.02 });
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) fr([sx * (hw - 0.08), gy, sz * (c - 0.08)], [sx * (hw - 0.08), H, sz * (c - 0.08)], 0.09);
+    const bays = Math.round(D / 0.7);
+    for (let k = 0; k <= bays; k++) {
+      const z = -c + 0.08 + ((D - 0.16) * k) / bays;
+      for (const sx of [-1, 1]) {
+        fr([sx * (hw - 0.07), gy, z], [sx * (hw - 0.07), H, z]);
+        fr([sx * (hw - 0.04), H, z], [0, H + rise + 0.02, z]);
+      }
+    }
+    for (const sx of [-1, 1]) {
+      fr([sx * (hw - 0.07), H, -c + 0.05], [sx * (hw - 0.07), H, c - 0.05]);
+      fr([sx * (hw - 0.07), gy + 0.62, -c + 0.05], [sx * (hw - 0.07), gy + 0.62, c - 0.05], 0.05);
+    }
+    for (const z of [c - 0.06, -c + 0.06]) {
+      fr([-hw + 0.08, H, z], [hw - 0.08, H, z]);
+      for (const sx of [-1, 1]) fr([sx * (hw - 0.04), H, z], [0, H + rise + 0.02, z]);
+    }
+    for (const sx of [-1, 1]) fr([sx * 0.42, gy, c - 0.06], [sx * 0.42, 1.95, c - 0.06], 0.08);
+    fr([-0.42, 1.95, c - 0.06], [0.42, 1.95, c - 0.06], 0.08);
+    rod(P, [0, H + rise + 0.03, -c - 0.06], [0, H + rise + 0.03, c + 0.06], 0.07, frame, { seg: 10 });
+    plank(P, [0.02, H + rise + 0.02, -c * 0.6], [0.02, H + rise + 0.02, c * 0.2], 0.5, 0.03, glassL, { up: [0.35, 1, 0], r: 0.008 });
+    // door: a framed glass door, a little open
+    const door = new Parts();
+    door.add(roundBox(0.78, 1.42, 0.05, 0.02, 1), frame, { at: [0.39, 0, 0] });
+    door.add(box(0.6, 1.0, 0.06), glassL, { at: [0.39, 0.3, 0] });
+    door.add(sphere(0.03, 8, 6), METAL(PALETTE.gold), { at: [0.68, 0.7, 0.05] });
+    P.merge(door, xform([-0.4, gy, c - 0.05], [0, -0.5, 0]));
+    // benches with pots along both sides
+    const leaf = season === 'winter' ? '#5e8a62' : seasonal(PALETTE.leaf, season);
+    const cols = season === 'winter' ? [PALETTE.flower.red, PALETTE.flower.white] : flowerColors(season, rand);
+    for (const sx of [-1, 1]) {
+      const bx = sx * (hw - 0.42);
+      P.add(roundBox(0.5, 0.06, D - 0.7, 0.02, 1), PALETTE.wood, { at: [bx, 0.74, -0.1] });
+      for (const z of [-c + 0.45, c - 0.65]) for (const dx of [-0.2, 0.2]) P.add(box(0.05, 0.74, 0.05), PALETTE.woodDark, { at: [bx + dx, 0, z] });
+      const n = Math.round((D - 0.9) / 0.38);
+      for (let i = 0; i < n; i++) {
+        const z = -c + 0.5 + i * 0.38;
+        P.add(roundCyl(0.1, 0.15, { top: 0.12, bevel: 0.02, segments: 10, steps: 1 }), '#c8754a', { at: [bx, 0.8, z] });
+        const tall = rand.chance(0.4);
+        P.add(blob(tall ? 0.15 : 0.12, { detail: 1, amp: 0.18, seed: i * 3 + (sx > 0 ? 1 : 0), squash: tall ? [0.9, 1.4, 0.9] : [1.1, 0.9, 1.1] }), { slot: 'foliage', color: shade(leaf, rand.float(-0.06, 0.05)) }, { at: [bx, tall ? 1.1 : 1.02, z] });
+        if (cols.length && !tall) P.add(sphere(0.05, 6, 4), { slot: 'foliage', color: cols[i % cols.length] }, { at: [bx + 0.04, 1.12, z + 0.03] });
+        if (tall && season !== 'winter') P.add(sphere(0.045, 6, 4), { slot: 'foliage', color: PALETTE.flower.red }, { at: [bx + 0.08, 1.12, z + 0.05] });
+      }
+    }
+    return finish(P.build('greenhouse'), {
+      footprint: { w: W + 0.4, d: D + 0.6 },
+      spots: { door: spot([0, 0, c + 0.5], 0, 'stand'), bench: spot([-hw + 0.95, 0.03, 0.1], -90, 'stand') },
+      height: H + rise + 0.1,
+    });
+  },
+};
+
+/* ───────────────────────── shrine ───────────────────────── */
+
+const SHRINE = {
+  label: 'Shrine',
+  about: 'A little wayside shrine: a wooden hut with a swooping roof on a stone base, a rope with paper streamers, an offering box, two stone lanterns and a small vermilion torii in front. Someone can kneel to pray.',
+  params: {
+    color: { default: '#d4553f', type: 'color', about: 'vermilion accents and the torii' },
+    roof: { default: PALETTE.roofSlate, type: 'color', about: 'roof color' },
+    torii: { default: true, about: 'a small torii gate in front' },
+  },
+  examples: [{}, { color: '#c9a25c', roof: PALETTE.roofGreen, torii: false }, { roof: PALETTE.roofBrown }],
+  build(p, ctx) {
+    const rand = ctx.rng;
+    const red = colorOr(p.color, '#d4553f'), roofC = colorOr(p.roof, PALETTE.roofSlate);
+    const torii = boolOr(p.torii, true);
+    const P = new Parts();
+    const wood = PALETTE.wood, stone = PALETTE.stone;
+    // stone base with a step
+    P.add(roundBox(1.5, 0.36, 1.3, 0.05, 1), stone, { at: [0, 0, -0.3] });
+    P.add(roundBox(0.9, 0.18, 0.35, 0.04, 1), shade(stone, 0.04), { at: [0, 0, 0.52] });
+    // the shrine house
+    const hx = 0.42, hz = 0.36, by = 0.36;
+    P.add(roundBox(1.0, 0.1, 0.86, 0.03, 1), wood, { at: [0, by, -0.3] });
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) P.add(roundBox(0.09, 0.82, 0.09, 0.025, 1), red, { at: [sx * hx, by + 0.1, -0.3 + sz * hz] });
+    P.add(roundBox(hx * 2 - 0.04, 0.78, hz * 2 - 0.04, 0.03, 1), PALETTE.woodLight, { at: [0, by + 0.1, -0.33] });
+    // doors with lattice
+    for (const sx of [-1, 1]) {
+      P.add(roundBox(hx - 0.04, 0.6, 0.03, 0.01, 1), shade(PALETTE.woodLight, 0.05), { at: [sx * (hx / 2), by + 0.18, -0.3 + hz - 0.02] });
+      for (let k = 1; k < 4; k++) P.add(box(0.012, 0.56, 0.012), PALETTE.woodDark, { at: [sx * (hx / 2) - (hx - 0.04) / 2 + k * (hx - 0.04) / 4, by + 0.2, -0.3 + hz] });
+      for (let k = 1; k < 5; k++) P.add(box(hx - 0.06, 0.012, 0.012), PALETTE.woodDark, { at: [sx * (hx / 2), by + 0.18 + k * 0.12, -0.3 + hz] });
+    }
+    P.add(roundBox(hx * 2 + 0.1, 0.08, 0.1, 0.02, 1), red, { at: [0, by + 0.86, -0.3 + hz] });
+    // swooping roof: a curved profile extruded along X
+    const ry = by + 0.94;
+    const half = bezier([0, 0.62], [0.28, 0.6], [0.5, 0.18], [0.78, 0.02], 8);
+    const top = [...half.slice(1).reverse().map(([z, y]) => [-z, y]), ...half];
+    const under = offsetLine(top, -0.09);
+    const roofShape = outlineShape([...top.map(([z, y]) => [z, y - 0.01]), ...under.reverse()]);
+    P.add(slab(roofShape, 1.3, { bevel: 0.025, seg: 1 }), roofC, { at: [0, ry, -0.3], rot: [0, -Math.PI / 2, 0] });
+    rod(P, [-0.72, ry + 0.63, -0.3], [0.72, ry + 0.63, -0.3], 0.06, shade(roofC, -0.1), { seg: 10 });
+    for (const sx of [-1, 1]) P.add(sphere(0.07, 10, 8), METAL(PALETTE.gold), { at: [sx * 0.74, ry + 0.64, -0.3] });
+    P.add(slab(outlineShape([[-hz, 0], [hz, 0], [0, 0.52]]), hx * 2, { bevel: 0 }), PALETTE.woodLight, { at: [0, ry - 0.02, -0.3], rot: [0, -Math.PI / 2, 0] });
+    // sacred rope with paper streamers, a bell, an offering box
+    const rope = [];
+    for (let i = 0; i <= 10; i++) { const x = -0.5 + i * 0.1; rope.push(new THREE.Vector3(x, by + 0.84 - 0.08 * Math.sin((i / 10) * Math.PI), -0.3 + hz + 0.1)); }
+    P.add(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(rope), 20, 0.03, 6, false), '#e8d6a6');
+    for (const x of [-0.28, 0, 0.28]) {
+      const y = by + 0.84 - 0.08 * Math.sin(((x + 0.5) / 1) * Math.PI);
+      P.add(slab(outlineShape([[-0.04, 0], [0.04, 0], [0.04, -0.06], [-0.02, -0.06], [-0.02, -0.12], [0.03, -0.12], [0.03, -0.2], [-0.04, -0.2]]), 0.01, { bevel: 0 }), PALETTE.wallWhite, { at: [x, y - 0.03, -0.3 + hz + 0.11] });
+    }
+    P.add(sphere(0.07, 10, 8), METAL(PALETTE.gold), { at: [0.36, by + 0.66, -0.3 + hz + 0.12] });
+    rod(P, [0.36, by + 0.7, -0.3 + hz + 0.12], [0.36, by + 0.84, -0.3 + hz + 0.1], 0.012, '#d9534a', { seg: 5 });
+    P.add(roundBox(0.5, 0.3, 0.3, 0.03, 1), PALETTE.woodDark, { at: [0, by, 0.22] });
+    for (let k = 0; k < 4; k++) P.add(box(0.44, 0.015, 0.025), PALETTE.woodLight, { at: [0, by + 0.31, 0.12 + k * 0.065] });
+    // stone lanterns
+    for (const sx of [-1, 1]) {
+      const x = sx * 1.05, z = 0.35;
+      P.add(roundBox(0.34, 0.1, 0.34, 0.03, 1), stone, { at: [x, 0, z] });
+      P.add(roundCyl(0.07, 0.5, { bevel: 0.02, segments: 8, steps: 1 }), stone, { at: [x, 0.1, z] });
+      P.add(roundBox(0.3, 0.08, 0.3, 0.03, 1), stone, { at: [x, 0.6, z] });
+      P.add(roundBox(0.2, 0.2, 0.2, 0.02, 1), LAMP, { at: [x, 0.68, z] });
+      P.add(facetLathe([[0, 0], [0.26, 0], [0.24, 0.05], [0.05, 0.2], [0, 0.22]], 4), stone, { at: [x, 0.88, z] });
+      P.add(sphere(0.045, 8, 6), stone, { at: [x, 1.11, z] });
+    }
+    // a small torii in front
+    let tz = 0;
+    if (torii) {
+      tz = 1.55;
+      for (const sx of [-1, 1]) {
+        P.add(roundCyl(0.075, 1.75, { top: 0.065, bevel: 0.03, segments: 12, steps: 1 }), red, { at: [sx * 0.62, 0, tz] });
+        P.add(roundCyl(0.1, 0.16, { bevel: 0.03, segments: 12, steps: 1 }), PALETTE.iron, { at: [sx * 0.62, 0, tz] });
+      }
+      plank(P, [-0.82, 1.42, tz], [0.82, 1.42, tz], 0.1, 0.09, red);
+      const kasagi = (x) => 1.78 + 0.06 * (x / 1.0) ** 2;
+      bandBeam(P, kasagi, -1.0, 1.0, 0.13, 0.16, tz, red, 12);
+      bandBeam(P, (x) => kasagi(x) + 0.07, -1.06, 1.06, 0.07, 0.2, tz, PALETTE.iron, 12);
+      P.add(roundBox(0.1, 0.3, 0.06, 0.02, 1), red, { at: [0, 1.46, tz] });
+    }
+    return finish(P.build('shrine'), {
+      footprint: { w: 2.6, d: torii ? 3.4 : 2.0 },
+      spots: { pray: spot([0, 0, 0.95], 180, 'kneel'), torii: spot([0, 0, torii ? tz + 0.6 : 1.4], 180, 'stand') },
+      lights: [light([-1.05, 0.78, 0.45], { intensity: 0.45, distance: 2.5 }), light([1.05, 0.78, 0.45], { intensity: 0.45, distance: 2.5 })],
+      height: ry + 0.7,
+    });
+  },
+};
+
 export const BUILDINGS = {
   house: HOUSE,
   windmill: WINDMILL,
@@ -2066,4 +2967,11 @@ export const BUILDINGS = {
   tent: TENT,
   hut: HUT,
   hall: HALL,
+  bridge: BRIDGE,
+  wall: WALL,
+  gate: GATE,
+  ruin: RUIN,
+  shed: SHED,
+  greenhouse: GREENHOUSE,
+  shrine: SHRINE,
 };
