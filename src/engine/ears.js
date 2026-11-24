@@ -16,6 +16,9 @@ export const EAR_STYLES = {
   bear: { label: 'Bear', scale: 0 },
   mouse: { label: 'Mouse', scale: 0 },
   floppy: { label: 'Floppy', scale: 0 },
+  cow: { label: 'Cow', scale: 0 },
+  horse: { label: 'Horse', scale: 0 },
+  none: { label: 'None', scale: 0 },
 };
 
 const INNER_PINK = '#f3a8b6';
@@ -140,6 +143,16 @@ export function buildEars(style, colors) {
     case 'floppy':
       onHead(() => ear(teardropShape(0.1, 0.19), 0.026, fur), (e, side) => {
         e.position.set(side * 0.215, 0.34, -0.03); e.rotation.set(0, side * Math.PI / 2, side * 0.18);
+      });
+      break;
+    case 'cow': // leaf-shaped ears sticking out sideways
+      onHead(() => ear(ovalShape(0.07, 0.15), 0.022, fur, ovalShape(0.07, 0.15), pink, 0.6, 0.03), (e, side) => {
+        e.position.set(side * 0.2, 0.29, -0.03); e.rotation.set(-0.3, 0, -side * 1.95);
+      });
+      break;
+    case 'horse': // tall, narrow, upright
+      onHead(() => ear(triangleShape(0.085, 0.16), 0.024, fur, triangleShape(0.085, 0.16), new THREE.MeshStandardMaterial({ color: '#3a2a22', roughness: 0.8 }), 0.55, 0.02), (e, side) => {
+        e.position.set(side * 0.11, 0.375, -0.05); e.rotation.set(-0.15, -side * 0.25, -side * 0.12);
       });
       break;
     default:

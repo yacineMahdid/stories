@@ -369,12 +369,16 @@ export const NOSES = {
     g.fillStyle = '#2a2224'; g.beginPath(); g.ellipse(x, y, 22, 15, 0, 0, TAU); g.fill();
     g.fillStyle = 'rgba(255, 255, 255, 0.7)'; g.beginPath(); g.ellipse(x - 7, y - 6, 7, 4, -0.3, 0, TAU); g.fill();
   },
+  nostrils(g, x, y, p) {
+    g.fillStyle = p.noseColor;
+    g.beginPath(); g.ellipse(x - 12, y, 5, 4, 0, 0, TAU); g.ellipse(x + 12, y, 5, 4, 0, 0, TAU); g.fill();
+  },
   none() {},
 };
 
 export const NOSE_STYLES = {
   triangle: 'Triangle', dot: 'Dot', button: 'Button', round: 'Round', oval: 'Oval', line: 'Line',
-  hook: 'Hook', vee: 'Vee', heart: 'Heart', pig: 'Snout', dog: 'Pup', none: 'None',
+  hook: 'Hook', vee: 'Vee', heart: 'Heart', pig: 'Snout', dog: 'Pup', nostrils: 'Nostrils', none: 'None',
 };
 
 // --- cheeks, tears, shade --------------------------------------------------------------------

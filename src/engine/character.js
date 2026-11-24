@@ -10,6 +10,7 @@ import { EMOTIONS } from './emotions.js';
 import { Symbols } from './symbols.js';
 import { applyBody } from './body.js';
 import { EAR_STYLES, buildEars } from './ears.js';
+import { buildParts } from './parts.js';
 
 // A character is the canonical base + a spec. Everything that makes characters differ
 // lives in the spec; the mesh, skeleton and animations are shared.
@@ -24,6 +25,8 @@ export const DEFAULT_SPEC = {
   ears: 'human',      // see ears.js EAR_STYLES
   hair: null,         // { style: 'bob', color: '#4a2f22' }, see hair.js
   outfit: null,       // see outfit.js
+  fur: null,          // fur patterns, see outfit.js
+  parts: [],          // snouts, horns, tails..., see parts.js
   face: {},           // see face.js DEFAULT_FACE
 };
 
@@ -91,7 +94,8 @@ export class Character {
   /** Re-skin the character from a spec (colors, hair, outfit, proportions, face). */
   apply(spec = {}) {
     this.spec = { ...DEFAULT_SPEC, ...spec };
-    applyOutfit(this.bodyMesh.material, this.spec.skin, this.spec.outfit);
+    applyOutfit(this.bodyMesh.material, this.spec.skin, this.spec.outfit, this.spec.fur);
+    this.setParts(this.spec.parts);
     this.root.scale.setScalar(this.spec.height);
     this.bodyType = applyBody(this, this.spec.body);
     this.bones.Head.scale.setScalar(this.spec.headScale * (this.bodyType.head ?? 1));
@@ -101,7 +105,16 @@ export class Character {
     return this.ready;
   }
 
-  /** Swap the ears (see ears.js). Animal ears take the hair color. */
+  /** Replace the extra parts (snouts, horns, manes, tails; see parts.js). */
+  setParts(parts = []) {
+    for (const { object } of this.partObjects ?? []) {
+      object.removeFromParent();
+      object.traverse((m) => { if (m.isMesh) { m.geometry.dispose(); m.material.dispose(); } });
+    }
+    this.partObjects = buildParts(parts).map((part) => { this.bones[part.bone].add(part.object); return part; });
+  }
+
+  /** Swap the ears (see ears.js). Animal ears take the hair color, or the fur color. */
   setEars(style = 'human') {
     this.spec.ears = style;
     for (const o of this.earObjects ?? []) {
@@ -112,7 +125,8 @@ export class Character {
     const s = Math.max(def.scale, 0.001);
     this.bones.LeftEar.scale.setScalar(s);
     this.bones.RightEar.scale.setScalar(s);
-    const colors = { fur: this.spec.hair?.color ?? '#4a2f22', skin: this.spec.skin };
+    const furry = this.spec.fur || this.spec.parts?.length;
+    const colors = { fur: furry ? this.spec.skin : this.spec.hair?.color ?? '#4a2f22', skin: this.spec.skin };
     this.earObjects = buildEars(style, colors).map(({ bone, object }) => { this.bones[bone].add(object); return object; });
   }
 
@@ -186,6 +200,12 @@ export class Character {
     this.applyMotion(dt);
     this.face.update(dt);
     this.symbols.update(dt);
+    this.wagTime = (this.wagTime ?? 0) + dt;
+    for (const { object, wag } of this.partObjects ?? []) {
+      if (!wag) continue;
+      object.rotation.y = wag[0] * Math.sin(this.wagTime * wag[1]);
+      object.rotation.x = 0.06 * Math.sin(this.wagTime * wag[1] * 0.5);
+    }
   }
 
   // The mixer only rewrites a bone when its animated value changes, so offsets added after it
@@ -227,6 +247,7 @@ export class Character {
     this.bodyMesh.material.dispose();
     this.faceMesh.material.dispose();
     this.hairMaterial.dispose();
+    this.setParts([]);
     this.symbols.dispose();
     this.face.dispose();
     this.skeletonHelper.dispose?.();

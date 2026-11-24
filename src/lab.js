@@ -7,34 +7,15 @@ import { MOUTH_STYLES, NOSE_STYLES } from './engine/face-parts.js';
 import { BODY_TYPES } from './engine/body.js';
 import { EAR_STYLES } from './engine/ears.js';
 import { ANIMATION_GROUPS } from './engine/animations.js';
+import { SPECIES } from './engine/species.js';
 
-// Example specs: everything here is built from the same canonical base.
-const PRESETS = [
-  { label: 'Base', spec: {} },
-  {
-    label: 'Tee + shorts',
-    spec: {
-      skin: '#f3c9a5',
-      outfit: { top: '#f2c14e', sleeves: 'short', bottom: '#3d5a80', legs: 'shorts', shoes: '#f4f1ea' },
-      face: { eyes: 'round', nose: 'dot', noseColor: '#ee8a7c', blush: true },
-    },
-  },
-  {
-    label: 'Long sleeves',
-    spec: {
-      skin: '#c98d64', height: 1.04, headScale: 0.96,
-      outfit: { top: '#5b8c5a', sleeves: 'long', bottom: '#6b4f3a', legs: 'pants', shoes: '#2d2a26' },
-      face: { eyes: 'classic', nose: 'triangle', noseColor: '#d9822b', mouth: 'cat', brows: true },
-    },
-  },
-  {
-    label: 'Tank top',
-    spec: {
-      skin: '#8d5a3b', height: 0.96, headScale: 1.05,
-      outfit: { top: '#7b4b94', sleeves: 'none', bottom: '#24242b', legs: 'shorts', shoes: '#d1495b' },
-      face: { eyes: 'sparkle', eyeColor: '#3a7bd5', eyeLine: '#3b2216', nose: 'dot', noseColor: '#5e3a24', blush: true, blushColor: '#e07a7a' },
-    },
-  },
+// Example outfits, painted on any species.
+const OUTFITS = [
+  { label: 'None', outfit: null },
+  { label: 'Tee + shorts', outfit: { top: '#f2c14e', sleeves: 'short', bottom: '#3d5a80', legs: 'shorts', shoes: '#f4f1ea' } },
+  { label: 'Long sleeves', outfit: { top: '#5b8c5a', sleeves: 'long', bottom: '#6b4f3a', legs: 'pants', shoes: '#2d2a26' } },
+  { label: 'Tank top', outfit: { top: '#7b4b94', sleeves: 'none', bottom: '#24242b', legs: 'shorts', shoes: '#d1495b' } },
+  { label: 'Overalls', outfit: { top: '#f4f1ea', sleeves: 'short', bottom: '#4a6fa5', legs: 'pants', hem: 0.36, shoes: '#7a4a2c' } },
 ];
 
 const SKINS = [
@@ -100,46 +81,57 @@ const tabButtons = groups.map((group) => {
 tabButtons[0].setAttribute('aria-selected', 'true');
 
 try {
-  const character = await createCharacter(PRESETS[0].spec);
+  const character = await createCharacter({});
   stage.add(character);
   stage.frame(character.root);
 
   const { bones, triangles, clips } = character.stats;
   $('stats').innerHTML = `${bones} joints<br>${triangles.toLocaleString()} triangles<br>${clips} animations`;
 
-  // Everything picked here is kept when switching characters; picking a character loads its look.
+  // The look is a species plus individual picks; picking a species loads its defaults.
   const ids = (o) => Object.keys(o);
-  const eyeIds = ids(EYE_STYLES), mouthIds = ids(MOUTH_STYLES), noseIds = ids(NOSE_STYLES);
+  const speciesIds = ids(SPECIES), eyeIds = ids(EYE_STYLES), mouthIds = ids(MOUTH_STYLES), noseIds = ids(NOSE_STYLES);
   const bodyIds = ids(BODY_TYPES), earIds = ids(EAR_STYLES);
   const hairStyles = [{ id: null, label: 'None' }, ...HAIR_STYLES];
   const look = {
-    preset: 0, skin: SKINS[1].value, body: 'standard', ears: 'human',
+    species: 'human', outfit: 0, skin: SKINS[1].value, body: 'standard', ears: 'human',
     hair: { style: HAIR_STYLES[0].id, color: HAIR_COLORS[0].value },
     eyes: 'classic', eyeColor: EYE_COLORS[0].value, mouth: 'smile', nose: 'triangle',
   };
   const refresh = () => {
-    const spec = PRESETS[look.preset].spec;
+    const spec = SPECIES[look.species].spec;
     character.apply({
-      ...spec, skin: look.skin, body: look.body, ears: look.ears, hair: { ...look.hair },
+      ...spec, outfit: OUTFITS[look.outfit].outfit,
+      skin: look.skin, body: look.body, ears: look.ears, hair: look.hair.style ? { ...look.hair } : null,
       face: { ...spec.face, eyes: look.eyes, eyeColor: look.eyeColor, mouth: look.mouth, nose: look.nose },
     });
   };
 
   const rows = {};
-  rows.presets = chipRow($('presets'), PRESETS.map((p) => p.label), (i) => {
-    look.preset = i;
-    const spec = PRESETS[i].spec, face = spec.face ?? {};
-    Object.assign(look, {
-      skin: spec.skin ?? SKINS[1].value, eyes: face.eyes ?? 'classic', eyeColor: face.eyeColor ?? EYE_COLORS[0].value,
-      mouth: face.mouth ?? 'smile', nose: face.nose ?? 'triangle',
-    });
+  const sync = () => {
     press(rows.skins, SKINS.findIndex((c) => c.value === look.skin));
+    press(rows.hair, hairStyles.findIndex((h) => h.id === look.hair.style));
     press(rows.eyes, eyeIds.indexOf(look.eyes));
     press(rows.eyeColors, EYE_COLORS.findIndex((c) => c.value === look.eyeColor));
     press(rows.mouths, mouthIds.indexOf(look.mouth));
     press(rows.noses, noseIds.indexOf(look.nose));
+    press(rows.bodies, bodyIds.indexOf(look.body));
+    press(rows.ears, earIds.indexOf(look.ears));
+  };
+  rows.species = chipRow($('species'), speciesIds.map((id) => SPECIES[id].label), (i) => {
+    look.species = speciesIds[i];
+    const spec = SPECIES[look.species].spec, face = spec.face ?? {};
+    const human = look.species === 'human';
+    Object.assign(look, {
+      skin: spec.skin ?? SKINS[1].value, body: spec.body ?? 'standard', ears: spec.ears ?? 'human',
+      eyes: face.eyes ?? 'classic', eyeColor: face.eyeColor ?? EYE_COLORS[0].value,
+      mouth: face.mouth ?? 'smile', nose: face.nose ?? 'triangle',
+    });
+    look.hair.style = human ? (look.hair.style ?? HAIR_STYLES[0].id) : null;
+    sync();
     refresh();
   });
+  rows.outfits = chipRow($('outfits'), OUTFITS.map((o) => o.label), (i) => { look.outfit = i; refresh(); });
   rows.skins = swatchRow($('skins'), SKINS, (c) => { look.skin = c; refresh(); });
   rows.hair = chipRow($('hair'), hairStyles.map((h) => h.label), (i) => { look.hair.style = hairStyles[i].id; refresh(); });
   rows.hairColors = swatchRow($('hair-colors'), HAIR_COLORS, (c) => { look.hair.color = c; refresh(); });
@@ -149,11 +141,9 @@ try {
   rows.noses = chipRow($('noses'), noseIds.map((id) => NOSE_STYLES[id]), (i) => { look.nose = noseIds[i]; refresh(); });
   rows.bodies = chipRow($('bodies'), bodyIds.map((id) => BODY_TYPES[id].label), (i) => { look.body = bodyIds[i]; refresh(); });
   rows.ears = chipRow($('ears'), earIds.map((id) => EAR_STYLES[id].label), (i) => { look.ears = earIds[i]; refresh(); });
-  press(rows.hair, 1);
   press(rows.hairColors, 0);
-  press(rows.bodies, 0);
-  press(rows.ears, 0);
-  rows.presets[0].click();
+  press(rows.outfits, 0);
+  rows.species[0].click();
 
   // One row of animations per group; one pick across all rows.
   const readable = (name) => name.split(/(?=[A-Z])/).map((w, i) => (i ? w.toLowerCase() : w)).join(' ');

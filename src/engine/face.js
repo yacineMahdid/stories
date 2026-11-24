@@ -38,6 +38,9 @@ export const DEFAULT_FACE = {
   blushColor: '#f28b82',
   brows: false,
   browColor: '#6b3a22',
+  eyeY: 0, noseY: 0, mouthY: 0,   // feature offsets in canvas pixels (for snouts and wide heads)
+  mask: null,                     // { color, shape: 'heart' | 'oval' | 'muzzle' } painted under the features
+  whiskers: null,                 // color of whiskers, or null
 };
 
 // Eye modes drawn with the character's own eye style (and so able to blink).
@@ -116,27 +119,59 @@ export class Face {
 
     const g = this.ctx, p = this.params, e = this.emotion, k = p.eyeSize, t = this.time;
     const dx = EYE_DX * p.eyeSpacing;
-    const layout = { eyeY: EYE_Y, eyeDX: dx, blushY: BLUSH_Y, blushDX: BLUSH_DX };
+    const eyeY = EYE_Y + p.eyeY, noseY = NOSE_Y + p.noseY, mouthY = MOUTH_Y + p.mouthY;
+    const layout = { eyeY, eyeDX: dx, blushY: BLUSH_Y + p.eyeY * 0.5, blushDX: BLUSH_DX };
     const eyes = [[SIZE / 2 - dx, -1], [SIZE / 2 + dx, 1]]; // [x, side]: -1 = viewer's left
     g.clearRect(0, 0, SIZE, SIZE);
     g.lineCap = 'round';
     g.lineJoin = 'round';
+    if (p.mask) this.mask(p.mask, eyes, eyeY, mouthY);
 
     if (e.cheeks) drawCheeks(g, e.cheeks, layout, p);
     else if (p.blush) for (const [, side] of eyes) blushAt(g, SIZE / 2 + side * BLUSH_DX, BLUSH_Y, p.blushColor);
 
     const glow = this.eyeMode === 'glow';
-    if (!glow) for (const [x, side] of eyes) this.eye(x, EYE_Y, side);
+    if (!glow) for (const [x, side] of eyes) this.eye(x, eyeY, side);
     const brows = e.brows ?? (p.brows ? 'soft' : null);
-    if (brows) for (const [x, side] of eyes) drawBrow(g, x, EYE_Y - 82 * k, side, brows, p);
+    if (brows) for (const [x, side] of eyes) drawBrow(g, x, eyeY - 82 * k, side, brows, p);
     if (e.shade) drawShade(g, e.shade, layout);
-    if (glow) for (const [x, side] of eyes) EYE_MODES.glow(g, x, EYE_Y, side, k, p, t, e);
+    if (glow) for (const [x, side] of eyes) EYE_MODES.glow(g, x, eyeY, side, k, p, t, e);
     if (e.tears) drawTears(g, e.tears, layout, k, t);
 
-    this.nose(SIZE / 2, NOSE_Y);
-    if (this.talking && this.mouthOpen > 0.08) this.talkMouth(SIZE / 2, MOUTH_Y);
-    else (MOUTHS[e.mouth ?? p.mouth] ?? MOUTHS.smile)(g, SIZE / 2, MOUTH_Y, p, t);
+    if (p.whiskers) this.whiskers(p.whiskers, noseY);
+    this.nose(SIZE / 2, noseY);
+    if (this.talking && this.mouthOpen > 0.08) this.talkMouth(SIZE / 2, mouthY);
+    else (MOUTHS[e.mouth ?? p.mouth] ?? MOUTHS.smile)(g, SIZE / 2, mouthY, p, t);
     this.texture.needsUpdate = true;
+  }
+
+  mask({ color, shape = 'heart' }, eyes, eyeY, mouthY) {
+    const g = this.ctx;
+    g.fillStyle = color;
+    g.beginPath();
+    if (shape === 'heart') { // around both eyes and down over the mouth (monkeys)
+      for (const [x] of eyes) g.ellipse(x + (SIZE / 2 - x) * 0.12, eyeY + 6, 74, 80, 0, 0, TAU);
+      g.ellipse(SIZE / 2, mouthY - 12, 92, 74, 0, 0, TAU);
+    } else if (shape === 'muzzle') {
+      g.ellipse(SIZE / 2, mouthY - 22, 96, 70, 0, 0, TAU);
+    } else {
+      g.ellipse(SIZE / 2, (eyeY + mouthY) / 2, 170, 150, 0, 0, TAU);
+    }
+    g.fill();
+  }
+
+  whiskers(color, noseY) {
+    const g = this.ctx;
+    g.strokeStyle = color; g.lineWidth = 4; g.globalAlpha = 0.85;
+    g.beginPath();
+    for (const side of [-1, 1]) {
+      for (const [dy, tilt] of [[-6, -14], [6, 0], [18, 14]]) {
+        g.moveTo(SIZE / 2 + side * 62, noseY + dy);
+        g.lineTo(SIZE / 2 + side * 136, noseY + dy + tilt);
+      }
+    }
+    g.stroke();
+    g.globalAlpha = 1;
   }
 
   eye(x, y, side) {
