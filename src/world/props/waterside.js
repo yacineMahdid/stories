@@ -74,9 +74,10 @@ function matOf(look) {
 }
 
 /**
- * Add a piece and paint it: `painter(color, x, y, z, nx, ny, nz)` gets the look's color and a
- * point in the piece's own space (before `at/rot/scale`) and changes the color. With `perFace`
- * whole triangles take one color (crisp stripes and bands).
+ * Add a piece and paint it: `painter(color, x, y, z, nx, ny, nz, index)` gets the look's color
+ * and a point in the piece's own space (before `at/rot/scale/matrix`) and changes the color.
+ * With `perFace` whole triangles take one color (crisp stripes and bands) and `index` is the
+ * triangle's index in the geometry's own order; otherwise it is the vertex index.
  */
 function addPainted(parts, geometry, look, opts, painter, perFace = false) {
   parts.add(geometry, look, opts);
@@ -197,14 +198,13 @@ function mergeAll(geos0) {
   return out;
 }
 
-/** Push every vertex out along its direction from `center` by `amount * noise` (lumpy stones, logs). */
-function lumpy(g, { amp = 0.04, freq = 3, seed = 0, keep = null } = {}) {
+/** Push every vertex out from the Y axis by `amp * noise` (lumpy stones). */
+function lumpy(g, { amp = 0.04, freq = 3, seed = 0 } = {}) {
   const pos = g.attributes.position;
   const v = new THREE.Vector3();
   const o = (seed % 97) * 1.37;
   for (let i = 0; i < pos.count; i++) {
     v.set(pos.getX(i), pos.getY(i), pos.getZ(i));
-    if (keep && keep(v)) continue;
     const n = noise3(v.x * freq + o, v.y * freq - o, v.z * freq + o * 0.5);
     const d = Math.hypot(v.x, v.z) || 1;
     pos.setXYZ(i, v.x + (v.x / d) * amp * n, v.y, v.z + (v.z / d) * amp * n);
@@ -215,10 +215,9 @@ function lumpy(g, { amp = 0.04, freq = 3, seed = 0, keep = null } = {}) {
 
 /** Weld a geometry's seams (lathes, spheres) so it shades smoothly. */
 function weld(g) {
-  let w = g.index ? g : g;
-  w.deleteAttribute('normal');
-  w.deleteAttribute('uv');
-  w = mergeVertices(w, 1e-5);
+  g.deleteAttribute('normal');
+  g.deleteAttribute('uv');
+  const w = mergeVertices(g, 1e-5);
   w.computeVertexNormals();
   return w;
 }
@@ -624,10 +623,11 @@ function holdTick(group, { upright = 1, lean = [0, 0, 0], hang = 0, level = [], 
       group.position.copy(left ? GRIP_L : GRIP);
       group.scale.set(left ? -1 : 1, 1, 1);
       // children that stay level: their parent's world rotation is _qb (and the group's own children)
+      // (under a mirrored group the level rotation is mirrored too)
       for (const child of level) {
-        child.parent.updateWorldMatrix(true, false);
         child.parent.getWorldQuaternion(_qa);
-        child.quaternion.copy(_qa).invert().multiply(_qf);
+        const q = child.quaternion.copy(_qa).invert().multiply(_qf);
+        if (left) q.set(q.x, -q.y, -q.z, q.w);
       }
     }
     extra?.(t, dt);
@@ -744,10 +744,10 @@ export const WATERSIDE = {
         lights.push(light([x, 1.3, z], { intensity: 1.2, distance: 7 }));
       }
       return finish(parts.build('dock'), {
-        footprint: { w: W + 0.4, d: Math.min(L, 3) * 2 },
+        footprint: { w: W + 0.5, d: Math.min(L, 2) * 2 },
         spots,
         lights,
-        height: 0.3,
+        height: flag(p.lamp, false) ? 1.55 : 0.25,
       });
     },
   },
@@ -853,15 +853,16 @@ export const WATERSIDE = {
       const group = new THREE.Group();
       group.add(outer);
       let tick = null;
-      let lift = 0;
       if (state === 'floating') tick = bobber(outer, phaseOf(ctx));
-      else if (state === 'beached') { lift = 0.1; outer.position.y = lift; outer.rotation.set(-0.04, 0, 0.12); }
-      else { lift = -0.06; outer.position.y = lift; outer.rotation.set(0.12, 0.0, -0.34); }
+      else if (state === 'beached') { outer.position.y = 0.1; outer.rotation.set(-0.04, 0, 0.12); }
+      else { outer.position.y = -0.06; outer.rotation.set(0.12, 0.0, -0.34); }
+      outer.updateMatrix();
+      const onSeat = (k, dz) => new THREE.Vector3(0, seatTops[k][1], seatTops[k][0] + dz).applyMatrix4(outer.matrix).toArray().map((v) => +v.toFixed(3));
       const spots = wreck ? { look: spot([0.9, 0, 0.9], -135, 'stand') } : {
-        seat: spot([0, seatTops[1][1] + lift, seatTops[1][0] - 0.02], 0, 'sit'),
-        row: spot([0, seatTops[1][1] + lift, seatTops[1][0] + 0.02], 180, 'sit'),
-        stern: spot([0, seatTops[0][1] + lift, seatTops[0][0] - 0.02], 0, 'sit'),
-        bow: spot([0, seatTops[2][1] + lift, seatTops[2][0] + 0.02], 180, 'sit'),
+        seat: spot(onSeat(1, -0.02), 0, 'sit'),
+        row: spot(onSeat(1, 0.02), 180, 'sit'),
+        stern: spot(onSeat(0, -0.02), 0, 'sit'),
+        bow: spot(onSeat(2, 0.02), 180, 'sit'),
       };
       return finish(group, {
         footprint: { w: 1.0, d: 2.1 },
@@ -892,19 +893,24 @@ export const WATERSIDE = {
       for (let i = 0; i < n; i++) {
         const z = -L / 2 + (L * i) / (n - 1);
         const x = (i % 2 ? 1 : -1) * r.float(0.04, 0.1);
-        const rad = r.float(0.2, 0.26), topY = r.float(0.035, 0.06);
-        let g = weld(roundCyl(rad, 1.0, { top: rad * 0.92, bevel: 0.05, segments: 12, steps: 2 }));
-        g.translate(0, -1.0 + topY, 0);
-        lumpy(g, { amp: rad * 0.16, freq: 4, seed: i * 7 + 3 });
-        g.scale(1, 1, r.float(0.78, 0.95));
+        const k = r.float(0.82, 1.06), topY = r.float(0.035, 0.06);
+        // a rounded boulder: a flat-ish worn top, bulging sides, tucked in below the water
+        const prof = [[0, -0.95], [0.21, -0.95], [0.29, -0.5], [0.3, -0.2], [0.275, -0.04], [0.22, 0.0], [0.13, 0.014], [0, 0.018]].map(([pr, py]) => [pr * k, py + topY - 0.018]);
+        const g = weld(lathe(prof, 11));
+        lumpy(g, { amp: 0.05 * k, freq: 3.2, seed: i * 7 + 3 });
+        g.scale(1, 1, r.float(0.8, 0.95));
         g.rotateY(r.angle());
         g.computeVertexNormals();
         const tone = shade(base, r.float(-0.04, 0.04));
-        const moss = mix(tone, '#6f9a4f', 0.55);
+        const moss = mix(tone, '#6f9a4f', 0.6);
+        const o = r.float(0, 10);
         addPainted(parts, g, tone, { at: [x, 0, z] }, (c, px, py, pz, nx, ny) => {
-          if (ny > 0.6) c.offsetHSL(0, 0, 0.035);
-          else if (mossy) c.lerp(C(moss), clamp(0.5 + noise3(px * 7, py * 5, pz * 7 + i) * 0.8, 0, 0.85) * smooth(topY - 0.02, topY - 0.25, py));
-          if (py < topY - 0.3) c.offsetHSL(0, 0, -0.06);
+          if (ny > 0.55) c.offsetHSL(0, 0, 0.04 + 0.03 * noise3(px * 9 + o, pz * 9, 1));
+          else {
+            c.offsetHSL(0, 0, -0.03);
+            if (mossy) c.lerp(C(moss), clamp(0.45 + noise3(px * 7 + o, py * 5, pz * 7) * 0.9, 0, 0.85) * smooth(topY - 0.01, topY - 0.12, py) * smooth(-0.45, -0.25, py));
+            if (py < -0.25) c.lerp(C(shade(tone, -0.12, { hue: 0.02 })), smooth(-0.25, -0.4, py));
+          }
         });
         tops.push([x, topY, z]);
       }
@@ -1655,7 +1661,7 @@ export const WATERSIDE = {
       color: { default: '#d8b56c', type: 'color', about: 'rod color (bamboo by default)' },
       line: { default: 0.55, min: 0.1, max: 3, about: 'how far the line hangs below the rod tip' },
     },
-    examples: [{}, { clip: 'Walk' }, { color: 'red', line: 0.9 }, { clip: 'Sit', line: 1.0 }],
+    examples: [{}, { clip: 'Walk' }, { color: 'red', line: 0.9 }, { clip: 'Sit', line: 1.0 }, { hand: 'leftHand', clip: 'Walk' }],
     build(p) {
       const rod = colorOr(p.color, '#d8b56c');
       const lineLen = size(p.line, 0.55, 0.1, 3);

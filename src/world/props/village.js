@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import {
-  Parts, finish, spot, light, roundBox, box, roundCyl, cyl, cone, sphere, lathe, blob, tube, extrude, ring, xform,
+  Parts, finish, spot, light, box, roundCyl, cyl, cone, sphere, lathe, blob, tube, extrude, ring, xform,
   material, patchMaterial, PALETTE, SCALE, SEASONS, shade, mix, rng, noise3, signMaterial, waterMaterial, WORLD_UNIFORMS,
 } from '../kit.js';
 
@@ -1501,13 +1501,14 @@ function buildNoticeboard(p, ctx) {
   P.add(roundCyl(0.035, W + 0.28, { segments: 8, steps: 1, bevel: 0.015 }), shade(roof, -0.12), { at: [-(W + 0.28) / 2, ry + 0.035, 0], rot: [0, 0, -Math.PI / 2] });
   if (title) {
     const tw = 0.74, th = 0.17;
-    P.add(softBox(tw + 0.06, th + 0.06, 0.04, 0.015), shade(wood, -0.12), { at: [0, y0 + h - 0.005, 0.02] });
-    P.add(new THREE.PlaneGeometry(tw, th), label(title, { bg: '#fbf3e0', fg: '#5a3a22', width: Math.round((160 * tw) / th), height: 160 }), { at: [0, y0 + h + th / 2 + 0.025, 0.041] });
+    const ty = y0 + h - 0.06;
+    P.add(softBox(tw + 0.06, th + 0.06, 0.04, 0.015), shade(wood, -0.12), { at: [0, ty - th / 2 - 0.03, 0.045] });
+    P.add(new THREE.PlaneGeometry(tw, th), label(title, { bg: '#f5dfb0', fg: '#5a3a22', width: Math.round((160 * tw) / th), height: 160 }), { at: [0, ty, 0.0655] });
   }
   // pinned papers with scribbled lines and a round pin
   const cols = ['#fbf3df', '#fde0e4', '#dcefe0', '#dbe8f6', '#fbefb4', '#efe2f7'];
   const pins = ['#e9434c', '#4f86c6', '#f2c94c', '#5aa56a'];
-  const cw = W - 0.26, ch = h - 0.2;
+  const cw = W - 0.26, ch = h - (title ? 0.32 : 0.2);
   const ncol = Math.ceil(Math.sqrt(papers * 1.6)), nrow = Math.ceil(papers / Math.max(1, ncol));
   for (let i = 0; i < papers; i++) {
     const cx = -cw / 2 + ((i % ncol) + 0.5) * (cw / ncol) + R.float(-0.03, 0.03);
@@ -1554,7 +1555,7 @@ function buildMailbox(p, ctx) {
   if (name) {
     const tw = 0.3, th = 0.09;
     P.add(softBox(tw + 0.03, th + 0.03, 0.02, 0.008), shade(wood, -0.15), { at: [0, ph - 0.3, 0.035] });
-    P.add(new THREE.PlaneGeometry(tw, th), label(name, { bg: '#f6ecd3', fg: '#5a3a22', width: Math.round((160 * tw) / th), height: 160 }), { at: [0, ph - 0.3 + (th + 0.03) / 2, 0.046] });
+    P.add(new THREE.PlaneGeometry(tw, th), label(name, { bg: '#f5dfb0', fg: '#5a3a22', width: Math.round((160 * tw) / th), height: 160 }), { at: [0, ph - 0.3 + (th + 0.03) / 2, 0.046] });
   }
   return finish(P.build('mailbox'), { footprint: { r: 0.25 }, spots: { front: spot([0, 0, 0.68], 180, 'stand') }, height: by + bw });
 }
@@ -2661,7 +2662,7 @@ function buildWoodpile(p, ctx) {
       const x = -L / 2 + (L / per) * (i + 0.5 + (row % 2) * 0.5);
       const y = 0.075 + row * 0.142 + R.float(-0.005, 0.005);
       const z = R.float(-0.025, 0.025);
-      log(P, [x, y, z - depth / 2], [x, y, z + depth / 2], r, shade('#7a5233', R.float(-0.06, 0.06)), 9);
+      log(P, [x, y, z - depth / 2], [x, y, z + depth / 2], r, shade('#7a5233', R.float(-0.06, 0.06)), 8);
     }
   }
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) P.add(softBox(0.055, 0.72, 0.055, 0.015), PALETTE.woodDark, { at: [sx * (L / 2 + 0.035), 0, sz * 0.15] });
