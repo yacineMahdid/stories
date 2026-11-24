@@ -187,7 +187,7 @@
       "ambient": "fireflies",
       "dressing": [
         { "id": "campfire", "kind": "campfire", "at": [0, 0.3], "lit": true },
-        { "id": "tent", "kind": "tent", "at": [3.5, -3.8], "facing": 210, "color": "#f2c94c" },
+        { "id": "tent", "kind": "tent", "at": [-3.9, -3.6], "facing": 135, "color": "#f2c94c" },
         { "id": "camp-lantern", "kind": "lamp", "at": [-3.2, -2.8], "height": 1.6, "lit": "always" }
       ],
       "cast": [
