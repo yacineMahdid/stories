@@ -1592,9 +1592,9 @@ function buildBasket(p, ctx) {
     }
   } else if (produce === 'bread') {
     // a cloth lining the basket: it rises over the rim and its corners hang down outside
-    checkCloth(P, 0.5 * k, 0.5 * k, 6, PALETTE.cloth.red, [0, top + 0.02 * k, 0], 0, (x, z) => {
+    checkCloth(P, 0.42 * k, 0.42 * k, 6, PALETTE.cloth.red, [0, top + 0.02 * k, 0], 0, (x, z) => {
       const r = Math.hypot(x, z);
-      return 0.036 * k * smooth(0.08 * k, 0.19 * k, r) - 0.12 * k * smooth(0.2 * k, 0.34 * k, r);
+      return 0.034 * k * smooth(0.08 * k, 0.18 * k, r) - 0.09 * k * smooth(0.2 * k, 0.3 * k, r);
     });
     for (let i = 0; i < 3; i++) loaf(P, R, [(i - 1) * 0.08 * k, top + 0.05 * k, (i % 2 ? 0.03 : -0.03) * k], i === 1 ? 'loaf' : 'bun');
   } else if (produce === 'flowers') {
