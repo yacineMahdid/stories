@@ -793,17 +793,20 @@ function coniferTree(parts, o) {
   return { reach: cedar ? 0.95 : 1.25, height: top, under: cedar ? 1.12 : 1.42, base };
 }
 
-/** One palm frond: an arching, V-folded leaf with notched edges. */
-function frondGeo(len, width, { arch = 0.35, droop = 0.55, notches = 6 } = {}) {
-  const steps = notches * 2 + 2;
+/**
+ * One palm frond: an arching leaf folded along its rib, with softly scalloped edges (rounded
+ * leaflet lobes, no notches) and a rounded tip. Two-sided with up-leaning normals, so its
+ * underside is lit like its top.
+ */
+function frondGeo(len, width, { arch = 0.35, droop = 0.55, lobes = 6, steps = 20 } = {}) {
   const pos = [], idx = [], uv = [];
   for (let i = 0; i <= steps; i++) {
     const t = i / steps;
     const x = t * len;
     const y = Math.sin(Math.min(t, 0.6) / 0.6 * Math.PI * 0.5) * arch * len * (1 - t * 0.3) - droop * len * Math.pow(Math.max(0, t - 0.35) / 0.65, 2);
-    let w = width * Math.sin(Math.PI * Math.pow(t, 0.75)) * (t < 0.08 ? t / 0.08 : 1);
-    if (i > 1 && i < steps - 1 && i % 2 === 0) w *= 0.5; // notches
-    const fold = w * 0.35;
+    const env = Math.sqrt(Math.max(0, Math.sin(Math.PI * Math.pow(t, 0.72)))) * (0.2 + 0.8 * smooth(0, 0.16, t));
+    const w = width * env * (0.74 + 0.26 * Math.abs(Math.sin(lobes * Math.PI * t)));
+    const fold = w * 0.32;
     pos.push(x, y - fold * 0.5, -w, x, y + fold * 0.25, 0, x, y - fold * 0.5, w);
     uv.push(0, t, 0.5, t, 1, t);
   }
@@ -815,51 +818,56 @@ function frondGeo(len, width, { arch = 0.35, droop = 0.55, notches = 6 } = {}) {
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   g.setIndex(idx);
-  g.computeVertexNormals();
-  return g;
+  return twoSided(g, 0.5);
 }
 
-/** A palm: a curved ringed trunk, a crown of arching fronds and coconuts. */
+/** A palm: a curved trunk of chunky stacked rings, a soft two-layer crown of arching fronds and coconuts. */
 function palmTree(parts, o) {
   const { r, sway, bark } = o;
   const lean = r.float(0.45, 0.75);
   const az = r.angle();
   const dx = Math.cos(az), dz = Math.sin(az);
-  const pts = [[0, 0, 0], [0.04 * lean * dx, 0.9, 0.04 * lean * dz], [0.25 * lean * dx, 1.9, 0.25 * lean * dz], [0.62 * lean * dx, 2.85, 0.62 * lean * dz], [0.92 * lean * dx, 3.45, 0.92 * lean * dz]];
-  const rings = 13;
-  const light = C(shade(colorOf(bark), 0.08)), dark = C(shade(colorOf(bark), -0.12));
-  addPainted(parts, taper(pts, 0.17, 0.105, { radial: 12, segments: rings * 4, tip: false, base: false, rfn: (t) => (1 + 0.45 * Math.pow(1 - smooth(0, 0.09, t), 2)) * (0.93 + 0.12 * Math.pow(fract(t * rings), 1.6)) }), bark, undefined, (c, x, y, z, nx, ny, nz, u, v) => {
-    const f = fract(v * rings);
-    c.lerp(f > 0.72 ? light : dark, f > 0.72 ? 0.7 : 0.25 * (1 - f));
-    c.lerp(dark, (1 - smooth(0, 0.08, v)) * 0.5);
+  const pts = [[0, -0.05, 0], [0.04 * lean * dx, 0.9, 0.04 * lean * dz], [0.25 * lean * dx, 1.9, 0.25 * lean * dz], [0.62 * lean * dx, 2.85, 0.62 * lean * dz], [0.92 * lean * dx, 3.45, 0.92 * lean * dz]];
+  const rings = 11;
+  const light = C(shade(colorOf(bark), 0.09)), dark = C(shade(colorOf(bark), -0.1));
+  // each ring is a short cone, narrow at its foot and swelling under the next one, like stacked cups
+  const base = addPainted(parts, taper(pts, 0.19, 0.125, { radial: 12, segments: rings * 5, tip: false, base: false, rfn: (t) => (1 + 0.42 * Math.pow(1 - smooth(0, 0.1, t), 2)) * (0.86 + 0.2 * Math.pow(fract(t * rings + 0.001), 2.2)) }), bark, undefined, (c, x, y, z, nx, ny, nz, u, v) => {
+    const f = fract(v * rings + 0.001);
+    c.lerp(f > 0.62 ? light : dark, f > 0.62 ? 0.6 * smooth(0.62, 0.85, f) : 0.22 * (1 - f / 0.62));
+    c.lerp(dark, (1 - smooth(0, 0.08, v)) * 0.35);
   });
   const top = pts[pts.length - 1];
-  if (o.bare) return { trunkR: 0.16, reach: 1.5, height: 3.6, under: 1.1 };
-  const cols = o.leavesOverride ? tones(o.leavesOverride) : o.season === 'winter' ? ['#5f9a58', '#7db46a', '#3f7444'] : o.season === 'autumn' ? ['#6fa84c', '#94c05e', '#4a7f3c'] : ['#55a84a', '#7cc35d', '#367d3d'];
+  if (o.bare) return { reach: 1.5, height: 3.6, under: 1.1, base };
+  const cols = o.leavesOverride ? tones(o.leavesOverride) : o.season === 'winter' ? ['#5f9a58', '#7db46a', '#477f4a'] : o.season === 'autumn' ? ['#6fa84c', '#94c05e', '#558a44'] : ['#55a84a', '#80c65f', '#3f8744'];
   const [B, L, D] = cols.map(C);
-  const fronds = 9;
+  const look = leafLook(cols[0], sway);
+  const paint = (c, x, y, z, nx, ny, nz, u, v) => {
+    c.copy(D).lerp(B, smooth(0.0, 0.3, v));
+    c.lerp(L, smooth(0.3, 0.95, v) * 0.4 * (1 - Math.abs(u - 0.5)));
+    if (Math.abs(u - 0.5) < 0.01) c.lerp(L, 0.3);
+  };
+  // two layers: long drooping fronds below, shorter ones arching up in between
   const f0 = r.angle();
-  for (let i = 0; i < fronds; i++) {
-    const a = f0 + (i / fronds) * TAU + r.float(-0.15, 0.15);
-    const upper = i % 3 === 0;
-    const g = frondGeo(r.float(1.4, 1.7) * (upper ? 0.85 : 1), r.float(0.36, 0.42), { arch: upper ? 0.5 : 0.34, droop: upper ? 0.38 : 0.66, notches: 5 });
-    addPainted(parts, g, { slot: 'foliage', color: cols[0], sway, double: true, sheen: 0.32 }, { at: [top[0], top[1] + 0.02, top[2]], rot: [0, -a, upper ? 0.35 : 0.08] }, (c, x, y, z, nx, ny, nz, u, v) => {
-      c.copy(D).lerp(B, smooth(0.0, 0.25, v));
-      c.lerp(L, smooth(0.3, 0.95, v) * 0.45 * (1 - Math.abs(u - 0.5)));
-      if (Math.abs(u - 0.5) < 0.01) c.lerp(L, 0.35);
-    });
+  const layers = [[7, 0, [1.55, 1.8], [0.5, 0.56], 0.3, 0.7, 0.06], [5, 0.5, [1.1, 1.3], [0.44, 0.5], 0.52, 0.42, 0.42]];
+  for (const [n, off, lr, wr, arch, droop, tiltZ] of layers) {
+    for (let i = 0; i < n; i++) {
+      const a = f0 + ((i + off) / n) * TAU + r.float(-0.12, 0.12);
+      const g = frondGeo(r.float(lr[0], lr[1]), r.float(wr[0], wr[1]), { arch, droop, lobes: 6 });
+      addPainted(parts, g, look, { at: [top[0], top[1] + 0.03, top[2]], rot: [0, -a, tiltZ + r.float(-0.05, 0.05)] }, paint);
+    }
   }
   // the crown's heart
-  parts.add(blob(0.17, { detail: 2, amp: 0.1, seed: r.int(0, 99), squash: [1, 0.8, 1] }), { slot: 'foliage', color: cols[2], sway }, { at: [top[0], top[1] - 0.02, top[2]] });
+  parts.add(blob(0.15, { detail: 2, amp: 0.08, seed: r.int(0, 99), squash: [1, 0.8, 1] }), leafLook(shade(cols[0], -0.03), sway), { at: [top[0], top[1] - 0.01, top[2]] });
   if (o.fruit === 'coconut') {
     const look = { slot: 'solid', color: FRUIT.coconut.color, sway };
     const n = 3 + r.int(0, 1);
+    const c0 = r.angle();
     for (let i = 0; i < n; i++) {
-      const a = r.angle();
-      parts.add(sphere(0.12, 10, 8), look, { at: [top[0] + Math.cos(a) * 0.15, top[1] - 0.2 - r.float(0, 0.06), top[2] + Math.sin(a) * 0.15], scale: [1, 1.08, 1] });
+      const a = c0 + (i / n) * TAU + r.float(-0.3, 0.3);
+      parts.add(sphere(0.12, 10, 8), look, { at: [top[0] + Math.cos(a) * 0.16, top[1] - 0.2 - r.float(0, 0.06), top[2] + Math.sin(a) * 0.16], scale: [1, 1.08, 1] });
     }
   }
-  return { trunkR: 0.17, reach: 1.6, height: 3.9, under: 1.1 };
+  return { reach: 1.6, height: 3.9, under: 1.1, base };
 }
 
 /** Birch: two or three slender white trunks with dark marks under an airy oval crown. */
