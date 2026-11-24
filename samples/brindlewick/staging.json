@@ -250,7 +250,7 @@
     "shape:p8": {
       "weather": "snow",
       "cast": [
-        { "who": "shape:pell", "at": "pier.end", "do": "Sit", "feel": "cheerful", "hold": "held-fishingrod" },
+        { "who": "shape:pell", "at": "pier.end", "do": "Sit", "feel": "cheerful", "hold": { "kind": "held-fishingrod", "line": 1.1 } },
         { "who": "shape:mira", "at": [0.3, 5.2], "facing": "shape:pell", "do": "Idle", "feel": "cheerful", "hold": "held-umbrella" }
       ],
       "camera": [

@@ -76,7 +76,8 @@ class SceneSet {
       const t = object.userData.thing;
       const def = CATALOG[t.kind];
       let y;
-      if (def?.floats) y = WATER_LEVEL;
+      // Floating things ride the water; on dry land (a boat pulled up the beach) they rest on it.
+      if (def?.floats) y = Math.max(WATER_LEVEL, this.terrain.heightAt(t.pos[0], t.pos[1]));
       else if (t.ground === false) y = 0;
       else {
         y = this.terrain.heightAt(t.pos[0], t.pos[1]);

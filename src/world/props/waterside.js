@@ -1171,7 +1171,7 @@ export const WATERSIDE = {
 
   shells: {
     label: 'Seashells',
-    about: 'Seashells and a starfish for beaches: a small cluster to scatter on the sand (under 400 triangles).',
+    about: 'Seashells and a starfish for beaches: a small cluster to scatter on the sand (under 400 triangles). Kneel in front to pick one up.',
     params: {
       variant: { default: 'mixed', options: ['mixed', 'scallop', 'whelk', 'starfish'], about: 'a little cluster, or one kind' },
       color: { default: 'auto', type: 'color', about: 'shell color (auto: natural tones)' },
@@ -1209,7 +1209,7 @@ export const WATERSIDE = {
       } else {
         star([0, 0, 0], r.angle(), orange);
       }
-      return finish(parts.build('shells'), { footprint: { r: 0.28 }, spots: {} });
+      return finish(parts.build('shells'), { footprint: { r: 0.28 }, spots: { pick: spot([0, 0, 0.34], 180, 'kneel') } });
     },
   },
 
@@ -1610,10 +1610,10 @@ export const WATERSIDE = {
       // a hooked handle under the fist and the shaft up past the shoulder
       parts.add(taper([[sx, 0.05, 0], [sx, -0.045, 0], [sx + 0.012, -0.08, 0], [sx + 0.04, -0.093, 0], [sx + 0.066, -0.08, 0], [sx + 0.072, -0.058, 0]], [0.016, 0.014], { segments: 14, radial: 7 }), PALETTE.woodDark);
       parts.add(roundCyl(0.0095, H - dome + 0.02, { bevel: 0.004, segments: 7, steps: 1 }), '#c9c3b6', { at: [sx, 0.04, 0] });
-      // the canopy: panels sagging between ribs
-      const rows = [], cols = panels * 3, NR = 5;
-      for (let i = 0; i <= NR; i++) {
-        const f = Math.max(i / NR, 0.04);
+      // the canopy: panels sagging between ribs, with a light trim round the rim
+      const rows = [], cols = panels * 3;
+      const fs = [0.04, 0.22, 0.42, 0.62, 0.8, 0.93, 1];
+      for (const f of fs) {
         const row = [];
         for (let j = 0; j <= cols; j++) {
           const a = (j / cols) * TAU;
@@ -1625,9 +1625,11 @@ export const WATERSIDE = {
         rows.push(row);
       }
       const cloth = { slot: 'cloth', color: col, double: true };
+      const trim = pattern === 'stripes' ? shade(col, -0.08) : light2;
       addPainted(parts, loft(rows, { wrap: true }), cloth, undefined, (c, x, y, z, nx, ny, nz, f) => {
-        const j = Math.floor(f / 2) % cols;
+        const j = Math.floor(f / 2) % cols, ringN = Math.floor(Math.floor(f / 2) / cols);
         if (pattern === 'stripes' && Math.floor(j / 3) % 2) c.set(light2);
+        if (ringN === fs.length - 2) c.set(trim);
       }, true);
       if (pattern === 'dots') {
         for (let k = 0; k < panels; k++) {
@@ -1836,7 +1838,7 @@ export const WATERSIDE = {
       const parts = new Parts();
       const env = new THREE.Group();
       const ep = new Parts();
-      const W = 0.15, Hh = 0.1, T = 0.007;
+      const W = 0.17, Hh = 0.115, T = 0.008;
       ep.add(roundBox(W, Hh, T, 0.0032, 1), paper);
       // the flap's V on the back and the address lines and stamp on the front
       const flap = extrude([[-W / 2 + 0.006, Hh - 0.006], [W / 2 - 0.006, Hh - 0.006], [0, Hh * 0.38]], 0.0025, { bevel: 0.0015, bevelSegments: 1, curveSegments: 1 });
