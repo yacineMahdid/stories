@@ -1,0 +1,135 @@
+<title>Character Lab</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600&display=swap">
+<style>
+  /* Layout: a full-bleed 3D stage, the model name top-left, mesh stats top-right, a control dock along the bottom. */
+  :root {
+    --bg: #e2e7df;
+    --bg-deep: #c3ccc0;
+    --fg: #1b2320;
+    --muted: #56625b;
+    --panel: rgba(248, 250, 246, 0.86);
+    --line: rgba(27, 35, 32, 0.14);
+    --accent: #d4612c;
+    --accent-fg: #ffffff;
+    --font-display: "Space Grotesk", "Inter", system-ui, sans-serif;
+    --font-ui: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #47504b; --bg-deep: #252b28; --fg: #e9eee9; --muted: #a9b5ad;
+      --panel: rgba(27, 32, 30, 0.86); --line: rgba(233, 238, 233, 0.16);
+      --accent: #f08a55; --accent-fg: #1d130d; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #47504b; --bg-deep: #252b28; --fg: #e9eee9; --muted: #a9b5ad;
+    --panel: rgba(27, 32, 30, 0.86); --line: rgba(233, 238, 233, 0.16);
+    --accent: #f08a55; --accent-fg: #1d130d; color-scheme: dark;
+  }
+
+  html, body { height: 100%; }
+  body {
+    background: radial-gradient(120% 90% at 50% 38%, var(--bg) 0%, var(--bg-deep) 100%);
+    background-color: var(--bg-deep);
+    color: var(--fg);
+    font-family: var(--font-ui);
+    overflow: hidden;
+  }
+  #stage { position: fixed; inset: 0; }
+  #stage canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+
+  .hud {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 14px);
+    left: max(16px, env(safe-area-inset-left, 0px));
+    right: max(16px, env(safe-area-inset-right, 0px));
+    display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 8px 16px;
+    pointer-events: none;
+  }
+  .hud h1 { margin: 0; font: 600 1.25rem/1.2 var(--font-display); letter-spacing: -0.01em; }
+  .hud p { margin: 2px 0 0; font-size: 0.8rem; color: var(--muted); }
+  .hud a { color: inherit; pointer-events: auto; }
+  .stats { font: 500 0.75rem/1.5 var(--font-mono); color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+
+  .dock {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    padding-block: 10px calc(env(safe-area-inset-bottom, 0px) + 12px);
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    background: var(--panel);
+    border-top: 1px solid var(--line);
+    backdrop-filter: blur(10px);
+    display: grid; gap: 8px;
+  }
+  .row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .label {
+    flex: none; width: 4.8rem;
+    font-size: 0.68rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
+  }
+  .chips { display: flex; gap: 6px; overflow-x: auto; min-width: 0; padding-bottom: 2px; scrollbar-width: thin; }
+  button {
+    flex: none; font: 500 0.8rem/1 var(--font-ui); color: var(--fg);
+    background: transparent; border: 1px solid var(--line); border-radius: 999px;
+    padding: 7px 12px; cursor: pointer;
+  }
+  button:hover { border-color: var(--muted); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+
+  #status {
+    position: fixed; inset: 0; display: grid; place-items: center; pointer-events: none;
+    padding-inline: max(16px, env(safe-area-inset-left, 0px)) max(16px, env(safe-area-inset-right, 0px));
+    font-size: 0.9rem; color: var(--muted); text-align: center;
+  }
+  #status[hidden] { display: none; }
+  @media (max-width: 480px) { .stats { display: none; } }
+</style>
+
+<div id="stage"></div>
+
+<header class="hud">
+  <div>
+    <h1>Character Lab</h1>
+    <p>Canonical base &middot; body mesh by <a href="https://sketchfab.com/3d-models/animal-crossing-player-model-701a20b9786740378c2d67df3d810ef8" target="_blank" rel="noopener">SSlamon</a> (CC BY 4.0)</p>
+  </div>
+  <div class="stats" id="stats"></div>
+</header>
+
+<div id="status">Loading character&hellip;</div>
+
+<nav class="dock" aria-label="Character controls">
+  <div class="row">
+    <span class="label">Character</span>
+    <div class="chips" id="presets"></div>
+  </div>
+  <div class="row">
+    <span class="label">Animation</span>
+    <div class="chips" id="clips"></div>
+  </div>
+  <div class="row">
+    <span class="label">Face</span>
+    <div class="chips" id="expressions"></div>
+  </div>
+  <div class="row">
+    <span class="label">View</span>
+    <div class="chips">
+      <button type="button" id="toggle-skeleton" aria-pressed="false">Skeleton</button>
+      <button type="button" id="toggle-wire" aria-pressed="false">Wireframe</button>
+      <button type="button" id="toggle-spin" aria-pressed="false">Turntable</button>
+    </div>
+  </div>
+</nav>
+
+<script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.187.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.187.0/examples/jsm/"
+    }
+  }
+</script>
+<script type="module" src="src/lab.js"></script>
