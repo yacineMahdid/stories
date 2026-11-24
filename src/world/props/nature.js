@@ -228,7 +228,7 @@ function ribbon(points, width, { side = [1, 0, 0], fold = 0.35, segments = 8, wi
  * outward (`footBend`), so the flare is lit like the trunk's side and reads as the trunk
  * sinking into the ground, never as a sunlit (or snow-covered) shelf.
  */
-function trunkGeo(profile, { radial = 14, lobes = 0, lobeAmp = 0.3, lobeH = 0.3, lobeExp = 1, phase = 0, lean = [0, 0], twist = 0, wobble = 0, seed = 0, footBend = 0.55 } = {}) {
+function trunkGeo(profile, { radial = 14, lobes = 0, lobeAmp = 0.3, lobeH = 0.3, lobeExp = 1, phase = 0, lean = [0, 0], twist = 0, wobble = 0, seed = 0, footBend = 1 } = {}) {
   let g = lathe(profile, radial);
   g.deleteAttribute('normal');
   g.deleteAttribute('uv');
@@ -245,7 +245,7 @@ function trunkGeo(profile, { radial = 14, lobes = 0, lobeAmp = 0.3, lobeH = 0.3,
       const f = 1 - clamp((y + 0.05) / (lobeH + 0.05), 0, 1);
       k += lobeAmp * Math.pow(0.5 + 0.5 * Math.cos(lobes * (a + phase)), lobeExp) * f * f;
     }
-    if (wobble) k *= 1 + wobble * noise3(Math.cos(a) * 1.4 + seed, y * 1.8, Math.sin(a) * 1.4);
+    if (wobble) k *= 1 + wobble * noise3(Math.cos(a) * 1.4 + seed, y * 1.8, Math.sin(a) * 1.4) * (1 - smooth(0.72, 0.95, h)); // round at the top, where a leader carries on
     const a2 = a + twist * h;
     pos.setXYZ(i, Math.cos(a2) * r * k + lean[0] * h * h, y, Math.sin(a2) * r * k + lean[1] * h * h);
     uv[i * 2] = fract(a / TAU + 1);
@@ -288,8 +288,19 @@ function trunkProfile(r0, r1, H, { flare = 0.42, flareH = 0.3, steps = 8, swell 
     // `swell`: the trunk widens a little into the crotch where the limbs leave
     pts.push([lerp(r0, r1, Math.pow(t, 0.85)) * (1 + flare * g * g) * (1 + swell * smooth(0.55, 1, t)), y]);
   }
-  pts.push([top * 0.86, H + top * 0.3], [top * 0.5, H + top * 0.56], [0, H + top * 0.64]);
+  // a slim spire, not a dome: it hides inside the leader limb that carries the trunk on, so there
+  // is no collar (and no snowy ledge) where they meet
+  pts.push([top * 0.84, H + top * 1.1], [top * 0.55, H + top * 2.1], [top * 0.2, H + top * 2.8], [0, H + top * 3]);
   return pts;
+}
+
+/** A trunk profile's radius at height y: a leader that starts there just inside it hides its base. */
+function profileRadius(prof, y) {
+  for (let i = 1; i < prof.length - 1; i++) {
+    const [r0, y0] = prof[i], [r1, y1] = prof[i + 1];
+    if (y >= y0 && y <= y1) return lerp(r0, r1, (y - y0) / ((y1 - y0) || 1));
+  }
+  return prof[prof.length - 1][0];
 }
 
 /** Where a trunk built by trunkGeo is centered at height y (its lean bends it). */
@@ -297,6 +308,12 @@ function trunkAxis(profile, lean, y) {
   const top = Math.max(...profile.map((p) => p[1]));
   const h = y / top;
   return [lean[0] * h * h, y, lean[1] * h * h];
+}
+
+/** The direction a trunk built by trunkGeo grows at height y (its lean curves it): where a leader carries on. */
+function trunkTangent(profile, lean, y) {
+  const top = Math.max(...profile.map((p) => p[1]));
+  return [(2 * lean[0] * y) / (top * top), 1, (2 * lean[1] * y) / (top * top)];
 }
 
 /**
@@ -323,8 +340,7 @@ function footRadius(g, yMax = 0.06) {
   const pos = g.attributes.position;
   let best = 0;
   for (let i = 0; i < pos.count; i++) {
-    const y = pos.getY(i);
-    if (y <= yMax && y >= -0.03) best = Math.max(best, Math.hypot(pos.getX(i), pos.getZ(i)));
+    if (pos.getY(i) <= yMax) best = Math.max(best, Math.hypot(pos.getX(i), pos.getZ(i)));
   }
   return best;
 }
@@ -487,12 +503,13 @@ function tilt(dir, ang, az) {
  * Grow chunky branches: each limb ends in a few children, `levels` deep. Returns the tips
  * [{ at, dir, r }] for hanging twigs, leaves or blossoms.
  */
-function grow(parts, look, r, from, dir, { len, rad, levels = 2, kids = [3, 2, 2], shrink = 0.62, spread = 0.6, up = 0.25, droop = 0, minR = 0.022, taperK = 0.62, painter = null }, level = 0, tips = []) {
+function grow(parts, look, r, from, dir, { len, rad, levels = 2, kids = [3, 2, 2], shrink = 0.62, spread = 0.6, up = 0.25, droop = 0, minR = 0.022, taperK = 0.62, painter = null, bendK = 0.09 }, level = 0, tips = []) {
   const d = new THREE.Vector3(...dir).normalize();
   const a = new THREE.Vector3(...from);
   const end = a.clone().addScaledVector(d, len);
   if (droop) end.y -= droop * len * len;
-  const bend = new THREE.Vector3(...tilt(d.toArray(), Math.PI / 2, r.angle())).multiplyScalar(len * 0.09);
+  // a gentle random bend in the middle (a leader that carries the trunk on stays almost straight: bendK)
+  const bend = new THREE.Vector3(...tilt(d.toArray(), Math.PI / 2, r.angle())).multiplyScalar(len * (level ? 0.09 : bendK));
   const mid = a.clone().lerp(end, 0.5).add(bend);
   if (droop) mid.y -= droop * len * len * 0.15;
   const r1 = Math.max(minR, rad * taperK);
@@ -539,7 +556,7 @@ function limbsIntoCanopy(parts, bark, skel, fork, azs, canopy, { out = 0.5, drop
   const t = reach([c[0] * 0.5 + fork[0] * 0.5, c[1] - 0.25 * R * q[1], c[2] * 0.5 + fork[2] * 0.5]);
   const l0 = [fork[0], fork[1] - leaderSink, fork[2]];
   const dir = [t[0] - l0[0], t[1] - l0[1], t[2] - l0[2]];
-  grow(parts, bark, skel, l0, dir, { len: Math.hypot(dir[0], dir[1], dir[2]), rad: leaderRad, levels: 0, minR, taperK, painter });
+  grow(parts, bark, skel, l0, dir, { len: Math.hypot(dir[0], dir[1], dir[2]), rad: leaderRad, levels: 0, minR, taperK, painter, bendK: 0.015 });
 }
 
 /** Points spread over a sphere (golden spiral) limited to a band of heights (dy in [lo, hi]). */
@@ -716,7 +733,7 @@ function roundTree(parts, o) {
   const lean = [r.float(-0.05, 0.05), r.float(-0.05, 0.05)];
   const prof = trunkProfile(0.275 * k, 0.2 * k, fork + 0.1 * k, { flare: 0.4, flareH: 0.3 * k, swell: 0.08 });
   const phase = r.angle(), seed = r.float(0, 50);
-  const base = addTrunk(parts, bark, prof, { radial: 22, lobes: 4, lobeAmp: 0.3, lobeH: 0.3 * k, phase, lean }, { seed, foot: 0.12 });
+  const base = addTrunk(parts, bark, prof, { radial: 22, lobes: 4, lobeAmp: 0.3, lobeH: 0.3 * k, phase, lean }, { seed, foot: 0.3 * k });
   const forkAt = trunkAxis(prof, lean, fork);
   const a0 = r.angle();
   const limbs = [0, 1, 2].map((i) => [a0 + (i / 3) * TAU + r.float(-0.3, 0.3), r.float(0.85, 1.1)]);
@@ -728,14 +745,14 @@ function roundTree(parts, o) {
     for (const [az, el] of limbs) {
       grow(parts, bark, skel, [forkAt[0], forkAt[1] - 0.1 * k, forkAt[2]], [Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az)], { len: 1.15 * k, rad: 0.135 * k, levels: 2, kids: [3, 2], shrink: 0.62, spread: 0.6, up: 0.18, minR: 0.03 * k, taperK: 0.66, painter: paint });
     }
-    grow(parts, bark, skel, [forkAt[0], forkAt[1] - 0.1 * k, forkAt[2]], [lean[0] * 2, 1, lean[1] * 2], { len: 1.0 * k, rad: 0.205 * k, levels: 2, kids: [2, 3], shrink: 0.6, spread: 0.55, up: 0.2, minR: 0.03 * k, taperK: 0.6, painter: paint });
+    grow(parts, bark, skel, [forkAt[0], forkAt[1] - 0.1 * k, forkAt[2]], trunkTangent(prof, lean, fork), { len: 1.0 * k, bendK: 0.015, rad: profileRadius(prof, fork - 0.1 * k) * 0.82, levels: 2, kids: [2, 3], shrink: 0.6, spread: 0.55, up: 0.2, minR: 0.03 * k, taperK: 0.6, painter: paint });
   } else {
     const squash = [1.08, 0.95, 1.08];
     const clumps = canopyClumps(r, R);
     const leaves = o.leaves;
     const surf = addCanopy(parts, leafLook(leaves.cols[0], sway), clumps, { detail: fruitTree ? 13 : 14, k: 0.05 * R, amp: 0.028, freq: 2.2, fine: 0.016, seed: r.int(0, 999), squash }, [0, cy, 0],
       canopyPainter(leaves.cols, { cy, ry: R * 0.85, alt: leaves.alt, altAmt: o.season === 'autumn' ? 0.5 : 0.28, seed: r.float(0, 40) }));
-    limbsIntoCanopy(parts, bark, skel, forkAt, limbs.map(([az]) => az), { at: [0, cy, 0], R, squash, surf }, { out: 0.52, rad: 0.135 * k, leaderRad: 0.19 * k, minR: 0.03 * k, painter: paint, depth: 0.25 * k, sink: 0.12 * k });
+    limbsIntoCanopy(parts, bark, skel, forkAt, limbs.map(([az]) => az), { at: [0, cy, 0], R, squash, surf }, { out: 0.52, rad: 0.135 * k, leaderRad: profileRadius(prof, fork - 0.1) * 0.82, minR: 0.03 * k, painter: paint, depth: 0.25 * k, sink: 0.12 * k });
     if (o.fruit !== 'none') dressCanopy(parts, surf, { fruit: o.fruit, season: o.season, sway, r: rand(o.ctx, 'fruit'), count: fruitTree ? 8 : 5, lo: -0.5, hi: 0.45, blossomCount: 70 });
   }
   return { reach: 1.25 * k, height: 2.95 * k, under: 0.88 * k, base };
@@ -748,7 +765,7 @@ function oakTree(parts, o) {
   const lean = [r.float(-0.06, 0.06), r.float(-0.06, 0.06)];
   const prof = trunkProfile(0.36, 0.26, fork + 0.12, { flare: 0.42, flareH: 0.42, swell: 0.12 });
   const phase = r.angle(), wseed = r.float(0, 50), seed = r.float(0, 50);
-  const base = addTrunk(parts, bark, prof, { radial: 18, lobes: 5, lobeAmp: 0.3, lobeH: 0.42, phase, wobble: 0.06, seed: wseed, lean }, { seed, streak: 0.09 });
+  const base = addTrunk(parts, bark, prof, { radial: 18, lobes: 5, lobeAmp: 0.3, lobeH: 0.42, phase, wobble: 0.06, seed: wseed, lean }, { seed, streak: 0.09, foot: 0.4 });
   const forkAt = trunkAxis(prof, lean, fork);
   const skel = rand(o.ctx, 'skeleton');
   const paint = barkPainter(bark, { foot: 0, seed, streak: 0.09 });
@@ -759,13 +776,13 @@ function oakTree(parts, o) {
       grow(parts, bark, skel, [forkAt[0], forkAt[1] - 0.15, forkAt[2]], [Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az)],
         { len: 1.35, rad: 0.17, levels: 2, kids: [3, 2], shrink: 0.64, spread: 0.6, up: 0.18, minR: 0.026, painter: paint });
     }
-    grow(parts, bark, skel, [forkAt[0], forkAt[1] - 0.12, forkAt[2]], [lean[0] * 2, 1, lean[1] * 2], { len: 1.1, rad: 0.28, levels: 2, kids: [2, 2], shrink: 0.62, spread: 0.6, up: 0.2, minR: 0.026, taperK: 0.55, painter: paint });
+    grow(parts, bark, skel, [forkAt[0], forkAt[1] - 0.12, forkAt[2]], trunkTangent(prof, lean, fork), { len: 1.1, bendK: 0.015, rad: profileRadius(prof, fork - 0.12) * 0.82, levels: 2, kids: [2, 2], shrink: 0.62, spread: 0.6, up: 0.2, minR: 0.026, taperK: 0.55, painter: paint });
   } else {
     const R = 1.6, cy = 3.45, squash = [1.3, 0.74, 1.22];
     const clumps = canopyClumps(r, R, { rings: [[-0.26, 0.5, 0.44, 5], [0.04, 0.6, 0.5, 6], [0.38, 0.4, 0.46, 4]], crown: 0.46, crownY: 0.44, jitter: 1.6 });
     const surf = addCanopy(parts, leafLook(o.leaves.cols[0], sway), clumps, { detail: 15, k: 0.055 * R, amp: 0.03, freq: 1.9, seed: r.int(0, 999), squash }, [0, cy, 0],
       canopyPainter(o.leaves.cols, { cy, ry: R * 0.72, alt: o.leaves.alt, altAmt: o.season === 'autumn' ? 0.5 : 0.28, seed: r.float(0, 40) }));
-    limbsIntoCanopy(parts, bark, skel, forkAt, limbs.slice(0, 3).map(([az], i) => az + i * 0.35), { at: [0, cy, 0], R, squash, surf }, { out: 0.66, drop: 0.2, rad: 0.2, leaderRad: 0.25, minR: 0.026, painter: paint, depth: 0.3, taperK: 0.6, sink: 0.25, leaderSink: 0.12 });
+    limbsIntoCanopy(parts, bark, skel, forkAt, limbs.slice(0, 3).map(([az], i) => az + i * 0.35), { at: [0, cy, 0], R, squash, surf }, { out: 0.66, drop: 0.2, rad: 0.2, leaderRad: profileRadius(prof, fork - 0.12) * 0.82, minR: 0.026, painter: paint, depth: 0.3, taperK: 0.6, sink: 0.25, leaderSink: 0.12 });
   }
   return { reach: 2.0, height: 4.75, under: 1.35, base };
 }
@@ -861,7 +878,7 @@ function frondGeo(len, width, { arch = 0.35, droop = 0.55, lobes = 6, steps = 20
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   g.setIndex(idx);
-  return twoSided(g, 0.28);
+  return twoSided(g, 0.28, [1, 0.15, 0]);
 }
 
 /** A palm: a curved trunk of chunky stacked rings, a soft two-layer crown of arching fronds and coconuts. */
@@ -988,7 +1005,7 @@ function cherryTree(parts, o) {
   const prof = trunkProfile(0.205, 0.15, fork + 0.08, { flare: 0.42, flareH: 0.28, swell: 0.1 });
   const base = addPainted(parts, trunkGeo(prof, { radial: 14, lobes: 5, lobeAmp: 0.28, lobeH: 0.28, phase: r.angle(), wobble: 0.05, seed: r.float(0, 30), lean }), bark, undefined, (c, x, y, z) => {
     paint(c, x, y, z);
-    c.lerp(footC, (1 - smooth(0, 0.14, y)) * 0.45);
+    c.lerp(footC, (1 - smooth(0, 0.26, y)) * 0.5);
   });
   const forkAt = trunkAxis(prof, lean, fork);
   const skel = rand(o.ctx, 'skeleton');
@@ -999,7 +1016,7 @@ function cherryTree(parts, o) {
       grow(parts, bark, skel, forkAt, [Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az)],
         { len: 1.0, rad: 0.1, levels: 2, kids: [3, 2], shrink: 0.62, spread: 0.62, up: 0.12, minR: 0.02, painter: paint });
     }
-    grow(parts, bark, skel, [forkAt[0], forkAt[1] - 0.08, forkAt[2]], [lean[0] * 2, 1, lean[1] * 2], { len: 0.8, rad: 0.155, levels: 2, kids: [2, 2], shrink: 0.62, spread: 0.6, up: 0.15, minR: 0.02, taperK: 0.55, painter: paint });
+    grow(parts, bark, skel, [forkAt[0], forkAt[1] - 0.08, forkAt[2]], trunkTangent(prof, lean, fork), { len: 0.8, bendK: 0.015, rad: profileRadius(prof, fork - 0.08) * 0.82, levels: 2, kids: [2, 2], shrink: 0.62, spread: 0.6, up: 0.15, minR: 0.02, taperK: 0.55, painter: paint });
   } else {
     const R = 1.15, cy = 2.15, squash = [1.4, 0.68, 1.32];
     const spring = o.season === 'spring' && !o.leavesOverride;
@@ -1008,7 +1025,7 @@ function cherryTree(parts, o) {
     const clumps = canopyClumps(r, R, { rings: [[-0.22, 0.5, 0.42, 5], [0.04, 0.6, 0.5, 6], [0.34, 0.4, 0.46, 4]], crown: 0.46, crownY: 0.44 });
     const surf = addCanopy(parts, leafLook(cols[0], sway), clumps, { detail: 14, k: 0.065, amp: 0.035, freq: 2.4, seed: r.int(0, 999), squash }, [0, cy, 0],
       canopyPainter(cols, { cy, ry: R * 0.74, alt, altAmt: spring ? 0.45 : 0.32, spots: spring ? { color: '#fff1f5', freq: 3.6, lo: 0.25, amt: 0.6 } : null, seed: r.float(0, 40) }));
-    limbsIntoCanopy(parts, bark, skel, forkAt, limbs.map(([az]) => az), { at: [0, cy, 0], R, squash, surf }, { out: 0.62, drop: 0.22, rad: 0.105, leaderRad: 0.14, minR: 0.02, painter: paint, depth: 0.25, taperK: 0.62, sink: 0.12, leaderSink: 0.08 });
+    limbsIntoCanopy(parts, bark, skel, forkAt, limbs.map(([az]) => az), { at: [0, cy, 0], R, squash, surf }, { out: 0.62, drop: 0.22, rad: 0.105, leaderRad: profileRadius(prof, fork - 0.08) * 0.82, minR: 0.02, painter: paint, depth: 0.25, taperK: 0.62, sink: 0.12, leaderSink: 0.08 });
     if (spring) {
       const pr = rand(o.ctx, 'petals');
       for (let i = 0; i < 16; i++) {
@@ -1036,7 +1053,7 @@ function willowTree(parts, o) {
   const fork = 1.5;
   const prof = trunkProfile(0.25, 0.17, fork + 0.1, { flare: 0.42, flareH: 0.36, swell: 0.08 });
   const phase = r.angle(), wseed = r.float(0, 30), seed = r.float(0, 30);
-  const base = addTrunk(parts, bark, prof, { radial: 14, lobes: 5, lobeAmp: 0.3, lobeH: 0.36, phase, wobble: 0.08, seed: wseed, lean: [lx, lz], twist: 0.5 }, { seed, streak: 0.1 });
+  const base = addTrunk(parts, bark, prof, { radial: 14, lobes: 5, lobeAmp: 0.3, lobeH: 0.36, phase, wobble: 0.08, seed: wseed, lean: [lx, lz], twist: 0.5 }, { seed, streak: 0.1, foot: 0.34 });
   const forkAt = trunkAxis(prof, [lx, lz], fork);
   const skel = rand(o.ctx, 'skeleton');
   const paint = barkPainter(bark, { foot: 0, seed, streak: 0.1 });
@@ -1048,7 +1065,7 @@ function willowTree(parts, o) {
   if (bare) {
     const tips = [];
     for (const az of azs) grow(parts, bark, skel, forkAt, [Math.cos(az) * 0.6, 0.85, Math.sin(az) * 0.6], { len: 0.9, rad: 0.1, levels: 1, kids: [3], shrink: 0.7, spread: 0.6, up: 0.1, minR: 0.03, painter: paint }, 0, tips);
-    grow(parts, bark, skel, [forkAt[0], forkAt[1] - 0.1, forkAt[2]], [lx, 1, lz], { len: 0.75, rad: 0.17, levels: 1, kids: [2], shrink: 0.7, spread: 0.55, up: 0.15, minR: 0.03, taperK: 0.55, painter: paint }, 0, tips);
+    grow(parts, bark, skel, [forkAt[0], forkAt[1] - 0.1, forkAt[2]], trunkTangent(prof, [lx, lz], fork), { len: 0.75, bendK: 0.015, rad: profileRadius(prof, fork - 0.1) * 0.82, levels: 1, kids: [2], shrink: 0.7, spread: 0.55, up: 0.15, minR: 0.03, taperK: 0.55, painter: paint }, 0, tips);
     // long, thin weeping twigs hanging from the branch tips
     for (const t of tips) {
       for (let j = 0; j < 3; j++) {
@@ -1064,7 +1081,7 @@ function willowTree(parts, o) {
   const squash = [1.25, 0.8, 1.25];
   const surf = addCanopy(parts, leafLook(cols[0], sway), clumps, { detail: 12, k: 0.06, amp: 0.035, freq: 2.4, seed: r.int(0, 999), squash, flatBottom: R * 0.4 }, [lx, cy, lz],
     canopyPainter(cols, { cy, ry: R * 0.8, alt: o.leaves.alt, altAmt: 0.3, seed: r.float(0, 40) }));
-  limbsIntoCanopy(parts, bark, skel, forkAt, azs, { at: [lx, cy, lz], R, squash, surf }, { out: 0.45, drop: 0.05, rad: 0.11, leaderRad: 0.16, minR: 0.03, painter: paint, depth: 0.25, sink: 0.14 });
+  limbsIntoCanopy(parts, bark, skel, forkAt, azs, { at: [lx, cy, lz], R, squash, surf }, { out: 0.45, drop: 0.05, rad: 0.11, leaderRad: profileRadius(prof, fork - 0.1) * 0.82, minR: 0.03, painter: paint, depth: 0.25, sink: 0.14 });
   // curtains: three layers of leafy ribbons that start up on the crown, flow over its edge
   // like long hair and fall toward the ground (higher at the front, so the trunk shows)
   const sr = rand(o.ctx, 'strands');
@@ -1103,9 +1120,9 @@ function deadTree(parts, o) {
   const { r, bark } = o;
   const lean = [r.float(-0.15, 0.15), r.float(-0.15, 0.15)];
   const H = 1.62;
-  const prof = trunkProfile(0.22, 0.12, H, { flare: 0.45, flareH: 0.4 });
+  const prof = trunkProfile(0.22, 0.11, H, { flare: 0.45, flareH: 0.4 });
   const phase = r.angle(), wseed = r.float(0, 30), seed = r.float(0, 30);
-  const base = addTrunk(parts, bark, prof, { radial: 13, lobes: 4, lobeAmp: 0.34, lobeH: 0.4, phase, twist: 1.3, wobble: 0.14, seed: wseed, lean }, { seed, streak: 0.12 });
+  const base = addTrunk(parts, bark, prof, { radial: 13, lobes: 4, lobeAmp: 0.34, lobeH: 0.4, phase, twist: 1.3, wobble: 0.14, seed: wseed, lean }, { seed, streak: 0.12, foot: 0.36 });
   const skel = rand(o.ctx, 'skeleton');
   const paint = barkPainter(bark, { foot: 0, seed, streak: 0.12 });
   const a0 = r.angle();
@@ -1117,8 +1134,9 @@ function deadTree(parts, o) {
       { len: 0.9 - i * 0.08, rad: 0.085 - i * 0.008, levels: 2, kids: [2, 2], shrink: 0.6, spread: 0.75, up: 0.05, minR: 0.02, taperK: 0.55, painter: paint });
   }
   // a crooked leader carries the trunk on up (no cut post, no beak)
-  grow(parts, bark, skel, trunkAxis(prof, lean, H - 0.06), [lean[0] * 2 + r.float(-0.3, 0.3), 1, lean[1] * 2 + r.float(-0.3, 0.3)],
-    { len: 0.8, rad: 0.105, levels: 2, kids: [2, 2], shrink: 0.6, spread: 0.7, up: 0.08, minR: 0.02, taperK: 0.55, painter: paint });
+  const tg = trunkTangent(prof, lean, H);
+  grow(parts, bark, skel, trunkAxis(prof, lean, H - 0.16), [tg[0] + r.float(-0.02, 0.02), 1, tg[2] + r.float(-0.02, 0.02)],
+    { len: 0.9, bendK: 0.015, rad: profileRadius(prof, H - 0.16) * 0.82, levels: 2, kids: [2, 2], shrink: 0.6, spread: 0.7, up: 0.08, minR: 0.02, taperK: 0.48, painter: paint });
   // the hollow, set into the front of the trunk
   const hy = 0.78, ha = trunkAxis(prof, lean, hy);
   const hz = frontOf(base, ha[0], hy);
@@ -1258,10 +1276,10 @@ function onProfile(prof, s, i0 = 1) {
 
 /** Triangles in a mushroomCluster of `n` at a given detail (to stay within budget). */
 function shroomTris(d, n, variant = 'red') {
-  const capSeg = Math.round(14 * d), stemSeg = Math.round(9 * d);
+  const capSeg = Math.round(16 * d), stemSeg = Math.round(10 * d);
   const capPts = Math.round(6 + 5 * (d - 1)), stemPts = Math.max(6, Math.round(6 + 2 * (d - 1)));
   const one = (capPts - 1) * capSeg * 2 + 2 * capSeg * 2 + (stemPts - 1) * stemSeg * 2;
-  const dots = variant === 'brown' ? 0 : (6 + 4 * (n - 1)) * (d >= 1.5 ? 32 : 12);
+  const dots = variant === 'brown' ? 0 : (6 + 4 * (n - 1)) * (d >= 1.5 ? 40 : 16);
   return n * one + dots;
 }
 
@@ -1278,9 +1296,9 @@ function mushroomCluster(parts, r, { variant = 'red', at = [0, 0, 0], scale = 1,
   const underLook = glow ? { slot: 'lamp', color: M.under, glow: M.glow, glowAmount: 0.55, rough: 0.62 } : M.under;
   const dotLook = glow ? { slot: 'lamp', color: M.dots, glow: '#e8ffff', glowAmount: 1.8, rough: 0.62 } : M.dots;
   const n = clamp(count, 1, 7);
-  const capSeg = Math.round(14 * detail), stemSeg = Math.round(9 * detail);
+  const capSeg = Math.round(16 * detail), stemSeg = Math.round(10 * detail);
   const capPts = Math.round(6 + 5 * (detail - 1));
-  const dotGeo = detail >= 1.5 ? sphere(1, 8, 3) : sphere(1, 6, 2);
+  const dotGeo = detail >= 1.5 ? sphere(1, 10, 3) : sphere(1, 8, 2);
   const a0 = r.angle();
   for (let i = 0; i < n; i++) {
     const big = i === 0;
@@ -1383,7 +1401,7 @@ function bladesGeo(r, { blades = 9, height = 0.2, spread = 0.06, width = 0.035, 
  * A thin leaf made two-sided in geometry (a reversed copy shares the up-leaning normals), so it
  * needs no double-sided material and its underside is not lit as if facing down.
  */
-function twoSided(g, up = 0.5) {
+function twoSided(g, up = 0.5, backNormal = null) {
   g.computeVertexNormals();
   bendNormalsUp(g, up);
   const n = g.attributes.position.count;
@@ -1391,6 +1409,8 @@ function twoSided(g, up = 0.5) {
   const out = new THREE.BufferGeometry();
   out.setAttribute('position', cat(g.attributes.position));
   out.setAttribute('normal', cat(g.attributes.normal));
+  // `back`: one normal for the reversed copy (e.g. leaning sideways, so an underside is lit but never snowy)
+  if (backNormal) { const nb = out.attributes.normal, v = new THREE.Vector3(...backNormal).normalize(); for (let i = n; i < 2 * n; i++) nb.setXYZ(i, v.x, v.y, v.z); }
   out.setAttribute('uv', cat(g.attributes.uv));
   const idx = Array.from(g.index.array);
   const back = [];
@@ -2087,12 +2107,28 @@ function buildPumpkins(parts, ctx, { count, color, size: S, season }) {
   const leafN = season === 'winter' ? 0 : Math.min(5, 2 + count);
   // a fixed budget (about 2.8k triangles): big patches of big pumpkins get fewer segments each
   const maxSeg = Math.max(12, Math.floor(((2800 - leafN * 20 - 150) / count - 50) / 16));
-  const out = [];
+  // lay the patch out first, then nudge neighbors apart so no two pumpkins overlap
+  const spots = [];
   for (let i = 0; i < count; i++) {
     const a = i * 2.39996 + r.float(-0.3, 0.3);
     const d = count === 1 ? 0 : 0.2 + 0.32 * Math.sqrt(i / count);
-    const R = 0.22 * S * (i === 0 ? 1 : r.float(0.6, 0.9));
-    const x = Math.cos(a) * d * S, z = Math.sin(a) * d * S;
+    spots.push([Math.cos(a) * d * S, Math.sin(a) * d * S, 0.22 * S * (i === 0 ? 1 : r.float(0.6, 0.9))]);
+  }
+  for (let it = 0; it < 12; it++) {
+    for (let i = 0; i < count; i++) {
+      for (let j = i + 1; j < count; j++) {
+        const [xi, zi, Ri] = spots[i], [xj, zj, Rj] = spots[j];
+        const dx = xj - xi, dz = zj - zi, dist = Math.hypot(dx, dz) || 1e-4, need = (Ri + Rj) * 0.96;
+        if (dist >= need) continue;
+        const push = (need - dist) / 2, ux = dx / dist, uz = dz / dist;
+        spots[i][0] -= ux * push; spots[i][1] -= uz * push;
+        spots[j][0] += ux * push; spots[j][1] += uz * push;
+      }
+    }
+  }
+  const out = [];
+  for (let i = 0; i < count; i++) {
+    const [x, z, R] = spots[i];
     const { geometry, top } = pumpkinGeo(R, 8 + (i % 3), Math.min(maxSeg, Math.round(24 * clamp(R / 0.22, 1, 1.75))));
     addPainted(parts, geometry, base, { at: [x, -0.01, z], rot: [r.float(-0.08, 0.08), r.angle(), r.float(-0.08, 0.08)] }, (c, px, py, pz, nx, ny, nz, rib) => {
       c.copy(Pd).lerp(P, smooth(0.0, 0.7, rib)).lerp(Pl, smooth(0.3, 1, ny) * 0.4 * rib);
@@ -2103,7 +2139,7 @@ function buildPumpkins(parts, ctx, { count, color, size: S, season }) {
   }
   // big leaves lying low around the patch: on the outer side, never cutting through a neighbor
   if (leafN) {
-    const leafC = season === 'autumn' ? '#b3ae4e' : '#6fb24f';
+    const leafC = season === 'autumn' ? '#b49d42' : '#6fb24f';
     const LB = C(shade(leafC, 0.06)), LD = C(shade(leafC, -0.1));
     for (let i = 0; i < leafN; i++) {
       const k = i % out.length;
@@ -2122,6 +2158,7 @@ function buildPumpkins(parts, ctx, { count, color, size: S, season }) {
       }
       if (best.clear < -0.02 * S) continue; // no room: skip the leaf rather than cut a pumpkin
       addPainted(parts, bendNormalsUp(pumpkinLeaf(lr), 0.4), { slot: 'foliage', color: leafC, sway: 0.5, double: true, sheen: 0.3 }, { at: [best.lx, (0.02 + r.float(0, 0.02)) * Math.min(S, 1.5), best.lz], rot: [r.float(-0.15, 0.15), r.angle(), r.float(-0.15, 0.15)] }, (c, x, y, z, nx, ny, nz, u) => c.copy(LD).lerp(LB, u));
+      out.leafReach = Math.max(out.leafReach ?? 0, Math.hypot(best.lx, best.lz) + lr);
     }
   }
   const vr = rand(ctx, 'vine');
@@ -2131,10 +2168,10 @@ function buildPumpkins(parts, ctx, { count, color, size: S, season }) {
   for (let k = 0; k <= 9; k++) {
     pts.push([px0, 0.018, pz0]);
     va += vr.float(0.5, 1.1) * (k % 4 < 2 ? 1 : -1);
-    px0 += Math.cos(va) * 0.09 * S;
-    pz0 += Math.sin(va) * 0.09 * S;
+    px0 += Math.cos(va) * 0.09 * Math.min(S, 1.3);
+    pz0 += Math.sin(va) * 0.09 * Math.min(S, 1.3);
   }
-  parts.add(taper(pts, 0.014 * S, 0.008 * S, { radial: 4, segments: 16 }), season === 'winter' ? '#8a7a55' : '#6a8a3a');
+  parts.add(taper(pts, 0.014 * S, 0.008 * S, { radial: 4, segments: 16 }), season === 'winter' ? '#8a7a55' : season === 'autumn' ? '#86803f' : '#6a8a3a');
   return out;
 }
 
@@ -2605,11 +2642,15 @@ export const NATURE = {
         }
         footprint = { r: 0.36 };
       } else if (variant === 'cluster') {
-        rockPiece(parts, r, { at: [-0.12, 0, -0.05], R: 0.42, color });
+        const big = rockPiece(parts, r, { at: [-0.12, 0, -0.05], R: 0.42, color });
         rockPiece(parts, r, { at: [0.36, 0, 0.12], R: 0.26, squash: [1.2, 0.7, 1.05], color: shade(color, 0.03) });
         rockPiece(parts, r, { at: [0.0, 0, 0.42], R: 0.17, squash: [1.25, 0.65, 1.1], color: shade(color, -0.02), detail: 4 });
         rockPiece(parts, r, { at: [-0.5, 0, 0.3], R: 0.12, squash: [1.2, 0.7, 1], color, detail: 3 });
-        spots = { lean: spot([-0.12, 0, -0.62], 180, 'lean') };
+        // lean on the big rock's back, just clear of it
+        let back = 0;
+        const bp = big.g.attributes.position;
+        for (let i = 0; i < bp.count; i++) if (Math.abs(bp.getX(i) + 0.12) < 0.12) back = Math.min(back, bp.getZ(i));
+        spots = { lean: spot([-0.12, 0, back - 0.12], 180, 'lean') };
         footprint = { r: 0.75 };
       } else if (variant === 'flat') {
         const { g } = rockPiece(parts, r, { R: 0.55, squash: [1.25, 0.4, 0.95], color, amp: 0.12, flatTop: 0.12, detail: 6, rot: [0, r.float(-0.2, 0.2), 0] });
@@ -2665,7 +2706,7 @@ export const NATURE = {
       const out = S === 1 ? parts : new Parts().merge(parts, xform([0, 0, 0], [0, 0, 0], S));
       const depth = (info.d ?? info.r * 2) * S;
       return finish(out.build(`bush-${variant}`), {
-        footprint: info.w ? { w: info.w * S, d: info.d * S } : { r: info.r * S },
+        footprint: info.w ? { w: info.w * S, d: info.d * S } : { r: Math.max(info.r, groundReach(parts, 0.25)) * S },
         spots: {
           front: spot([0, 0, depth / 2 + 0.35], 180, 'stand'),
           hide: spot([0, 0, -(depth / 2 + 0.28)], 0, 'kneel'),
@@ -2695,8 +2736,8 @@ export const NATURE = {
       const parts = new Parts();
       buildFlowers(parts, ctx, { species, color, count, spread, season });
       return finish(parts.build(`flowers-${species}`), {
-        footprint: { r: spread + 0.08 },
-        spots: { tend: spot([0, 0, spread + 0.3], 180, 'kneel') },
+        footprint: { r: Math.max(spread + 0.08, groundReach(parts, 0.1)) },
+        spots: { tend: spot([0, 0, Math.max(spread + 0.3, groundReach(parts, 0.1) + 0.2)], 180, 'kneel') },
         height: STEM_H[species] + 0.08,
       });
     },
@@ -2761,9 +2802,10 @@ export const NATURE = {
       mushroomCluster(parts, rand(ctx, 'shrooms'), { variant, at: [0, 0, 0], scale: 1, count, detail });
       const out = S === 1 ? parts : new Parts().merge(parts, xform([0, 0, 0], [0, 0, 0], S));
       const lights = variant === 'glowing' ? [{ ...light([0, 0.3 * S, 0], { color: '#8af2ff', intensity: 0.2 + 0.03 * count, distance: 2.2 * Math.sqrt(S) }), halo: 0.6 }] : [];
+      const reach = groundReach(parts, 0.3) * S;
       return finish(out.build(`mushroom-${variant}`), {
-        footprint: { r: 0.22 * S },
-        spots: { pick: spot([0, 0, 0.24 * S + 0.24], 180, 'kneel') },
+        footprint: { r: reach + 0.03 },
+        spots: { pick: spot([0, 0, reach + 0.24], 180, 'kneel') },
         lights,
         height: 0.2 * S,
       });
@@ -2828,7 +2870,7 @@ export const NATURE = {
       const color = oneOf(p.color, ['orange', 'yellow', 'white', 'green'], null) ?? colorOr(p.color, 'orange');
       const parts = new Parts();
       const placed = buildPumpkins(parts, ctx, { count, color, size: S, season });
-      let ext = 0;
+      let ext = placed.leafReach ?? 0;
       for (const [x, z, R] of placed) ext = Math.max(ext, Math.hypot(x, z) + R);
       return finish(parts.build('pumpkin'), {
         footprint: { r: ext + 0.05 },
