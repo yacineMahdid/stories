@@ -4,7 +4,7 @@ import { BASE_URL, SOCKETS } from './rig.js';
 import { buildClips } from './animations.js';
 import { Face } from './face.js';
 import { createBodyMaterial, applyOutfit } from './outfit.js';
-import { createHairMaterial, loadHairGeometry } from './hair.js';
+import { createHairMaterial, loadHairGeometry, setHairColor } from './hair.js';
 import { loadGLTF } from './loader.js';
 import { EMOTIONS } from './emotions.js';
 import { Symbols } from './symbols.js';
@@ -16,6 +16,26 @@ import { buildParts } from './parts.js';
 // lives in the spec; the mesh, skeleton and animations are shared.
 const _q = new THREE.Quaternion();
 const _e = new THREE.Euler();
+const _v = new THREE.Vector3();
+const _inv = new THREE.Matrix4();
+const CONTACT_BONES = ['Hips', 'Head', 'LeftFoot', 'RightFoot', 'LeftHand', 'RightHand'];
+
+let contactTexture = null;
+function softShadowTexture() {
+  if (!contactTexture) {
+    const c = document.createElement('canvas');
+    c.width = c.height = 128;
+    const g = c.getContext('2d');
+    const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+    grad.addColorStop(0, 'rgba(0, 0, 0, 0.62)');
+    grad.addColorStop(0.45, 'rgba(0, 0, 0, 0.3)');
+    grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 128, 128);
+    contactTexture = new THREE.CanvasTexture(c);
+  }
+  return contactTexture;
+}
 
 export const DEFAULT_SPEC = {
   skin: '#f8d3b0',
@@ -72,6 +92,16 @@ export class Character {
     this.hairMaterial = createHairMaterial();
     this.hairMesh = null;
     this.symbols = new Symbols(this.bones.Head);
+
+    // A soft contact shadow on the floor that follows the body (stretches when lying down,
+    // fades during jumps); the key light adds the longer cast shadow.
+    this.contact = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshBasicMaterial({ map: softShadowTexture(), color: 0x2a2320, transparent: true, depthWrite: false }),
+    );
+    this.contact.rotation.x = -Math.PI / 2;
+    this.contact.renderOrder = -1;
+    this.root.add(this.contact);
     this.motion = null;        // body motion layered on the animation by the current emotion
     this.nextMotion = null;
     this.motionWeight = 0;
@@ -148,7 +178,7 @@ export class Character {
     } else {
       this.hairMesh.geometry = geometry;
     }
-    this.hairMaterial.color.set(hair.color ?? '#4a2f22');
+    setHairColor(this.hairMaterial, hair.color ?? '#4a2f22');
     if (this.spec.ears && EAR_STYLES[this.spec.ears]?.scale === 0) this.setEars(this.spec.ears); // fur follows the hair
   }
 
@@ -200,6 +230,7 @@ export class Character {
     this.applyMotion(dt);
     this.face.update(dt);
     this.symbols.update(dt);
+    this.updateContact();
     this.wagTime = (this.wagTime ?? 0) + dt;
     for (const { object, wag } of this.partObjects ?? []) {
       if (!wag) continue;
@@ -213,6 +244,21 @@ export class Character {
   restoreMotion() {
     for (const [target, value] of this.motionSaved ?? []) target.copy(value);
     this.motionSaved = [];
+  }
+
+  updateContact() {
+    this.root.updateMatrixWorld(true);
+    _inv.copy(this.root.matrixWorld).invert();
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity, low = Infinity;
+    for (const name of CONTACT_BONES) {
+      this.bones[name].getWorldPosition(_v).applyMatrix4(_inv);
+      x0 = Math.min(x0, _v.x); x1 = Math.max(x1, _v.x);
+      z0 = Math.min(z0, _v.z); z1 = Math.max(z1, _v.z);
+      low = Math.min(low, _v.y);
+    }
+    this.contact.position.set((x0 + x1) / 2, 0.002, (z0 + z1) / 2);
+    this.contact.scale.set(Math.max(0.34, x1 - x0 + 0.2), Math.max(0.3, z1 - z0 + 0.24), 1);
+    this.contact.material.opacity = 0.9 * THREE.MathUtils.clamp(1 - low * 4, 0.2, 1);
   }
 
   /** Emotion motions are small rotations added on top of whatever the mixer just posed. */
@@ -247,6 +293,8 @@ export class Character {
     this.bodyMesh.material.dispose();
     this.faceMesh.material.dispose();
     this.hairMaterial.dispose();
+    this.contact.geometry.dispose();
+    this.contact.material.dispose();
     this.setParts([]);
     this.symbols.dispose();
     this.face.dispose();

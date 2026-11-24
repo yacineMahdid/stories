@@ -91,10 +91,13 @@ function ear(outerShape, depth, outerMat, innerShape, innerMat, innerScale = 0.6
  * `colors` = { fur, skin }.
  */
 export function buildEars(style, colors) {
-  const fur = new THREE.MeshStandardMaterial({ color: colors.fur, roughness: 0.6 });
-  const skin = new THREE.MeshStandardMaterial({ color: colors.skin, roughness: 0.85 });
-  const pink = new THREE.MeshStandardMaterial({ color: INNER_PINK, roughness: 0.8 });
-  const cream = new THREE.MeshStandardMaterial({ color: '#fff1dc', roughness: 0.8 });
+  const soft = (color, roughness = 0.75) => new THREE.MeshPhysicalMaterial({
+    color, roughness, specularIntensity: 0.25, sheen: 0.35, sheenRoughness: 0.8, sheenColor: new THREE.Color(color).lerp(new THREE.Color(0xffffff), 0.3),
+  });
+  const fur = soft(colors.fur);
+  const skin = soft(colors.skin, 0.8);
+  const pink = soft(INNER_PINK, 0.8);
+  const cream = soft('#fff1dc', 0.8);
   const out = [];
 
   const onHead = (makeEar, place) => {
@@ -131,7 +134,7 @@ export function buildEars(style, colors) {
       });
       break;
     case 'bear':
-      onHead(() => ear(circleShape(0.055), 0.03, fur, circleShape(0.055), new THREE.MeshStandardMaterial({ color: '#d9a77c', roughness: 0.8 }), 0.55), (e, side) => {
+      onHead(() => ear(circleShape(0.055), 0.03, fur, circleShape(0.055), soft('#d9a77c'), 0.55), (e, side) => {
         e.position.set(side * 0.175, 0.355, -0.04); e.rotation.set(-0.1, 0, -side * 0.55);
       });
       break;
@@ -140,9 +143,10 @@ export function buildEars(style, colors) {
         e.position.set(side * 0.2, 0.33, -0.05); e.rotation.set(-0.05, -side * 0.2, -side * 0.75);
       });
       break;
-    case 'floppy':
-      onHead(() => ear(teardropShape(0.1, 0.19), 0.026, fur), (e, side) => {
-        e.position.set(side * 0.215, 0.34, -0.03); e.rotation.set(0, side * Math.PI / 2, side * 0.18);
+    case 'floppy': // hang from the top of the head, flaring a little outward
+      onHead(() => ear(teardropShape(0.085, 0.21), 0.024, fur), (e, side) => {
+        // face sideways first, then flare the bottom outward (world Z), so order ZYX
+        e.position.set(side * 0.175, 0.35, 0.0); e.rotation.set(0.08, side * Math.PI / 2, side * 0.32, 'ZYX');
       });
       break;
     case 'cow': // leaf-shaped ears sticking out sideways
@@ -151,7 +155,7 @@ export function buildEars(style, colors) {
       });
       break;
     case 'horse': // tall, narrow, upright
-      onHead(() => ear(triangleShape(0.085, 0.16), 0.024, fur, triangleShape(0.085, 0.16), new THREE.MeshStandardMaterial({ color: '#3a2a22', roughness: 0.8 }), 0.55, 0.02), (e, side) => {
+      onHead(() => ear(triangleShape(0.085, 0.16), 0.024, fur, triangleShape(0.085, 0.16), soft('#3a2a22'), 0.55, 0.02), (e, side) => {
         e.position.set(side * 0.11, 0.375, -0.05); e.rotation.set(-0.15, -side * 0.25, -side * 0.12);
       });
       break;

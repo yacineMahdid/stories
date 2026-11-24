@@ -50,13 +50,15 @@ export const EXPRESSIONS = Object.keys(EMOTIONS);
 
 export class Face {
   constructor(material, params = {}) {
+    // Drawn at 2x (1024px) for crisp features up close; all drawing uses 512-px coordinates.
     this.canvas = document.createElement('canvas');
-    this.canvas.width = this.canvas.height = SIZE;
+    this.canvas.width = this.canvas.height = SIZE * 2;
     this.ctx = this.canvas.getContext('2d');
+    this.ctx.setTransform(2, 0, 0, 2, 0, 0);
     this.texture = new THREE.CanvasTexture(this.canvas);
     this.texture.colorSpace = THREE.SRGBColorSpace;
     this.texture.flipY = false;
-    this.texture.anisotropy = 4;
+    this.texture.anisotropy = 8;
     material.map = this.texture;
     material.transparent = true;
     material.needsUpdate = true;

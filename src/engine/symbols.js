@@ -13,12 +13,14 @@ const textures = new Map();
 function icon(name, w = 128, h = 128) {
   if (!textures.has(name)) {
     const canvas = document.createElement('canvas');
-    canvas.width = w; canvas.height = h;
+    canvas.width = w * 2; canvas.height = h * 2; // drawn at 2x for crisp edges
     const g = canvas.getContext('2d');
+    g.scale(2, 2);
     g.lineCap = 'round'; g.lineJoin = 'round';
     ICONS[name](g, w, h);
     const tex = new THREE.CanvasTexture(canvas);
     tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 4;
     textures.set(name, tex);
   }
   return textures.get(name);

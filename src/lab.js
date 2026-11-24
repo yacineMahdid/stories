@@ -107,6 +107,8 @@ try {
     });
   };
 
+  // Re-fit the camera when the character's size changes (species, body type).
+  const reframe = () => character.ready.then(() => stage.frame(character.root, true));
   const rows = {};
   const sync = () => {
     press(rows.skins, SKINS.findIndex((c) => c.value === look.skin));
@@ -130,6 +132,7 @@ try {
     look.hair.style = human ? (look.hair.style ?? HAIR_STYLES[0].id) : null;
     sync();
     refresh();
+    reframe();
   });
   rows.outfits = chipRow($('outfits'), OUTFITS.map((o) => o.label), (i) => { look.outfit = i; refresh(); });
   rows.skins = swatchRow($('skins'), SKINS, (c) => { look.skin = c; refresh(); });
@@ -139,7 +142,7 @@ try {
   rows.eyeColors = swatchRow($('eye-colors'), EYE_COLORS, (c) => { look.eyeColor = c; refresh(); });
   rows.mouths = chipRow($('mouths'), mouthIds.map((id) => MOUTH_STYLES[id]), (i) => { look.mouth = mouthIds[i]; refresh(); });
   rows.noses = chipRow($('noses'), noseIds.map((id) => NOSE_STYLES[id]), (i) => { look.nose = noseIds[i]; refresh(); });
-  rows.bodies = chipRow($('bodies'), bodyIds.map((id) => BODY_TYPES[id].label), (i) => { look.body = bodyIds[i]; refresh(); });
+  rows.bodies = chipRow($('bodies'), bodyIds.map((id) => BODY_TYPES[id].label), (i) => { look.body = bodyIds[i]; refresh(); reframe(); });
   rows.ears = chipRow($('ears'), earIds.map((id) => EAR_STYLES[id].label), (i) => { look.ears = earIds[i]; refresh(); });
   press(rows.hairColors, 0);
   press(rows.outfits, 0);

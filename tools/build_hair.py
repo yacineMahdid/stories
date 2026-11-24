@@ -22,10 +22,10 @@ from build_base import POS, R as REGION, build  # noqa: E402
 
 CENTER = np.array([0.0, 0.79, 0.0])     # head center the shell is built around
 HEAD = POS['Head']                      # Head bone rest position (output is relative to it)
-N_AZ, N_POL, POL_MAX = 160, 104, 0.80 * math.pi
+N_AZ, N_POL, POL_MAX = 256, 150, 0.80 * math.pi
 MAP_R = 0.22                            # arc-length scale used to measure distances to the hairline
 SINK = 0.012                            # how far the shell dips under the skin outside the hairline
-EDGE = 0.014                            # width of the rounded edge at the hairline
+EDGE = 0.016                            # width of the rounded edge at the hairline
 
 
 def smoothstep(e0, e1, x):
@@ -276,7 +276,7 @@ def shell(style, A, Pl, d, r, top_r):
     thick = style['side'] + (style['top'] - style['side']) * upper
     if style.get('flare'):
         thick = thick + style['flare'] * (1 - smoothstep(0.60, 0.84, y)) * smoothstep(0.5, 1.2, np.abs(A))
-    thick = thick + 0.0035 * np.cos(A * 26) * np.sin(Pl) * (1 - upper * 0.6)          # strand clumps
+    thick = thick + 0.0035 * np.cos(A * 26) * np.sin(Pl) * (1 - upper) ** 1.5         # strand clumps, fading out at the crown
     if style.get('ears'):                                                             # puff out over the ears
         da = np.abs(A) - math.radians(97)
         thick = thick + style['ears'] * np.exp(-(da / 0.38) ** 2 - ((y - 0.685) / 0.065) ** 2)
@@ -359,6 +359,11 @@ if __name__ == '__main__':
     r = raycast(a, b, c, d.reshape(-1, 3), CENTER).reshape(A.shape)
     for j in range(1, r.shape[0]):                       # rays that slip out under the jaw: reuse the row above
         r[j] = np.where(np.isnan(r[j]), r[j - 1], r[j])
+    # The skull is low-poly; smooth its radius field so the hair dome comes out round, not faceted.
+    for _ in range(4):
+        r = (np.roll(r, 1, axis=1) + 2 * r + np.roll(r, -1, axis=1)) / 4                     # around (wraps)
+        r = np.vstack([r[:1], (r[:-2] + 2 * r[1:-1] + r[2:]) / 4, r[-1:]])                  # top to bottom
+    r = r + 0.002                                                                          # stay just outside
     top_r = raycast(a, b, c, np.array([[0, 1.0, 0]]), CENTER)[0]
     index = []
     for name, style in STYLES.items():

@@ -14,6 +14,7 @@
     --line: rgba(27, 35, 32, 0.14);
     --accent: #d4612c;
     --accent-fg: #ffffff;
+    --floor: rgba(255, 255, 255, 0.55);
     --font-display: "Space Grotesk", "Inter", system-ui, sans-serif;
     --font-ui: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
     --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -22,13 +23,13 @@
     :root:not([data-theme="light"]) {
       --bg: #47504b; --bg-deep: #252b28; --fg: #e9eee9; --muted: #a9b5ad;
       --panel: rgba(27, 32, 30, 0.86); --line: rgba(233, 238, 233, 0.16);
-      --accent: #f08a55; --accent-fg: #1d130d; color-scheme: dark;
+      --accent: #f08a55; --accent-fg: #1d130d; --floor: rgba(255, 255, 255, 0.07); color-scheme: dark;
     }
   }
   :root[data-theme="dark"] {
     --bg: #47504b; --bg-deep: #252b28; --fg: #e9eee9; --muted: #a9b5ad;
     --panel: rgba(27, 32, 30, 0.86); --line: rgba(233, 238, 233, 0.16);
-    --accent: #f08a55; --accent-fg: #1d130d; color-scheme: dark;
+    --accent: #f08a55; --accent-fg: #1d130d; --floor: rgba(255, 255, 255, 0.07); color-scheme: dark;
   }
 
   html, body { height: 100%; }
@@ -39,7 +40,8 @@
     font-family: var(--font-ui);
     overflow: hidden;
   }
-  #stage { position: fixed; inset: 0; }
+  /* a soft pool of light on the studio floor, under the character's feet */
+  #stage { position: fixed; inset: 0; background: radial-gradient(ellipse 34% 11% at 50% 87%, var(--floor) 0%, transparent 100%); }
   #stage canvas { display: block; width: 100%; height: 100%; touch-action: none; }
 
   .hud {

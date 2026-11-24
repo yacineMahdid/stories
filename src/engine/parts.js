@@ -4,7 +4,9 @@ import * as THREE from 'three';
 // tails. Positions are in the space of the bone each part rides on: Head (y up from the neck,
 // +z toward the face) or Tail (at the base of the spine, +z toward the front of the body).
 
-const mat = (color, roughness = 0.75) => new THREE.MeshStandardMaterial({ color, roughness, metalness: 0 });
+const mat = (color, roughness = 0.75) => new THREE.MeshPhysicalMaterial({
+  color, roughness, metalness: 0, specularIntensity: 0.3, sheen: 0.35, sheenRoughness: 0.8, sheenColor: new THREE.Color(color).lerp(new THREE.Color(0xffffff), 0.3),
+});
 
 function ellipsoid(radii, color, { segments = 28, roughness } = {}) {
   const m = new THREE.Mesh(new THREE.SphereGeometry(1, segments, Math.round(segments * 0.7)), mat(color, roughness));
@@ -75,7 +77,7 @@ export const PART_BUILDERS = {
     return out;
   },
   brow({ color }) {
-    return [{ bone: 'Head', object: at(ellipsoid([0.14, 0.03, 0.036], color), 0, 0.226, 0.158) }];
+    return [{ bone: 'Head', object: at(ellipsoid([0.13, 0.034, 0.03], color), 0, 0.226, 0.152) }];
   },
   horns({ color = '#efe6d2' }) {
     return [-1, 1].map((s) => ({
@@ -89,9 +91,9 @@ export const PART_BUILDERS = {
   mane({ color }) { // horse: tufts from the forehead over the top and down the back of the neck
     const path = new THREE.CatmullRomCurve3([[0, 0.34, 0.15], [0, 0.44, 0.04], [0, 0.42, -0.1], [0, 0.28, -0.22], [0, 0.1, -0.24], [0, -0.04, -0.18]].map((p) => new THREE.Vector3(...p)));
     const g = new THREE.Group();
-    for (let i = 0; i < 10; i++) {
-      const u = i / 9, p = path.getPointAt(u), t = path.getTangentAt(u);
-      const tuft = ellipsoid([0.032, 0.07, 0.05], color);
+    for (let i = 0; i < 18; i++) { // dense, overlapping tufts read as one crest
+      const u = i / 17, p = path.getPointAt(u), t = path.getTangentAt(u);
+      const tuft = ellipsoid([0.026, 0.062 - 0.015 * u, 0.042], color);
       tuft.position.copy(p);
       tuft.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), t);
       tuft.rotateX(-0.6);
@@ -102,8 +104,8 @@ export const PART_BUILDERS = {
   ruff({ color }) { // baboon cheek fur
     const g = new THREE.Group();
     for (const s of [-1, 1]) {
-      g.add(at(ellipsoid([0.06, 0.075, 0.06], color), s * 0.205, 0.12, 0.07, 0, 0, s * 0.3));
-      g.add(at(ellipsoid([0.055, 0.065, 0.055], color), s * 0.19, 0.04, 0.03, 0, 0, s * 0.5));
+      g.add(at(ellipsoid([0.045, 0.06, 0.05], color), s * 0.2, 0.11, 0.04, 0, 0, s * 0.35));
+      g.add(at(ellipsoid([0.042, 0.052, 0.046], color), s * 0.185, 0.04, 0.01, 0, 0, s * 0.55));
     }
     return [{ bone: 'Head', object: g }];
   },

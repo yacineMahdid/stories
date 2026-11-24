@@ -39,5 +39,15 @@ export function loadHairGeometry(style) {
 }
 
 export function createHairMaterial() {
-  return new THREE.MeshStandardMaterial({ name: 'Hair', roughness: 0.55, metalness: 0 });
+  return new THREE.MeshPhysicalMaterial({
+    name: 'Hair', roughness: 0.5, metalness: 0,
+    sheen: 0.6, sheenRoughness: 0.45, sheenColor: new THREE.Color(0xffffff),
+    clearcoat: 0.15, clearcoatRoughness: 0.45,
+  });
+}
+
+/** Set the hair color; the sheen is a lighter tint of it, like a glossy highlight. */
+export function setHairColor(material, color) {
+  material.color.set(color);
+  material.sheenColor.set(color).lerp(new THREE.Color(0xffffff), 0.45);
 }

@@ -24,7 +24,7 @@ export const SPECIES = {
     spec: {
       skin: '#4b4648', fur: { second: '#a39e9c', back: true, paws: '#36323a' }, ears: 'small', body: 'muscular',
       face: { mask: { color: '#726b6e', shape: 'heart' }, eyes: 'round', eyeSize: 0.82, eyeColor: '#2a1f1a', eyeLine: '#141012', nose: 'none', mouth: 'flat', mouthY: 40, mouthColor: '#1c1416' },
-      parts: [{ type: 'brow', color: '#3e3a3c' }, { type: 'snout', shape: 'gorilla', color: '#726b6e', nostrils: '#151112' }],
+      parts: [{ type: 'brow', color: '#4b4648' }, { type: 'snout', shape: 'gorilla', color: '#726b6e', nostrils: '#151112' }],
     },
   },
   cow: {

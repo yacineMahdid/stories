@@ -55,8 +55,13 @@ vec3 furColor(vec3 p, bool arm, float t) {
     if (n > 0.6) c = uFur3;
   }
   if (uStripes > 0.5) {
-    float s = sin((p.y + 0.3 * noise3(p * 9.0)) * 72.0);
-    if (s > 0.5 && (p.z < 0.03 || arm || p.y < 0.22 || p.y > 0.86)) c = uFur3;
+    if (p.y > 0.56) { // head: clean bands over the crown and the back, wavering a little
+      float s = sin(p.y * 95.0 + sin(p.x * 16.0) * 1.4);
+      if (s > 0.45 && (p.z < 0.06 || p.y > 0.9)) c = uFur3;
+    } else {
+      float s = sin((p.y + 0.18 * noise3(p * 7.0)) * 72.0);
+      if (s > 0.5 && (p.z < 0.03 || arm || p.y < 0.22)) c = uFur3;
+    }
   }
   if (uPaws > 0.5 && ((arm && t > 0.158) || p.y < 0.045)) c = uPawColor;
   return c;
@@ -92,7 +97,11 @@ export function createBodyMaterial() {
     uHem: { value: 0.29 },
     uLegCut: { value: LEGS.shorts },
   };
-  const material = new THREE.MeshStandardMaterial({ name: 'Skin', roughness: 0.85, metalness: 0 });
+  // A soft velvet sheen gives skin, fur and fabric the gentle, toy-like falloff of the style.
+  const material = new THREE.MeshPhysicalMaterial({
+    name: 'Skin', roughness: 0.8, metalness: 0, specularIntensity: 0.25,
+    sheen: 0.35, sheenRoughness: 0.8, sheenColor: new THREE.Color(0xffffff),
+  });
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = shader.vertexShader
@@ -100,9 +109,11 @@ export function createBodyMaterial() {
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvRest = position;');
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>\n${GLSL}`)
-      .replace('vec4 diffuseColor = vec4( diffuse, opacity );', 'vec4 diffuseColor = vec4( outfitColor(vRest), opacity );');
+      .replace('vec4 diffuseColor = vec4( diffuse, opacity );', 'vec4 diffuseColor = vec4( outfitColor(vRest), opacity );')
+      // tint the sheen by the painted color so dark fur and saturated cloth keep their color
+      .replace('material.sheenColor = sheenColor;', 'material.sheenColor = sheenColor * mix( vec3( 0.35 ), diffuseColor.rgb, 0.75 );');
   };
-  material.customProgramCacheKey = () => 'canonical-outfit-2';
+  material.customProgramCacheKey = () => 'canonical-outfit-5';
   material.userData.outfit = uniforms;
   return material;
 }
