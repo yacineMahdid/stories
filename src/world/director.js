@@ -601,7 +601,7 @@ export class Director {
         // around the target in small steps until the view is clear.
         // An explicit `from` is honored within a small swing.
         if (subs.length && kind !== 'establishing' && kind !== 'top') {
-          pos = this.clearView(pos, target, subs, shot.from == null ? 80 : 24) ?? pos;
+          pos = this.clearView(pos, target, subs, shot.from == null ? 80 : 24, kind) ?? pos;
         }
       }
     }
@@ -626,7 +626,7 @@ export class Director {
    * prop stands in front of the subjects on screen: a lamp post between two people ruins a
    * two-shot even when it hides neither of them.
    */
-  clearView(pos, target, subs, maxSwing = 80) {
+  clearView(pos, target, subs, maxSwing = 80, kind = 'medium') {
     const boxes = this.blockerBoxes(target);
     const cam = this.stage.camera.clone();
     const corners = (box) => [0, 1, 2, 3, 4, 5, 6, 7].map((i) => new THREE.Vector3(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z));
@@ -666,8 +666,9 @@ export class Director {
       }
       return score;
     };
-    // Seeing the back of the cast costs a little: a clear view of their backs can still beat a
-    // cluttered view of their faces.
+    // Seeing the back of the cast costs something: a clear view of their backs can still beat
+    // a cluttered view of their faces in a wide shot, but a close-up is about the face.
+    const faceWeight = { close: 2.5, medium: 1.2, two: 1.2, over: 0.6, low: 1.2 }[kind] ?? 0.45;
     const faces = subs.filter((s) => s.character);
     const backs = (p) => {
       if (!faces.length) return 0;
@@ -677,7 +678,7 @@ export class Director {
         const d = Math.hypot(dx, dz) || 1;
         b += (1 - (Math.sin(s.yaw) * dx + Math.cos(s.yaw) * dz) / d) / 2;
       }
-      return (b / faces.length) * 0.45;
+      return (b / faces.length) * faceWeight;
     };
     const off = pos.clone().sub(target);
     let best = pos, bestScore = occlusion(pos) + backs(pos);
