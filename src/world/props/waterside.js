@@ -198,21 +198,6 @@ function mergeAll(geos0) {
   return out;
 }
 
-/** Push every vertex out from the Y axis by `amp * noise` (lumpy stones). */
-function lumpy(g, { amp = 0.04, freq = 3, seed = 0 } = {}) {
-  const pos = g.attributes.position;
-  const v = new THREE.Vector3();
-  const o = (seed % 97) * 1.37;
-  for (let i = 0; i < pos.count; i++) {
-    v.set(pos.getX(i), pos.getY(i), pos.getZ(i));
-    const n = noise3(v.x * freq + o, v.y * freq - o, v.z * freq + o * 0.5);
-    const d = Math.hypot(v.x, v.z) || 1;
-    pos.setXYZ(i, v.x + (v.x / d) * amp * n, v.y, v.z + (v.z / d) * amp * n);
-  }
-  g.computeVertexNormals();
-  return g;
-}
-
 /** Weld a geometry's seams (lathes, spheres) so it shades smoothly. */
 function weld(g) {
   g.deleteAttribute('normal');
@@ -294,17 +279,40 @@ function petalCup(r, h, petals = 8, { rows = 4, per = 4, open = 1, tipLift = 0.3
   return loft(out, { wrap: true, flip: true });
 }
 
-/** A lily pad: a flat disc with a notch, lying on y = 0. */
-function padGeo(r, notch = 0.5, seg = 14) {
-  const pts = [[0, 0]];
-  for (let i = 0; i <= seg; i++) {
-    const a = notch / 2 + (i / seg) * (TAU - notch);
-    const k = 1 + 0.03 * Math.sin(a * 5);
-    pts.push([Math.cos(a) * r * k, Math.sin(a) * r * k]);
+/**
+ * A lily pad lying on y = 0: a shallow dish rising to an upturned rim, with a notch cut to the
+ * middle, smooth-shaded on top (no underside: it floats). Its rim vertices fall on `seg` even
+ * steps from the notch, so a painter can pick out veins.
+ */
+function padGeo(r, notch = 0.5, seg = 26) {
+  const a0 = notch / 2, span = TAU - notch;
+  const pos = [], nor = [];
+  const wob = (a) => 1 + 0.03 * Math.sin(a * 5);
+  const P = (rr, a, y) => [Math.cos(a) * rr, y, Math.sin(a) * rr];
+  const rimN = (a) => { const v = new THREE.Vector3(-0.28 * Math.cos(a), 1, -0.28 * Math.sin(a)).normalize(); return [v.x, v.y, v.z]; };
+  const tri = (pts, ns) => { pts.forEach((p) => pos.push(...p)); ns.forEach((n) => nor.push(...n)); };
+  const up = [0, 1, 0];
+  const C0 = [0, 0.008, 0];
+  for (let i = 0; i < seg; i++) {
+    const a = a0 + (i / seg) * span, b = a0 + ((i + 1) / seg) * span;
+    const e1 = P(r * wob(a), a, 0.016), e2 = P(r * wob(b), b, 0.016);
+    const d1 = P(r * wob(a) * 1.004, a, 0.002), d2 = P(r * wob(b) * 1.004, b, 0.002);
+    tri([C0, e2, e1], [up, rimN(b), rimN(a)]);
+    const o1 = [Math.cos(a), 0, Math.sin(a)], o2 = [Math.cos(b), 0, Math.sin(b)];
+    tri([e1, e2, d1], [o1, o2, o1]);
+    tri([e2, d2, d1], [o2, o2, o1]);
   }
-  const g = extrude(pts, 0.008, { bevel: 0.005, bevelSegments: 1, curveSegments: 2 });
-  g.rotateX(-Math.PI / 2);
-  g.translate(0, 0.009, 0);
+  // the notch's two cut edges (both ways round: they are tiny)
+  for (const a of [a0, a0 + span]) {
+    const e = P(r * wob(a), a, 0.016);
+    const lo = (p) => [p[0], 0.002, p[2]];
+    const n = [-Math.sin(a), 0, Math.cos(a)], nn = n.map((v) => -v);
+    tri([C0, e, lo(e)], [n, n, n]); tri([C0, lo(e), lo(C0)], [n, n, n]);
+    tri([C0, lo(e), e], [nn, nn, nn]); tri([C0, lo(C0), lo(e)], [nn, nn, nn]);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
   return g;
 }
 
@@ -367,7 +375,7 @@ function addLily(parts, at, color, { scale = 1, bud = false } = {}) {
   const [cx, cy, cz] = at;
   const deep = shade(color, -0.08, { sat: 0.06 }), tip = shade(color, 0.1);
   const look = { slot: 'solid', color };
-  const petal = new THREE.SphereGeometry(1, 6, 4);
+  const petal = new THREE.SphereGeometry(1, 5, 4);
   const q = new THREE.Quaternion(), e = new THREE.Euler();
   const ringOf = (n, len, wid, tilt, off, lift) => {
     for (let k = 0; k < n; k++) {
@@ -386,7 +394,7 @@ function addLily(parts, at, color, { scale = 1, bud = false } = {}) {
   ringOf(8, 0.075, 0.034, 0.22, 0, 0.0);
   ringOf(7, 0.062, 0.031, 0.62, Math.PI / 7, 0.012);
   ringOf(4, 0.045, 0.026, 1.05, 0.3, 0.024);
-  parts.add(sphere(0.026, 8, 5), '#f4c542', { at: [cx, cy + 0.04 * scale, cz], scale: [scale, scale * 0.55, scale] });
+  parts.add(sphere(0.026, 7, 5), '#f4c542', { at: [cx, cy + 0.04 * scale, cz], scale: [scale, scale * 0.55, scale] });
 }
 
 /* ───────────────────────── boats ───────────────────────── */
@@ -564,7 +572,7 @@ function addHull(parts, h, { hull, bottom, stripe, rail, inside, weathered = fal
     const t = lerp(0.03, tw + 0.015, i / 8);
     keel.push([0, h.keelY(t) - 0.008, h.zOf(t)]);
   }
-  parts.add(taper(keel, [0.022, 0.022], { segments: 9, radial: 5 }), bottom);
+  parts.add(taper(keel, [0.022, 0.022], { segments: 9, radial: 5, caps: false }), bottom);
   // transom board (bare wood on its inner face) with a rail across its top
   const tg = extrude(h.transomOutline, 0.03, { bevel: 0.012, bevelSegments: 1, curveSegments: 4 });
   addPainted(parts, tg, weathered ? mix(hull, '#8f8a80', 0.4) : hull, { at: [0, 0, h.zOf(0) + 0.006] }, (c, x, y, z, nx, ny, nz) => {
@@ -928,14 +936,14 @@ export const WATERSIDE = {
       const steel = { slot: 'metal', color: '#9aa3ab' };
       for (const s of [1, -1]) {
         boat.add(ring(0.03, 0.009, { radial: 4, tubular: 8, arc: Math.PI }), steel, { at: [s * h.half(0.5), yTop + 0.045, zMid], rot: [Math.PI / 2, 0, Math.PI / 2] });
-        boat.add(roundCyl(0.012, 0.03, { bevel: 0.004, segments: 6, steps: 1 }), steel, { at: [s * h.half(0.5), yTop - 0.01, zMid] });
+        boat.add(cyl(0.012, 0.03, { segments: 6 }), steel, { at: [s * h.half(0.5), yTop - 0.01, zMid] });
       }
       // a brass mooring ring on an eye at the bow
       if (!wreck) {
         const brass = { slot: 'metal', color: '#d9a54a' };
         const ey = h.topY(1) - 0.1, ez = h.zOf(1) + 0.036;
-        boat.add(sphere(0.017, 8, 6), brass, { at: [0, ey, ez], scale: [1, 1, 0.8] });
-        boat.add(ring(0.05, 0.011, { radial: 5, tubular: 16 }), brass, { at: [0, ey - 0.052, ez + 0.012], rot: [Math.PI / 2, 0, 0] });
+        boat.add(sphere(0.017, 7, 5), brass, { at: [0, ey, ez], scale: [1, 1, 0.8] });
+        boat.add(ring(0.05, 0.011, { radial: 5, tubular: 14 }), brass, { at: [0, ey - 0.052, ez + 0.012], rot: [Math.PI / 2, 0, 0] });
       }
       // oars: afloat they rest in the oarlocks with the handles in front of the rower (who faces
       // the stern) and the blades out toward the bow; beached they lie inside; a wreck has one broken
@@ -1047,7 +1055,7 @@ export const WATERSIDE = {
         const k = r.float(0.84, 1.12), topY = r.float(0.05, 0.075);
         // a soft dome on a round shoulder, bulging a little, tucked in deep under the water
         // (bottom to top, so the lathe faces outward)
-        const prof = [[0.2, -0.95], [0.27, -0.45], [0.29, -0.22], [0.284, -0.11], [0.258, -0.05], [0.205, -0.012], [0.12, 0.014], [0, 0.026]]
+        const prof = [[0.21, -0.95], [0.29, -0.24], [0.284, -0.11], [0.258, -0.05], [0.205, -0.012], [0.12, 0.014], [0, 0.026]]
           .map(([pr, py]) => [pr * k, py + topY - 0.026]);
         const g = weld(lathe(prof, 15));
         // vertical lumps: the radius wobbles round the stone, slowly with height
@@ -1245,9 +1253,9 @@ export const WATERSIDE = {
         const legTop = 0.82;
         for (let i = 0; i < 3; i++) {
           const a = (i / 3) * TAU + 0.5;
-          parts.add(stick([Math.cos(a) * 0.17, 0.2, Math.sin(a) * 0.17], [Math.cos(a) * 0.07, legTop, Math.sin(a) * 0.07], 0.018, { segments: 6 }), col);
+          parts.add(stick([Math.cos(a) * 0.17, 0.2, Math.sin(a) * 0.17], [Math.cos(a) * 0.075, legTop, Math.sin(a) * 0.075], 0.03, { segments: 7 }), col);
         }
-        parts.add(ring(0.12, 0.014, { radial: 5, tubular: 18 }), col, { at: [0, 0.5, 0] });
+        parts.add(ring(0.128, 0.024, { radial: 6, tubular: 18 }), col, { at: [0, 0.5, 0] });
         parts.add(roundCyl(0.11, 0.04, { bevel: 0.015, segments: 14, steps: 1 }), col, { at: [0, legTop - 0.01, 0] });
         const lit = flag(p.lamp, true);
         const glowCol = mix(col, '#fff4d6', 0.45);
@@ -1309,9 +1317,14 @@ export const WATERSIDE = {
         }
         placed.push([x, z, pr]);
         const base = r.pick(tones);
-        addPainted(parts, padGeo(pr, r.float(0.35, 0.6)), { slot: 'foliage', color: base, snow: false }, { at: [x, 0.004 * (i % 3), z], rot: [0, r.angle(), 0] }, (c, px, py, pz) => {
+        const notch = r.float(0.35, 0.6), seg = 26, step = (TAU - notch) / seg;
+        addPainted(parts, padGeo(pr, notch, seg), { slot: 'foliage', color: base, snow: false }, { at: [x, 0.004 * (i % 3), z], rot: [0, r.angle(), 0] }, (c, px, py, pz) => {
           const d = Math.hypot(px, pz) / pr;
-          c.offsetHSL(0, 0.02, 0.06 * (1 - d) - (py > 0.012 ? 0 : 0.08));
+          let a = Math.atan2(pz, px) - notch / 2;
+          a = ((a % TAU) + TAU) % TAU;
+          const k = Math.round(a / step);
+          c.offsetHSL(0, 0.02, 0.07 * (1 - d) - (py < 0.005 ? 0.09 : 0));
+          if (k % 4 === 2 && py > 0.005) c.offsetHSL(0, -0.04, 0.07);
           if (season === 'autumn' && d > 0.7) c.lerp(C('#c9773d'), 0.35);
         });
       }
@@ -1866,7 +1879,7 @@ export const WATERSIDE = {
       // tilted back by LEAN - TILT so it sits nearly level in the world, centered over the head.
       // A slight backward lean keeps the canopy centered over the head while the hand swings.
       const LEAN = [-0.06, 0, 0.27], TILT = 0.03;
-      const sx = -0.055, H = 1.03, R = 0.75, dome = 0.235, panels = 8;
+      const sx = -0.055, H = 1.04, R = 0.78, dome = 0.24, panels = 8;
       const level = new THREE.Quaternion().setFromEuler(new THREE.Euler(...LEAN)).invert().multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, TILT)));
       const C2H = new THREE.Matrix4().compose(new THREE.Vector3(sx, H, 0), level, new THREE.Vector3(1, 1, 1));
       const onCanopy = (x, y, z) => new THREE.Vector3(x, y, z).applyMatrix4(C2H);
@@ -1875,7 +1888,7 @@ export const WATERSIDE = {
       parts.add(roundCyl(0.0095, H - 0.03, { bevel: 0.004, segments: 7, steps: 1 }), steel, { at: [sx, 0.04, 0] });
       // the canopy: panels sagging between ribs, with a light trim round the rim
       const rows = [], cols = panels * 3;
-      const fs = [0.04, 0.2, 0.38, 0.56, 0.72, 0.86, 0.95, 1];
+      const fs = [0.012, 0.2, 0.38, 0.56, 0.72, 0.86, 0.95, 1];
       const surf = (f, a) => {
         const between = 1 - Math.abs(Math.cos((panels * a) / 2));
         const rr = R * Math.sin(f * Math.PI / 2) * (1 - 0.05 * between * f);
@@ -1894,19 +1907,22 @@ export const WATERSIDE = {
         if (ringN === fs.length - 2) c.set(trim);
       }, true);
       if (pattern === 'dots') {
+        // round dots laid on the canopy's true tangent plane, just above the cloth
         const qC = new THREE.Quaternion().setFromRotationMatrix(C2H);
+        const V = (f, a) => new THREE.Vector3(...surf(f, a));
         for (let k = 0; k < panels; k++) {
           for (const [f, off] of [[0.42, 0.5], [0.8, 0]]) {
             const a = ((k + off) / panels) * TAU;
-            const [x, y, z] = surf(f, a);
-            const n = new THREE.Vector3(Math.cos(a) * Math.sin(f * Math.PI / 2) * 0.55, 1, Math.sin(a) * Math.sin(f * Math.PI / 2) * 0.55).normalize();
+            const p0 = V(f, a);
+            const n = new THREE.Vector3().crossVectors(V(f, a + 0.01).sub(p0), V(f + 0.01, a).sub(p0)).normalize();
+            if (n.y < 0) n.negate();
             const q = qC.clone().multiply(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), n));
-            parts.add(cyl(0.055, 0.006, { segments: 10 }), { ...cloth, color: light2 }, { matrix: new THREE.Matrix4().compose(onCanopy(x * 0.985, y + 0.004, z * 0.985), q, new THREE.Vector3(1, 1, 1)) });
+            parts.add(cyl(0.05, 0.005, { segments: 12 }), { ...cloth, color: light2 }, { matrix: new THREE.Matrix4().compose(onCanopy(...p0.addScaledVector(n, 0.004).toArray()), q, new THREE.Vector3(1, 1, 1)) });
           }
         }
       }
       // tip knob, rib ends round the rim, and the struts from the runner on the shaft
-      parts.add(sphere(0.024, 8, 6), PALETTE.woodDark, { at: onCanopy(0, 0.016, 0).toArray() });
+      parts.add(sphere(0.03, 8, 6), PALETTE.woodDark, { at: onCanopy(0, 0.018, 0).toArray() });
       const runnerY = H - dome - 0.2;
       for (let k = 0; k < panels; k++) {
         const a = (k / panels) * TAU;

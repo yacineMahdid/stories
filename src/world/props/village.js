@@ -823,7 +823,8 @@ function buildWell(p, ctx) {
   const P = new Parts();
   const ro = 0.55, ri = 0.39, wallH = 0.56;
   // stacked stone blocks around a dark shaft
-  P.add(cyl(ri + 0.07, wallH - 0.02, { segments: 18, open: true }), '#4a4f56');
+  // the shaft's inside wall (a lathe running top to bottom faces inward, seen from above)
+  P.add(lathe([[ri + 0.07, wallH - 0.02], [ri + 0.07, 0]], 18), '#4a4f56');
   const courses = 3, per = 9, ch = (wallH - 0.02) / courses;
   for (let k = 0; k < courses; k++) {
     for (let i = 0; i < per; i++) {
@@ -999,17 +1000,26 @@ function goodsOn(P, R, goods, { at = [0, 0, 0], w = 1.4, d = 0.45 } = {}) {
   }
 }
 
+const finGeos = {};
+function fishFin(dorsal = false) {
+  const k = dorsal ? 'dorsal' : 'tail';
+  finGeos[k] ??= dorsal
+    ? extrude([[-0.03, 0], [0.03, 0], [0.01, 0.03]], 0.012, { bevel: 0 })
+    : extrude([[0, 0], [0.075, 0.05], [0.062, 0], [0.075, -0.05]], 0.016, { bevel: 0 });
+  return finGeos[k];
+}
+
 /** A fish lying on its side (on ice, in a crate): body, tail fin, belly tint and an eye. */
 function fish(P, R, at, color, s, yaw) {
   const M = xform(at, [0, yaw, 0], s);
-  paint(P, sphere(0.1, 8, 5), color, { matrix: M.clone().multiply(xform([0, 0, 0], [0, 0, 0], [1, 0.3, 0.46])) }, (c, x, y, z) => {
+  paint(P, sphere(0.1, 8, 4), color, { matrix: M.clone().multiply(xform([0, 0, 0], [0, 0, 0], [1, 0.3, 0.46])) }, (c, x, y, z) => {
     const local = new THREE.Vector3(x - at[0], 0, z - at[2]).applyAxisAngle(UP, -yaw);
     if (local.z < -0.012 * s) c.lerp(C('#f3f1ea'), 0.55);
   });
-  const tail = extrude([[0, 0], [0.075, 0.05], [0.062, 0], [0.075, -0.05]], 0.01, { bevel: 0.006, bevelSegments: 1, curveSegments: 1 });
-  P.add(tail, shade(color, -0.1), { matrix: M.clone().multiply(xform([0.088, 0, 0], [Math.PI / 2, 0, 0])) });
-  P.add(extrude([[-0.03, 0], [0.03, 0], [0.01, 0.03]], 0.008, { bevel: 0.004, bevelSegments: 1 }), shade(color, -0.1), { matrix: M.clone().multiply(xform([0, 0, 0.04], [Math.PI / 2, 0, 0])) });
-  P.add(sphere(0.013, 4, 3), '#3a3640', { matrix: M.clone().multiply(xform([-0.066, 0.026, 0.006])) });
+  // (fins are cut flat: a bevel this small never shows, and fish come by the crate)
+  P.add(fishFin(), shade(color, -0.1), { matrix: M.clone().multiply(xform([0.088, 0, 0], [Math.PI / 2, 0, 0])) });
+  P.add(fishFin(true), shade(color, -0.1), { matrix: M.clone().multiply(xform([0, 0, 0.04], [Math.PI / 2, 0, 0])) });
+  P.add(sphere(0.013, 5, 3), '#3a3640', { matrix: M.clone().multiply(xform([-0.066, 0.026, 0.006])) });
 }
 
 function bouquet(P, R, at, color, n = 7, spread = 0.1) {
@@ -1187,7 +1197,8 @@ function stackLayout(count, s, R) {
     [[0, 0, 0, 0]],
     [[-0.53 * s, 0, 0, 0], [0.53 * s, 0, 0.04 * s, 0]],
     [[-0.53 * s, 0, 0, 0], [0.53 * s, 0, 0.03 * s, 0], [0, s, 0, 0]],
-    [[-0.53 * s, 0, 0.27 * s, 0], [0.53 * s, 0, 0.3 * s, 0], [0, 0, -0.78 * s, 0], [-0.1 * s, s, -0.1 * s, 0]],
+    // two in front, a stack of two behind them (the front crates stay open to show their goods)
+    [[-0.53 * s, 0, 0.27 * s, 0], [0.53 * s, 0, 0.3 * s, 0], [0, 0, -0.78 * s, 0], [0.03 * s, s, -0.8 * s, 0]],
   ][count - 1];
   return L.map(([x, y, z]) => [x + R.float(-0.02, 0.02) * s, y, z + R.float(-0.02, 0.02) * s, R.float(-0.18, 0.18)]);
 }
@@ -1260,15 +1271,20 @@ function buildCrate(p, ctx) {
   const P = new Parts();
   const lay = stackLayout(count, S * 1.02, R);
   // Resolve what each crate shows before building: a crate with another on it has its lid on;
-  // the top of a stack (or the first crate) always shows the contents; the second of a pair is
-  // closed so there is a seat; any other open crate may or may not have its lid on.
+  // the top of a stack (or the first crate) always shows the contents; of the other uncovered
+  // crates one is closed (a seat) and one shows the contents too, which is which by the seed.
   const covered = lay.map(([x, y, z], i) => lay.some(([x2, y2, z2], j) => j !== i && y2 > y + 0.01 && Math.hypot(x2 - x, z2 - z) < S));
   const open = lay.map((_, i) => i).filter((i) => !covered[i]);
   const main = open.reduce((a, i) => (lay[i][1] > lay[a][1] ? i : a), open[0]);
+  const others = open.filter((i) => i !== main);
+  const flip = R.chance(0.5);
   const fills = lay.map((_, i) => {
     if (covered[i] || fill === 'closed') return 'closed';
     if (i === main) return fill;
-    return count === 2 ? 'closed' : R.pick([fill, 'closed']);
+    const j = others.indexOf(i);
+    if (others.length === 1) return 'closed';
+    if (j < 2) return (j === 0) === flip ? fill : 'closed';
+    return R.pick([fill, 'closed']);
   });
   let seat = null;
   lay.forEach(([x, y, z, yaw], i) => {
@@ -1312,7 +1328,8 @@ function barrelAt(P, R, at, H, wood, hoop, fill, yaw) {
   const topY = y0 + H - 0.03;
   if (fill === 'closed') {
     P.add(roundCyl(re - 0.03, 0.025, { segments: 14, steps: 1, bevel: 0.008 }), shade(wood, 0.05), { at: [x0, topY - 0.012, z0] });
-    for (const dz of [-0.05, 0.05]) P.add(box((re - 0.035) * 2 * Math.sqrt(1 - (dz / re) ** 2), 0.004, 0.006), shade(wood, -0.22), { at: [x0, topY + 0.013, z0 + dz], rot: [0, yaw, 0] });
+    // two soft grooves between the lid boards
+    for (const dz of [-0.05, 0.05]) P.add(box((re - 0.035) * 2 * Math.sqrt(1 - (dz / re) ** 2), 0.003, 0.01), deeper(wood, 0.14), { at: [x0, topY + 0.013, z0 + dz], rot: [0, yaw, 0] });
     return H;
   }
   if (fill === 'water') waterDisc(P, re - 0.034, topY - 0.04, { at, segs: 16 });
@@ -1487,8 +1504,10 @@ function plant(P, R, kind, at, color, k = 1, season = 'summer') {
   } else if (kind === 'sunflower') {
     for (let i = 0; i < 2; i++) {
       const h = (i ? 0.36 : 0.46) * k, lean = i ? [0.05 * k, -0.03 * k] : [-0.03 * k, 0.02 * k];
-      const top = stem(x0 + (i ? 0.03 : -0.02) * k, z0, h, lean);
-      leaf(top[0], y0 + h * 0.45, top[2], 0.12 * k, i * 2 + 0.5, 1.0);
+      const bx = x0 + (i ? 0.03 : -0.02) * k;
+      const top = stem(bx, z0, h, lean);
+      // the leaf grows from the stem itself (the stem leans, so follow it to 45% of its height)
+      leaf(bx + lean[0] * 0.45, y0 + h * 0.45, z0 + lean[1] * 0.45, 0.12 * k, i * 2 + 0.5, 1.0);
       const yaw = i ? 0.5 : -0.3;
       const M = xform(top, [-0.35, yaw, 0], k * (i ? 0.85 : 1));
       P.add(sunflowerHead(), { slot: 'foliage', color }, { matrix: M });
@@ -3140,7 +3159,7 @@ export const VILLAGE = {
 
   crate: {
     label: 'Crate',
-    about: 'A sturdy wooden crate, closed or open with produce, alone or in a little stack. Sit on a closed one.',
+    about: 'A sturdy wooden crate, closed or open with produce, alone or in a little stack (the top crate always shows the contents; a closed one in a stack is a seat).',
     params: {
       size: { default: 0.4, min: 0.25, max: 0.8, about: 'edge length' },
       count: { default: 1, min: 1, max: 4, about: 'how many, stacked' },
@@ -3220,7 +3239,7 @@ export const VILLAGE = {
     about: 'A wooden post with arrow boards pointing left and right, each with a place name painted on both sides.',
     params: {
       labels: { default: ['Village', 'Beach', 'Forest'], about: 'the names on the boards, top to bottom (up to 5)' },
-      height: { default: 1.75, min: 1.2, max: 2.6, about: 'post height' },
+      height: { default: 1.75, min: 1.2, max: 2.6, about: 'post height (a short post grows to keep its lowest board at hip height)' },
       wood: { default: PALETTE.wood, type: 'color', about: 'post color' },
       board: { default: '#ecd3a0', type: 'color', about: 'board color' },
     },
@@ -3343,7 +3362,7 @@ export const VILLAGE = {
 
   cart: {
     label: 'Market cart',
-    about: 'A wooden hand cart with two big spoked wheels and handles toward +X, loaded with goods. Pull it from the handles; sell from its sides.',
+    about: 'A wooden hand cart with two big spoked wheels and handles toward +X, loaded with goods (the origin is the middle of the whole cart, handles included). Pull it from the handles; sell from its sides.',
     params: {
       goods: { default: 'fruit', options: CART_GOODS, about: 'the load' },
       color: { default: '#5a8fce', type: 'color', about: 'painted rail color' },
@@ -3381,7 +3400,7 @@ export const VILLAGE = {
     label: 'Lantern string',
     about: 'Round paper lanterns hanging on a string between two posts; they glow at night (warm lights along the string) and sway in the wind.',
     params: {
-      length: { default: 6, min: 1.5, max: 16, about: 'distance between the posts' },
+      length: { default: 6, min: 1.5, max: 16, about: 'distance between the posts (a lantern about every 0.8, at most 12)' },
       colors: { default: LANTERN_PAPER, about: 'paper colors in order (a list)' },
       lit: { default: 'night', options: ['night', 'always', 'never'], about: 'when they glow' },
       height: { default: 2.4, min: 1.6, max: 3.5, about: 'post height' },
@@ -3430,7 +3449,7 @@ export const VILLAGE = {
 
   woodpile: {
     label: 'Woodpile',
-    about: 'Split logs stacked between stakes, with a chopping block and an axe beside them, optionally under a little lean-to roof.',
+    about: 'Split logs stacked between stakes, with a chopping block and an axe at the +X end, optionally under a little lean-to roof (the origin is the middle of the whole footprint).',
     params: {
       length: { default: 1.3, min: 0.6, max: 3, about: 'length of the stack' },
       block: { default: true, about: 'a chopping block with an axe' },
