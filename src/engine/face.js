@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { EYE_STYLES } from './eyes.js';
 
 // The face is drawn on a 512px canvas that the base model maps onto the front of the head
 // (planar UVs over x -0.23..0.23, y 0.56..1.02 in body units). The canvas is seen from the
@@ -17,7 +18,7 @@ const BLUSH_Y = toPy(0.68);
 const BLUSH_DX = toPx(0.165) - SIZE / 2;
 
 export const DEFAULT_FACE = {
-  eyes: 'classic',       // classic | round | sparkle | dot
+  eyes: 'classic',       // any key of EYE_STYLES in eyes.js
   eyeColor: '#2c2a2b',   // iris / pupil
   eyeLine: '#6b3a22',    // outline, lashes, closed-eye strokes
   eyeSize: 1,
@@ -116,9 +117,11 @@ export class Face {
   eye(x, y, side) {
     const g = this.ctx, p = this.params, k = p.eyeSize;
     const expr = this.expression;
+    const style = EYE_STYLES[p.eyes] ?? EYE_STYLES.classic;
     g.strokeStyle = p.eyeLine;
+    g.lineCap = 'round';
 
-    if (expr === 'happy') { // ^ ^
+    if (expr === 'happy' || style.closed) { // ^ ^
       g.lineWidth = 9;
       g.beginPath(); g.arc(x, y + 14 * k, 34 * k, Math.PI * 1.15, Math.PI * 1.85); g.stroke();
       return;
@@ -129,55 +132,17 @@ export class Face {
       return;
     }
 
-    const big = expr === 'surprised' ? 1.12 : 1;
-    const rx = 44 * k * big, ry = 54 * k * big;
+    const surprised = expr === 'surprised';
+    const size = surprised ? k * 1.12 : k;
     g.save();
-    if (expr === 'sleepy') { g.beginPath(); g.rect(x - 80, y - 8 * k, 160, 140); g.clip(); }
-
-    if (p.eyes === 'dot') {
-      g.fillStyle = p.eyeColor;
-      g.beginPath(); g.ellipse(x, y, 16 * k * big, 20 * k * big, 0, 0, Math.PI * 2); g.fill();
-    } else if (p.eyes === 'round') {
-      g.fillStyle = p.eyeColor;
-      g.beginPath(); g.ellipse(x, y, rx * 0.78, ry * 0.86, 0, 0, Math.PI * 2); g.fill();
-      this.highlight(x + 10 * k, y - 18 * k, 11 * k);
-    } else {
-      // classic / sparkle: white with an outline and a big iris looking slightly inward
-      g.fillStyle = '#ffffff';
-      g.beginPath(); g.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); g.fill();
-      g.lineWidth = 5; g.stroke();
-      const irisScale = expr === 'surprised' ? 0.62 : 0.8;
-      const ix = x - side * 7 * k, iy = y + 5 * k;
-      g.save();
-      g.beginPath(); g.ellipse(x, y, rx - 2, ry - 2, 0, 0, Math.PI * 2); g.clip();
-      g.fillStyle = p.eyeColor;
-      g.beginPath(); g.ellipse(ix, iy, rx * irisScale, ry * irisScale, 0, 0, Math.PI * 2); g.fill();
-      if (p.eyes === 'sparkle') {
-        g.fillStyle = 'rgba(0,0,0,0.45)';
-        g.beginPath(); g.ellipse(ix, iy + 4 * k, rx * 0.36, ry * 0.4, 0, 0, Math.PI * 2); g.fill();
-      }
-      g.restore();
-      this.highlight(ix + side * -12 * k + 14 * k, iy - 20 * k, 9 * k);
-      if (p.eyes === 'sparkle') {
-        this.highlight(ix - 10 * k, iy + 18 * k, 5 * k);
-        g.lineWidth = 6;
-        g.beginPath(); // two lashes at the outer corner
-        g.moveTo(x + side * rx * 0.75, y - ry * 0.62); g.lineTo(x + side * (rx + 12 * k), y - ry * 0.85);
-        g.moveTo(x + side * rx * 0.95, y - ry * 0.25); g.lineTo(x + side * (rx + 16 * k), y - ry * 0.4);
-        g.stroke();
-      }
-    }
+    if (expr === 'sleepy') { g.beginPath(); g.rect(x - 90 * k, y - 8 * k, 180 * k, 150 * k); g.clip(); }
+    style.draw(g, x, y, side, size, p, { surprised });
     g.restore();
     if (expr === 'sleepy') {
+      g.strokeStyle = p.eyeLine;
       g.lineWidth = 8;
-      g.beginPath(); g.moveTo(x - rx * 0.95, y - 6 * k); g.quadraticCurveTo(x, y - 14 * k, x + rx * 0.95, y - 6 * k); g.stroke();
+      g.beginPath(); g.moveTo(x - 42 * size, y - 6 * k); g.quadraticCurveTo(x, y - 14 * k, x + 42 * size, y - 6 * k); g.stroke();
     }
-  }
-
-  highlight(x, y, r) {
-    const g = this.ctx;
-    g.fillStyle = '#ffffff';
-    g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
   }
 
   brow(x, y, side) {
