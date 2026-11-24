@@ -222,8 +222,13 @@ function ribbon(points, width, { side = [1, 0, 0], fold = 0.35, segments = 8, wi
   return g;
 }
 
-/** A lathe made smooth (no seam), with optional root lobes, twist, lean and wobble. uv = (around, height 0-1). */
-function trunkGeo(profile, { radial = 14, lobes = 0, lobeAmp = 0.4, lobeH = 0.3, phase = 0, lean = [0, 0], twist = 0, wobble = 0, seed = 0 } = {}) {
+/**
+ * A lathe made smooth (no seam), with optional root lobes, twist, lean and wobble. uv = (around, height 0-1).
+ * Root lobes are soft round swellings that fade with height. The foot's normals are leaned
+ * outward (`footBend`), so the flare is lit like the trunk's side and reads as the trunk
+ * sinking into the ground, never as a sunlit (or snow-covered) shelf.
+ */
+function trunkGeo(profile, { radial = 14, lobes = 0, lobeAmp = 0.3, lobeH = 0.3, lobeExp = 1, phase = 0, lean = [0, 0], twist = 0, wobble = 0, seed = 0, footBend = 0.55 } = {}) {
   let g = lathe(profile, radial);
   g.deleteAttribute('normal');
   g.deleteAttribute('uv');
@@ -236,9 +241,9 @@ function trunkGeo(profile, { radial = 14, lobes = 0, lobeAmp = 0.4, lobeH = 0.3,
     const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
     const r = Math.hypot(x, z), a = Math.atan2(z, x), h = y / top;
     let k = 1;
-    if (lobes > 0 && y < lobeH) {
-      const f = 1 - y / lobeH;
-      k += lobeAmp * Math.pow(0.5 + 0.5 * Math.cos(lobes * (a + phase)), 2.2) * f * f;
+    if (lobes > 0) {
+      const f = 1 - clamp((y + 0.05) / (lobeH + 0.05), 0, 1);
+      k += lobeAmp * Math.pow(0.5 + 0.5 * Math.cos(lobes * (a + phase)), lobeExp) * f * f;
     }
     if (wobble) k *= 1 + wobble * noise3(Math.cos(a) * 1.4 + seed, y * 1.8, Math.sin(a) * 1.4);
     const a2 = a + twist * h;
@@ -248,7 +253,90 @@ function trunkGeo(profile, { radial = 14, lobes = 0, lobeAmp = 0.4, lobeH = 0.3,
   }
   g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   g.computeVertexNormals();
+  if (footBend) {
+    const nor = g.attributes.normal, v = new THREE.Vector3();
+    const footH = Math.max(lobeH, 0.12);
+    for (let i = 0; i < pos.count; i++) {
+      const w = footBend * (1 - smooth(-0.05, footH, pos.getY(i)));
+      if (w <= 0) continue;
+      v.set(nor.getX(i), nor.getY(i), nor.getZ(i));
+      if (v.y <= 0) continue;
+      v.y *= 1 - w;
+      v.normalize();
+      nor.setXYZ(i, v.x, v.y, v.z);
+    }
+  }
   return g;
+}
+
+/**
+ * A trunk profile [r, y] for trunkGeo, from just below the ground: a smooth concave root flare
+ * (no rim, no shelf) into a gently tapering trunk closed by a rounded top at `H`, which hides in
+ * the fork where the limbs leave. r0: the trunk's radius at the ground before the flare; r1: at the top.
+ */
+function trunkProfile(r0, r1, H, { flare = 0.42, flareH = 0.3, steps = 8 } = {}) {
+  const y0 = -0.05;
+  const pts = [[0, y0 - 0.012]];
+  const yf = Math.min(H * 0.6, flareH * 1.25);
+  const ys = [];
+  for (let i = 0; i <= 6; i++) ys.push(y0 + (yf - y0) * Math.pow(i / 6, 1.5));
+  for (let i = 1; i <= steps; i++) ys.push(lerp(yf, H, i / steps));
+  for (const y of ys) {
+    const t = clamp(y / H, 0, 1);
+    const g = 1 - clamp((y - y0) / (flareH - y0), 0, 1);
+    pts.push([lerp(r0, r1, Math.pow(t, 0.85)) * (1 + flare * g * g), y]);
+  }
+  pts.push([r1 * 0.86, H + r1 * 0.3], [r1 * 0.5, H + r1 * 0.56], [0, H + r1 * 0.64]);
+  return pts;
+}
+
+/** Where a trunk built by trunkGeo is centered at height y (its lean bends it). */
+function trunkAxis(profile, lean, y) {
+  const top = Math.max(...profile.map((p) => p[1]));
+  const h = y / top;
+  return [lean[0] * h * h, y, lean[1] * h * h];
+}
+
+/**
+ * How far a placed trunk reaches from the axis toward azimuth `a` (atan2(z, x)) near the ground,
+ * measured along that direction over a body-wide window: where a character can stand.
+ */
+function reachToward(g, a, { yMax = 0.14, window = 0.32 } = {}) {
+  const pos = g.attributes.position;
+  let best = 0;
+  for (let i = 0; i < pos.count; i++) {
+    const y = pos.getY(i);
+    if (y > yMax || y < -0.03) continue;
+    const x = pos.getX(i), z = pos.getZ(i);
+    let d = Math.atan2(z, x) - a;
+    d = Math.atan2(Math.sin(d), Math.cos(d));
+    if (Math.abs(d) > window) continue;
+    best = Math.max(best, Math.hypot(x, z) * Math.cos(d));
+  }
+  return best;
+}
+
+/** The radius of a trunk's foot at the ground (all around). */
+function footRadius(g, yMax = 0.06) {
+  const pos = g.attributes.position;
+  let best = 0;
+  for (let i = 0; i < pos.count; i++) {
+    const y = pos.getY(i);
+    if (y <= yMax && y >= -0.03) best = Math.max(best, Math.hypot(pos.getX(i), pos.getZ(i)));
+  }
+  return best;
+}
+
+/** The azimuth near `aim` (within ±span) where the foot reaches out least: a gap between roots. */
+function gapNear(g, aim, { span = Math.PI / 4, steps = 13, yMax = 0.14 } = {}) {
+  let best = null;
+  for (let i = 0; i < steps; i++) {
+    const a = aim + span * ((i / (steps - 1)) * 2 - 1);
+    const r = reachToward(g, a, { yMax });
+    const score = r + Math.abs(a - aim) * 0.03;
+    if (!best || score < best.score) best = { a, r, score };
+  }
+  return best;
 }
 
 /**
@@ -345,13 +433,13 @@ function canopyPainter(cols, { cy, ry, alt = null, altAmt = 0.35, spots = null, 
   const S2 = spots?.color2 ? C(spots.color2) : null;
   return (c, x, y, z, nx, ny, nz, tone, crease) => {
     const h = clamp((y - cy) / ry, -1.3, 1.3);
-    c.copy(D).lerp(B, 0.5 + 0.5 * smooth(-1.1, 0.0, h));
+    c.copy(D).lerp(B, 0.65 + 0.35 * smooth(-1.1, 0.0, h));
     c.lerp(L, smooth(0.15, 1.1, h) * 0.3 + smooth(0.6, 1, ny) * 0.1);
     c.offsetHSL(0, 0, tone * 0.035);
     const n = noise3(x * 1.35 + seed, y * 1.35 + 3.1, z * 1.35 - seed);
     c.lerp(A, smooth(0.12, 0.45, n) * altAmt);
     c.offsetHSL(0, 0, noise3(x * 4.3 - seed, y * 4.3, z * 4.3 + 1.7) * 0.03);
-    c.lerp(D, smooth(0.04, 0.42, crease) * 0.42);
+    c.lerp(D, smooth(0.04, 0.42, crease) * 0.25);
     if (S) {
       const f = spots.freq;
       const m = noise3(x * f + 11.3 + seed, y * f + 5.7, z * f - 2.1);
@@ -398,6 +486,33 @@ function grow(parts, look, r, from, dir, { len, rad, levels = 2, kids = [3, 2, 2
     grow(parts, look, r, start, cd, { len: len * shrink * r.float(0.85, 1.12), rad: r1 * (leader ? 0.95 : 0.85), levels, kids, shrink, spread, up, droop, minR, taperK, painter }, level + 1, tips);
   }
   return tips;
+}
+
+/**
+ * The limbs of a leafy tree: from the fork each limb reaches into the canopy and ends at least
+ * `depth` inside the leaves (measured on the canopy surface), so the canopy never floats over
+ * cut stubs. `canopy` is { at, R, squash, surf } as built by addCanopy. A leader limb rises from
+ * the fork into the middle of the canopy and hides the trunk's rounded top.
+ */
+function limbsIntoCanopy(parts, bark, skel, fork, azs, canopy, { out = 0.5, drop = 0.15, depth = 0.25, rad, leaderRad = rad * 1.15, minR = 0.03, painter, taperK = 0.66 }) {
+  const { at: c, R, squash: q, surf } = canopy;
+  const inside = (t) => {
+    const d = [t[0] - c[0], t[1] - c[1], t[2] - c[2]];
+    const s = surf(d);
+    return Math.hypot(s[0] - c[0], s[1] - c[1], s[2] - c[2]) - Math.hypot(d[0], d[1], d[2]);
+  };
+  const reach = (t) => {
+    for (let k = 0; k < 8 && inside(t) < depth; k++) t = [c[0] + (t[0] - c[0]) * 0.85, c[1] + (t[1] - c[1]) * 0.85, c[2] + (t[2] - c[2]) * 0.85];
+    return t;
+  };
+  for (const az of azs) {
+    const t = reach([c[0] + Math.cos(az) * out * R * q[0], c[1] - drop * R * q[1], c[2] + Math.sin(az) * out * R * q[2]]);
+    const dir = [t[0] - fork[0], t[1] - fork[1], t[2] - fork[2]];
+    grow(parts, bark, skel, fork, dir, { len: Math.hypot(dir[0], dir[1], dir[2]), rad, levels: 0, minR, taperK, painter });
+  }
+  const t = reach([c[0] * 0.5 + fork[0] * 0.5, c[1] - 0.25 * R * q[1], c[2] * 0.5 + fork[2] * 0.5]);
+  const dir = [t[0] - fork[0], t[1] - fork[1], t[2] - fork[2]];
+  grow(parts, bark, skel, [fork[0], fork[1] - 0.04, fork[2]], dir, { len: Math.hypot(dir[0], dir[1], dir[2]), rad: leaderRad, levels: 0, minR, taperK, painter });
 }
 
 /** Points spread over a sphere (golden spiral) limited to a band of heights (dy in [lo, hi]). */
