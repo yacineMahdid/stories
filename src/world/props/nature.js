@@ -1993,7 +1993,7 @@ function buildGarden(parts, ctx, { crop, length, rows, season }) {
   const topY = 0.13;
   // plants every ~0.32 along a row; big beds space them out to stay within ~2.9k triangles
   const cols = Math.max(1, Math.round((W - 0.2) / 0.32));
-  const COST = { carrot: 100, turnip: 110, cabbage: 135, tomato: 175 };
+  const COST = { carrot: 122, turnip: 115, cabbage: 135, tomato: 175 };
   const rowBudget = (2900 - (12 + 4 * 110 + rows * 110)) / rows;
   const kinds = crop === 'mixed' ? ['cabbage', 'carrot', 'turnip', 'tomato'] : [crop];
   const leafC = season === 'autumn' ? '#7fa748' : '#5faa45';
@@ -2399,7 +2399,7 @@ export const NATURE = {
     examples: [{}, { count: 3, height: 2.4 }, { count: 8, height: 4 }],
     build(p, ctx) {
       const season = seasonOf(ctx);
-      const count = int(p.count, 5, 1, 12);
+      const count = int(p.count, 5, 1, 9);
       const height = num(p.height, 3.2, 0.8, 7);
       const parts = new Parts();
       buildBamboo(parts, ctx, { count, height, season });
