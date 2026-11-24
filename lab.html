@@ -67,6 +67,7 @@
   }
   .group { display: grid; gap: 8px; }
   .group[hidden] { display: none; }
+  .anim-rows { display: grid; gap: 8px; }
   .tabs { display: flex; gap: 4px; overflow-x: auto; padding-bottom: 2px; border-bottom: 1px solid var(--line); margin-bottom: 2px; }
   .tabs button { border: 0; border-radius: 6px 6px 0 0; padding: 7px 12px 8px; font-weight: 600; color: var(--muted); }
   .tabs button[aria-selected="true"] { color: var(--fg); background: transparent; box-shadow: inset 0 -3px 0 var(--accent); }
@@ -129,7 +130,7 @@
     <div class="row"><span class="label">Ears</span><div class="chips" id="ears"></div></div>
   </section>
   <section class="group" data-tab="Act" hidden>
-    <div class="row"><span class="label">Animation</span><div class="chips" id="clips"></div></div>
+    <div class="anim-rows" id="anim-rows"></div>
     <div class="row"><span class="label">Emotion</span><div class="chips" id="expressions"></div></div>
   </section>
   <section class="group" data-tab="View" hidden>

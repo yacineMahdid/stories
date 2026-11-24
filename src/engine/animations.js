@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { MOVES, MOVE_GROUPS } from './moves.js';
 
 // Procedural animation library for the canonical rig (see rig.js for the axis conventions).
 // Each entry is a pose function of the cycle phase (0..1); clips are baked from it at 30 fps.
@@ -199,6 +200,14 @@ export const LIBRARY = {
   },
 };
 
+Object.assign(LIBRARY, MOVES);
+
+/** Animation names grouped for pickers. */
+export const ANIMATION_GROUPS = {
+  Basics: ['Idle', 'Walk', 'Run', 'Jump', 'Wave', 'Nod', 'Shake', 'Talk', 'Sit', 'Cheer'],
+  ...MOVE_GROUPS,
+};
+
 /** Bake every pose function in the library into AnimationClips for a skeleton at rest. */
 export function buildClips(restRoot) {
   const rest = {};
@@ -206,7 +215,11 @@ export function buildClips(restRoot) {
     const bone = restRoot.getObjectByName(name);
     rest[name] = bone ? bone.position.clone() : new THREE.Vector3();
   }
-  return Object.entries(LIBRARY).map(([name, def]) => bake(name, def, rest));
+  return Object.entries(LIBRARY).map(([name, def]) => {
+    const clip = bake(name, def, rest);
+    clip.userData = { once: !!def.once };
+    return clip;
+  });
 }
 
 function bake(name, { duration, pose }, rest) {

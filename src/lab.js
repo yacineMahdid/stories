@@ -6,6 +6,7 @@ import { EYE_STYLES, EYE_COLORS } from './engine/eyes.js';
 import { MOUTH_STYLES, NOSE_STYLES } from './engine/face-parts.js';
 import { BODY_TYPES } from './engine/body.js';
 import { EAR_STYLES } from './engine/ears.js';
+import { ANIMATION_GROUPS } from './engine/animations.js';
 
 // Example specs: everything here is built from the same canonical base.
 const PRESETS = [
@@ -154,12 +155,24 @@ try {
   press(rows.ears, 0);
   rows.presets[0].click();
 
-  const names = character.clipNames;
-  const clipButtons = chipRow($('clips'), names, (i) => {
-    character.play(names[i]);
-    character.talking = names[i] === 'Talk';
-  });
-  clipButtons[names.indexOf('Idle')].click();
+  // One row of animations per group; one pick across all rows.
+  const readable = (name) => name.split(/(?=[A-Z])/).map((w, i) => (i ? w.toLowerCase() : w)).join(' ');
+  const animButtons = [];
+  for (const [group, names] of Object.entries(ANIMATION_GROUPS)) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.innerHTML = '<span class="label"></span><div class="chips"></div>';
+    row.querySelector('.label').textContent = group;
+    $('anim-rows').append(row);
+    const buttons = chipRow(row.querySelector('.chips'), names.map(readable), (i) => {
+      for (const b of animButtons) b.setAttribute('aria-pressed', String(b === buttons[i]));
+      character.play(names[i]);
+      character.talking = names[i] === 'Talk';
+    });
+    buttons.forEach((b, i) => { b.dataset.clip = names[i]; });
+    animButtons.push(...buttons);
+  }
+  animButtons.find((b) => b.dataset.clip === 'Idle').click();
   const emotionIds = ids(EMOTIONS);
   chipRow($('expressions'), emotionIds.map((id) => EMOTIONS[id].label), (i) => character.setEmotion(emotionIds[i]))[0].click();
 

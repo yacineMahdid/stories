@@ -145,12 +145,17 @@ export class Character {
     return { bones: this.skeleton.bones.length, triangles: geo.index.count / 3, clips: this.clips.length };
   }
 
-  /** Cross-fade to a named animation. */
+  /** Cross-fade to a named animation. One-shot moves (falls, throws...) play once and hold. */
   play(name, fade = 0.3) {
     const next = this.actions.get(name);
-    if (!next || next === this.current) return;
-    next.reset().setEffectiveTimeScale(1).setEffectiveWeight(1).fadeIn(fade).play();
-    if (this.current) this.current.fadeOut(fade);
+    if (!next) return;
+    const once = next.getClip().userData?.once;
+    if (next === this.current && !once) return;
+    next.reset();
+    next.setLoop(once ? THREE.LoopOnce : THREE.LoopRepeat, once ? 1 : Infinity);
+    next.clampWhenFinished = !!once;
+    next.setEffectiveTimeScale(1).setEffectiveWeight(1).fadeIn(fade).play();
+    if (this.current && this.current !== next) this.current.fadeOut(fade);
     this.current = next;
   }
 
