@@ -286,8 +286,6 @@ function staves(base, { cx = 0, cz = 0, n = 14, y0 = 0, y1 = 1, seed = 0 } = {})
     const a = (Math.atan2(z - cz, x - cx) / TAU + 0.5) * n;
     const h = hash(Math.floor(a), seed);
     c.lerp(h < 0.5 ? dark : light, 0.25 + Math.abs(h - 0.5) * 0.7);
-    const t = (y - y0) / Math.max(y1 - y0, 1e-3);
-    c.lerp(dark, (1 - smooth(0, 0.35, t)) * 0.25 + smooth(0.8, 1, t) * 0.12);
   };
 }
 
@@ -394,8 +392,8 @@ const FRUIT = {
 function fruitHeap(P, R, kind, { at = [0, 0, 0], rx = 0.15, rz = 0.12, r = 0.05, layers = 2, tilt = 0 } = {}) {
   const [c0, c1] = FRUIT[kind] ?? FRUIT.apple;
   const g = sphere(r, 8, 5);
-  const cols = Math.max(1, Math.round((rx * 2) / (r * 1.9)));
-  const rows = Math.max(1, Math.round((rz * 2) / (r * 1.9)));
+  const cols = clamp(Math.round((rx * 2) / (r * 1.9)), 1, 3);
+  const rows = clamp(Math.round((rz * 2) / (r * 1.9)), 1, 3);
   const sx = cols > 1 ? (rx * 2 - r * 1.9) / (cols - 1) : 0, sz = rows > 1 ? (rz * 2 - r * 1.9) / (rows - 1) : 0;
   let n = 0, top = null;
   const put = (x, y, z) => {
@@ -728,8 +726,8 @@ function buildWell(p, ctx) {
  * its length and puffed between the stripes, tilted by `slope` (front lower) and centered at `at`.
  */
 function awning(P, { w, len, n, color, cream, at, slope = 0, bow = 0.06, puff = 0.025 }) {
-  const sub = 4;
-  const g = new THREE.PlaneGeometry(w, len, n * sub, 8).rotateX(-Math.PI / 2);
+  const sub = 3;
+  const g = new THREE.PlaneGeometry(w, len, n * sub, 6).rotateX(-Math.PI / 2);
   const pos = g.attributes.position;
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), z = pos.getZ(i);
@@ -771,7 +769,7 @@ function goodsOn(P, R, goods, { at = [0, 0, 0], w = 1.4, d = 0.45 } = {}) {
   };
   if (goods === 'fruit') {
     const kinds = ['apple', 'orange', 'pear', 'plum', 'lemon', 'peach'];
-    const n = clamp(Math.round(w / 0.5), 2, 5);
+    const n = clamp(Math.round(w / 0.5), 2, 4);
     const tw = w / n - 0.03;
     for (let i = 0; i < n; i++) {
       const x = cx - w / 2 + (i + 0.5) * (w / n);
@@ -843,6 +841,7 @@ function fish(P, R, at, color, s, yaw) {
 }
 
 function bouquet(P, R, at, color, n = 7, spread = 0.1) {
+  const bs = clamp(spread / 0.1, 0.8, 1.6);
   const [x0, y0, z0] = at;
   P.add(blob(spread * 0.9, { detail: 1, amp: 0.2, seed: R.int(0, 99), squash: [1, 0.7, 1] }), { slot: 'foliage', color: '#5aa458' }, { at: [x0, y0 + spread * 0.35, z0] });
   for (let i = 0; i < n; i++) {
@@ -850,8 +849,8 @@ function bouquet(P, R, at, color, n = 7, spread = 0.1) {
     const r = i === 0 ? 0 : spread * R.float(0.45, 0.8);
     const c = shade(color, R.float(-0.05, 0.05));
     const bx = x0 + Math.cos(a) * r, bz = z0 + Math.sin(a) * r, by = y0 + spread * 0.8 + R.float(0, 0.05) - r * 0.4;
-    P.add(sphere(0.034, 6, 4), { slot: 'foliage', color: c }, { at: [bx, by, bz], scale: [1, 0.8, 1] });
-    P.add(sphere(0.013, 4, 3), { slot: 'foliage', color: '#f6d34a' }, { at: [bx, by + 0.026, bz] });
+    P.add(sphere(0.034, 6, 4), { slot: 'foliage', color: c }, { at: [bx, by, bz], scale: [bs, 0.8 * bs, bs] });
+    P.add(sphere(0.013, 4, 3), { slot: 'foliage', color: '#f6d34a' }, { at: [bx, by + 0.026 * bs, bz], scale: bs });
   }
 }
 
@@ -950,7 +949,7 @@ function buildStall(p, ctx) {
   const zc0 = -0.08, zc1 = 0.5, dc = zc1 - zc0;
   // counter: a plank front, a colored trim and an overhanging top
   P.add(softBox(W - 0.06, top - 0.06, dc - 0.06, 0.02), shade(wood, 0.08), { at: [0, 0.02, (zc0 + zc1) / 2 - 0.01] });
-  const nPl = Math.max(4, Math.round(W / 0.2));
+  const nPl = Math.max(4, Math.round(W / 0.24));
   for (let i = 0; i < nPl; i++) {
     const x = -W / 2 + 0.05 + (i + 0.5) * ((W - 0.1) / nPl);
     P.add(softBox((W - 0.1) / nPl - 0.012, top - 0.1, 0.03, 0.01), shade(PALETTE.woodLight, R.float(-0.05, 0.03)), { at: [x, 0.05, zc1 - 0.035] });
@@ -1052,15 +1051,15 @@ function crateAt(P, R, at, S, wood, yaw, fill, { lite = false } = {}) {
     return top;
   }
   if (fill === 'straw') {
-    add(blob(0.5, { detail: 1, amp: 0.25, seed: R.int(0, 99), squash: [inner * 0.95, S * 0.25, inner * 0.95] }), '#e4c46a', xform([0, top - S * 0.08, 0]));
+    paint(P, blob(0.5, { detail: 2, amp: 0.3, freq: 2.4, seed: R.int(0, 99), squash: [S * 0.94, S * 0.42, S * 0.94] }), '#e4c46a', { matrix: M.clone().multiply(xform([0, top - S * 0.06, 0])) }, (c, x, y, z) => c.lerp(C('#c9a24e'), clamp(noise3(x * 30, y * 30, z * 30), 0, 0.6)));
     return top;
   }
   if (fill === 'fish') {
     add(box(S - 0.06, 0.01, S - 0.06), '#e9f4f8', xform([0, top - S * 0.12, 0]));
     const pos = new THREE.Vector3();
     for (let i = 0; i < 3; i++) {
-      pos.set((i - 1) * inner * 0.3, top - S * 0.08, R.float(-0.03, 0.03)).applyMatrix4(M);
-      fish(P, R, [pos.x, pos.y, pos.z], R.pick(['#8aa3b8', '#f29b84', '#9fb4c4']), S * 2.2, yaw + Math.PI / 2 + R.float(-0.3, 0.3));
+      pos.set((i - 1) * inner * 0.28, top - S * 0.08, (i - 1) * -0.02).applyMatrix4(M);
+      fish(P, R, [pos.x, pos.y + i * 0.012, pos.z], R.pick(['#8aa3b8', '#f29b84', '#9fb4c4']), S * 2.9, yaw + Math.PI / 2 + 0.55 + R.float(-0.2, 0.2));
     }
     return top;
   }
@@ -1105,9 +1104,17 @@ function barrelAt(P, R, at, H, wood, hoop, fill, yaw) {
   const rAt = (y) => re + rb * Math.sin(Math.PI * clamp(y / H, 0, 1));
   const prof = [[re - 0.018, 0], [re - 0.004, 0.012]];
   for (let i = 1; i <= 7; i++) { const y = (i / 8) * H; prof.push([rAt(y), y]); }
-  prof.push([re - 0.004, H - 0.012], [re - 0.018, H], [re - 0.03, H], [re - 0.032, H - 0.03], [0, H - 0.03]);
+  const open = fill !== 'closed';
+  prof.push([re - 0.004, H - 0.012], [re - 0.018, H], [re - 0.03, H], [re - 0.032, H - 0.03]);
+  if (open) prof.push([re - 0.035, H * 0.5], [re - 0.04, 0.08], [0, 0.07]);
+  else prof.push([0, H - 0.03]);
   const seed = R.int(0, 999);
-  paint(P, lathe(prof, 16), wood, { at, rot: [0, yaw, 0] }, staves(wood, { cx: x0, cz: z0, n: 16, y0, y1: y0 + H, seed }), { flat: true });
+  const stv = staves(wood, { cx: x0, cz: z0, n: 16, y0, y1: y0 + H, seed });
+  const inside = C(shade(wood, -0.3));
+  paint(P, lathe(prof, 16), wood, { at, rot: [0, yaw, 0] }, (c, x, y, z, nx, ny, nz) => {
+    stv(c, x, y, z);
+    if (open && (nx * (x - x0) + nz * (z - z0) < 0 || ny > 0.5) && y < y0 + H - 0.02) c.lerp(inside, 0.75);
+  }, { flat: true });
   for (const t of [0.13, 0.33, 0.67, 0.87]) {
     const y = t * H, r = rAt(y) + 0.004;
     P.add(lathe([[r - 0.004, -0.022], [r + 0.004, -0.016], [r + 0.004, 0.016], [r - 0.004, 0.022]], 16), { slot: 'metal', color: hoop }, { at: [x0, y0 + y, z0] });
@@ -1118,11 +1125,11 @@ function barrelAt(P, R, at, H, wood, hoop, fill, yaw) {
     for (const dz of [-0.05, 0.05]) P.add(box((re - 0.035) * 2 * Math.sqrt(1 - (dz / re) ** 2), 0.004, 0.006), shade(wood, -0.22), { at: [x0, topY + 0.013, z0 + dz], rot: [0, yaw, 0] });
     return H;
   }
-  P.add(new THREE.CircleGeometry(re - 0.03, 14).rotateX(-Math.PI / 2), shade(wood, -0.35), { at: [x0, topY - 0.005, z0] });
-  if (fill === 'water') waterDisc(P, re - 0.03, topY - 0.02, { at, segs: 16 });
-  else if (fill === 'apples') fruitHeap(P, R, 'apple', { at: [x0, topY - 0.06, z0], rx: re - 0.05, rz: re - 0.05, r: 0.055, layers: 2 });
+  if (fill === 'water') waterDisc(P, re - 0.034, topY - 0.04, { at, segs: 16 });
+  else if (fill === 'apples') fruitHeap(P, R, 'apple', { at: [x0, topY - 0.07, z0], rx: re - 0.05, rz: re - 0.05, r: 0.06, layers: 2 });
   else if (fill === 'fish') {
-    for (let i = 0; i < 3; i++) fish(P, R, [x0 + (i - 1) * 0.07, topY + 0.02 + i * 0.01, z0 + R.float(-0.04, 0.04)], R.pick(['#8aa3b8', '#f29b84']), 0.9, Math.PI / 2 + (i - 1) * 0.5);
+    P.add(new THREE.CircleGeometry(re - 0.034, 14).rotateX(-Math.PI / 2), '#e9f4f8', { at: [x0, topY - 0.03, z0] });
+    for (let i = 0; i < 3; i++) fish(P, R, [x0 + (i - 1) * 0.07, topY - 0.005 + i * 0.012, z0 + R.float(-0.04, 0.04)], R.pick(['#8aa3b8', '#f29b84']), 1, Math.PI / 2 + (i - 1) * 0.5);
   }
   return H;
 }
@@ -1343,7 +1350,7 @@ function buildBucket(p, ctx) {
   else if (fill === 'fish') {
     P.add(new THREE.CircleGeometry(r - 0.025, 14).rotateX(-Math.PI / 2), '#9cc8d8', { at: [0, lv - 0.03, 0] });
     for (let i = 0; i < 2; i++) fish(P, R, [i ? 0.03 : -0.03, lv + 0.02 * i, 0], R.pick(['#8aa3b8', '#f29b84']), 1, Math.PI / 2 + (i ? 0.6 : -0.4));
-  } else if (fill === 'flowers') bouquet(P, R, [0, lv - 0.02, 0], R.pick(['#e9434c', '#f49ac1', '#f6cf3a', '#a57fd9']), 7, 0.11);
+  } else if (fill === 'flowers') bouquet(P, R, [0, lv - 0.02, 0], R.pick(['#e9434c', '#f49ac1', '#a57fd9', '#f39a48']), 8, 0.13);
   else if (fill === 'sand') P.add(blob(r - 0.03, { detail: 1, amp: 0.1, seed: 2, squash: [1, 0.3, 1] }), PALETTE.sand, { at: [0, lv - 0.02, 0] });
   else P.add(new THREE.CircleGeometry(r - 0.025, 14).rotateX(-Math.PI / 2), shade(color, -0.3), { at: [0, 0.035, 0] });
   return finish(P.build('bucket'), { footprint: { r: 0.17 }, spots: { side: spot([0, 0, 0.5], 180, 'stand') } });
@@ -2250,12 +2257,12 @@ function buildWheelbarrow(p, ctx) {
   P.add(roundCyl(0.105, 0.05, { segments: 12, steps: 1, bevel: 0.015 }), '#d9cfba', { at: [0.62, wr, -0.025], rot: [Math.PI / 2, 0, 0] });
   P.add(roundCyl(0.035, 0.18, { segments: 8, steps: 1, bevel: 0.01 }), PALETTE.ironLight, { at: [0.62, wr, -0.09], rot: [Math.PI / 2, 0, 0] });
   const top = tubY + tubH;
-  if (fill === 'dirt') P.add(blob(0.5, { detail: 2, amp: 0.15, seed: 7, squash: [0.32, 0.1, 0.25] }), '#8a6544', { at: [0.02, top, 0] });
+  if (fill === 'dirt') P.add(blob(0.5, { detail: 2, amp: 0.15, seed: 7, squash: [0.33, 0.18, 0.26] }), '#8a6544', { at: [0.02, top - 0.01, 0] });
   else if (fill === 'hay') paint(P, blob(0.5, { detail: 2, amp: 0.18, seed: 8, squash: [0.36, 0.16, 0.28] }), '#e3c46a', { at: [0.02, top + 0.02, 0] }, (c, x, y, z) => c.lerp(C('#c9a24e'), clamp(noise3(x * 14, y * 30, z * 14) * 0.7, 0, 0.6)));
   else if (fill === 'flowers') { for (let i = 0; i < 3; i++) bouquet(P, R, [0.02 + (i - 1) * 0.2, top - 0.03, (i % 2 ? 0.07 : -0.07)], ['#e9434c', '#f6cf3a', '#f49ac1'][i], 8, 0.12); }
   else if (fill === 'pumpkins') { pumpkin(P, R, [-0.1, top - 0.1, 0.05], 0.15); pumpkin(P, R, [0.17, top - 0.09, -0.06], 0.13); }
   else if (fill === 'apples') fruitHeap(P, R, 'apple', { at: [0.02, top - 0.06, 0], rx: 0.28, rz: 0.2, r: 0.06, layers: 2 });
-  else if (fill === 'firewood') { for (let i = 0; i < 6; i++) log(P, [0.02 + (i % 3 - 1) * 0.14 - 0.1, top - 0.02 + Math.floor(i / 3) * 0.09, -0.2], [0.02 + (i % 3 - 1) * 0.14 + 0.1, top - 0.02 + Math.floor(i / 3) * 0.09, 0.2], 0.05, '#7a5233', 7); }
+  else if (fill === 'firewood') { for (let i = 0; i < 6; i++) { const z = ((i % 3) - 1) * 0.12 + (i >= 3 ? 0.06 : 0); const y = top - 0.03 + (i >= 3 ? 0.09 : 0); log(P, [-0.24, y, z + R.float(-0.02, 0.02)], [0.28, y + 0.02, z + R.float(-0.02, 0.02)], 0.05, shade('#7a5233', R.float(-0.05, 0.05)), 8); if (i === 4) break; } }
   return finish(P.build('wheelbarrow'), { footprint: { w: 1.6, d: 0.6 }, spots: { push: spot([-1.02, 0, 0], 90, 'stand') } });
 }
 

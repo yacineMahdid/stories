@@ -1134,7 +1134,7 @@ export const WATERSIDE = {
         }
         placed.push([x, z, pr]);
         const base = r.pick(tones);
-        addPainted(parts, padGeo(pr, r.float(0.35, 0.6)), { slot: 'foliage', color: base }, { at: [x, 0.004 * (i % 3), z], rot: [0, r.angle(), 0] }, (c, px, py, pz) => {
+        addPainted(parts, padGeo(pr, r.float(0.35, 0.6)), { slot: 'foliage', color: base, snow: false }, { at: [x, 0.004 * (i % 3), z], rot: [0, r.angle(), 0] }, (c, px, py, pz) => {
           const d = Math.hypot(px, pz) / pr;
           c.offsetHSL(0, 0.02, 0.06 * (1 - d) - (py > 0.012 ? 0 : 0.08));
           if (season === 'autumn' && d > 0.7) c.lerp(C('#c9773d'), 0.35);
@@ -1559,7 +1559,7 @@ export const WATERSIDE = {
       color: { default: 'black', type: 'color', about: 'frame color' },
       lit: { default: 'night', options: ['night', 'always', 'never'], about: 'when it glows' },
     },
-    examples: [{}, { clip: 'Walk' }, { color: 'gold', lit: 'always' }, { color: 'red', clip: 'Carry' }],
+    examples: [{}, { clip: 'Walk' }, { color: 'gold', lit: 'always' }, { color: 'red', clip: 'Carry' }, { color: 'teal', hand: 'leftHand', clip: 'Walk' }],
     build(p) {
       const frame = colorOr(p.color, NAMED.black);
       const lit = oneOf(p.lit, ['night', 'always', 'never'], 'night');
@@ -1580,7 +1580,8 @@ export const WATERSIDE = {
       }
       parts.add(lathe([[0, 0], [0.056, 0], [0.062, 0.01], [0.054, 0.022], [0, 0.022]], 14), frame, { at: [0, capY - 0.108, 0] });
       const g = parts.build('held-lantern');
-      const lights = lit === 'never' ? [] : [light([0, capY - 0.045, 0], { intensity: 0.9, distance: 4.5, when: lit === 'always' ? 'always' : 'night' })];
+      // the light sits a little out from the body so the lantern's own legs aren't blown out
+      const lights = lit === 'never' ? [] : [{ ...light([-0.07, capY - 0.03, 0.04], { intensity: 0.16, distance: 4, when: lit === 'always' ? 'always' : 'night' }), halo: 0.5 }];
       return finish(g, { footprint: { r: 0.1 }, spots: {}, lights, tick: holdTick(g, { hang: 0.1, lean: [0, 0, -0.1] }) });
     },
   },
@@ -1593,7 +1594,7 @@ export const WATERSIDE = {
       color: { default: 'red', type: 'color', about: 'canopy color' },
       pattern: { default: 'plain', options: ['plain', 'stripes', 'dots'], about: 'canopy pattern' },
     },
-    examples: [{}, { color: 'yellow', pattern: 'stripes', clip: 'Walk' }, { color: 'sky', pattern: 'dots' }, { color: 'purple', clip: 'Walk' }],
+    examples: [{}, { color: 'yellow', pattern: 'stripes', clip: 'Walk' }, { color: 'sky', pattern: 'dots' }, { color: 'purple', clip: 'Walk' }, { color: 'green', pattern: 'stripes', hand: 'leftHand' }],
     build(p) {
       const col = colorOr(p.color, NAMED.red);
       const pattern = oneOf(p.pattern, ['plain', 'stripes', 'dots'], 'plain');
@@ -1976,10 +1977,10 @@ export const WATERSIDE = {
         flameG.scale.set(1 + 0.05 * Math.sin(a * 13), 1 + 0.12 * Math.sin(a * 9 + 1) + 0.05 * Math.sin(a * 23), 1 + 0.05 * Math.cos(a * 11));
         flameG.children.forEach((m) => { m.rotation.y = a * 0.8; });
       };
-      const tip = d.clone().multiplyScalar(0.345).add(new THREE.Vector3(0, 0.12, 0));
+      const tip = d.clone().multiplyScalar(0.345).add(new THREE.Vector3(-0.05, 0.1, 0.04));
       return finish(g, {
         footprint: { r: 0.1 }, spots: {},
-        lights: [light(tip.toArray(), { color: glow, intensity: 0.55, distance: 4.5, when: 'always' })],
+        lights: [{ ...light(tip.toArray(), { color: glow, intensity: 0.28, distance: 4.5, when: 'always' }), halo: 0.6 }],
         tick: holdTick(g, { upright: 0.8, level: [flameG], extra: flicker }),
       });
     },
