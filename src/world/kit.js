@@ -250,6 +250,28 @@ export function patchMaterial(material, opts = {}) {
   return material;
 }
 
+/**
+ * Shadows of swaying things must sway too: a depth material with the same wind displacement,
+ * so a waving flag or a swaying canopy doesn't shadow itself in streaks.
+ */
+const depthCache = new WeakMap();
+export function depthMaterialFor(material) {
+  if (!material.defines?.KIT_SWAY) return undefined;
+  if (depthCache.has(material)) return depthCache.get(material);
+  const local = material.userData.kit;
+  const depth = new THREE.MeshDepthMaterial({ side: material.side });
+  depth.defines = { KIT_SWAY: 1 };
+  depth.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, WORLD_UNIFORMS, { uSway: local.uSway, uSwayBase: local.uSwayBase });
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>\n${VERT_HEAD}`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>\n${VERT_SWAY}`);
+  };
+  depth.customProgramCacheKey = () => 'world-kit-depth-1';
+  depthCache.set(material, depth);
+  return depth;
+}
+
 /* ───────────────────────── materials ───────────────────────── */
 
 /**
@@ -499,6 +521,8 @@ export class Parts {
       const mesh = new THREE.Mesh(merged, mat);
       mesh.castShadow = mat.userData.castShadow !== false;
       mesh.receiveShadow = true;
+      const depth = depthMaterialFor(mat);
+      if (depth) mesh.customDepthMaterial = depth;
       mesh.name = `${name}:${mat.userData.slot ?? 'custom'}`;
       group.add(mesh);
     }
@@ -575,6 +599,7 @@ export function instanced(prototype, matrices) {
     if (!obj.isMesh) return;
     const local = new THREE.Matrix4().multiplyMatrices(inv, obj.matrixWorld);
     const inst = new THREE.InstancedMesh(obj.geometry, obj.material, matrices.length);
+    if (obj.customDepthMaterial) inst.customDepthMaterial = obj.customDepthMaterial;
     const m = new THREE.Matrix4();
     matrices.forEach((mat, i) => inst.setMatrixAt(i, m.multiplyMatrices(mat, local)));
     inst.instanceMatrix.needsUpdate = true;
