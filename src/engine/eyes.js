@@ -104,7 +104,8 @@ function classicEye(g, x, y, side, k, p, o, { iris: size = 0.8, pupil = 0, line 
   const ex = rx * k, ey = ry * k, path = ellipse(g, x, y, ex, ey);
   sclera(g, path, p, line);
   const s = o.surprised ? size * 0.75 : size;
-  const ix = x - side * look * k, iy = y + 5 * k;
+  const [gx, gy] = o.gaze || [0, 0];
+  const ix = x - side * look * k + gx, iy = y + 5 * k + gy;
   inside(g, path, () => iris(g, ix, iy, ex * s, ey * s, p.eyeColor, pupil));
   if (star) starShine(g, ix + 11 * k, iy - 17 * k, 14 * k);
   else shine(g, ix + 12 * k, iy - 20 * k, 9 * k);
@@ -120,7 +121,8 @@ export const EYE_STYLES = {
   },
   round: {
     label: 'Round',
-    draw(g, x, y, side, k, p) {
+    draw(g, x, y, side, k, p, o) {
+      x += (o.gaze?.[0] ?? 0) * 0.5; y += (o.gaze?.[1] ?? 0) * 0.5;
       g.fillStyle = p.eyeColor;
       g.beginPath(); g.ellipse(x, y, 34 * k, 46 * k, 0, 0, TAU); g.fill();
       shine(g, x + 10 * k, y - 18 * k, 11 * k);
@@ -128,7 +130,8 @@ export const EYE_STYLES = {
   },
   dot: {
     label: 'Dot',
-    draw(g, x, y, side, k, p) {
+    draw(g, x, y, side, k, p, o) {
+      x += (o.gaze?.[0] ?? 0) * 0.5; y += (o.gaze?.[1] ?? 0) * 0.5;
       g.fillStyle = p.eyeColor;
       g.beginPath(); g.ellipse(x, y + 4 * k, 15 * k, 19 * k, 0, 0, TAU); g.fill();
     },
@@ -165,7 +168,7 @@ export const EYE_STYLES = {
     draw(g, x, y, side, k, p, o) {
       const path = almond(g, x, y, 46 * k, 46 * k, side, -0.55);
       sclera(g, path, p, 5);
-      const s = o.surprised ? 0.6 : 0.82, ix = x - side * 3 * k, iy = y + 6 * k;
+      const s = o.surprised ? 0.6 : 0.82, ix = x - side * 3 * k + (o.gaze?.[0] ?? 0), iy = y + 6 * k + (o.gaze?.[1] ?? 0);
       inside(g, path, () => iris(g, ix, iy, 40 * s * k, 48 * s * k, p.eyeColor));
       shine(g, ix + 12 * k, iy - 18 * k, 9 * k);
     },
@@ -175,7 +178,7 @@ export const EYE_STYLES = {
     draw(g, x, y, side, k, p, o) {
       const path = almond(g, x, y, 48 * k, 38 * k, side, 0.7);
       sclera(g, path, p, 5);
-      const s = o.surprised ? 0.5 : 0.62, ix = x - side * 6 * k, iy = y + 2 * k;
+      const s = o.surprised ? 0.5 : 0.62, ix = x - side * 6 * k + (o.gaze?.[0] ?? 0), iy = y + 2 * k + (o.gaze?.[1] ?? 0);
       inside(g, path, () => iris(g, ix, iy, 40 * s * k, 46 * s * k, p.eyeColor));
       shine(g, ix + 8 * k, iy - 12 * k, 7 * k);
       g.save(); g.lineWidth = 10; g.strokeStyle = p.eyeLine; path(); g.clip(); path(); g.stroke(); g.restore();
@@ -185,11 +188,12 @@ export const EYE_STYLES = {
   },
   wide: {
     label: 'Wide',
-    draw(g, x, y, side, k, p) {
+    draw(g, x, y, side, k, p, o) {
       const path = ellipse(g, x, y, 48 * k, 60 * k);
       sclera(g, path, p, 5);
-      iris(g, x - side * 4 * k, y + 2 * k, 13 * k, 15 * k, p.eyeColor);
-      shine(g, x - side * 4 * k + 5 * k, y - 4 * k, 4 * k);
+      const ix = x - side * 4 * k + (o.gaze?.[0] ?? 0), iy = y + 2 * k + (o.gaze?.[1] ?? 0);
+      iris(g, ix, iy, 13 * k, 15 * k, p.eyeColor);
+      shine(g, ix + 5 * k, iy - 6 * k, 4 * k);
     },
   },
   glossy: {
@@ -197,7 +201,7 @@ export const EYE_STYLES = {
     draw(g, x, y, side, k, p, o) {
       const ex = 44 * k, ey = 56 * k, path = ellipse(g, x, y, ex, ey);
       sclera(g, path, p, 6);
-      const s = o.surprised ? 0.7 : 0.92, ix = x - side * 3 * k, iy = y + 4 * k;
+      const s = o.surprised ? 0.7 : 0.92, ix = x - side * 3 * k + (o.gaze?.[0] ?? 0), iy = y + 4 * k + (o.gaze?.[1] ?? 0);
       inside(g, path, () => {
         const grad = g.createLinearGradient(ix, iy - ey * s, ix, iy + ey * s);
         grad.addColorStop(0, mix(p.eyeColor, '#000000', 0.55));
@@ -216,7 +220,8 @@ export const EYE_STYLES = {
   },
   button: {
     label: 'Button',
-    draw(g, x, y, side, k, p) {
+    draw(g, x, y, side, k, p, o) {
+      x += (o.gaze?.[0] ?? 0) * 0.5; y += (o.gaze?.[1] ?? 0) * 0.5;
       g.fillStyle = p.eyeColor;
       g.beginPath(); g.arc(x, y + 2 * k, 34 * k, 0, TAU); g.fill();
       g.strokeStyle = 'rgba(255, 255, 255, 0.85)'; g.lineWidth = 4 * k;
@@ -241,7 +246,7 @@ export const EYE_STYLES = {
         g.closePath();
       };
       sclera(g, path, p, 5);
-      const s = o.surprised ? 0.55 : 0.7, ix = x + side * 4 * k, iy = y + 8 * k;
+      const s = o.surprised ? 0.55 : 0.7, ix = x + side * 4 * k + (o.gaze?.[0] ?? 0), iy = y + 8 * k + (o.gaze?.[1] ?? 0);
       inside(g, path, () => iris(g, ix, iy, 40 * s * k, 48 * s * k, p.eyeColor));
       shine(g, ix + 9 * k, iy - 12 * k, 7 * k);
       g.strokeStyle = p.eyeLine; g.lineWidth = 10;
@@ -266,10 +271,10 @@ export const EYE_STYLES = {
   },
   beady: {
     label: 'Beady',
-    draw(g, x, y, side, k, p) {
+    draw(g, x, y, side, k, p, o) {
       const path = ellipse(g, x, y, 38 * k, 50 * k);
       sclera(g, path, p, 9);
-      iris(g, x - side * 6 * k, y + 6 * k, 10 * k, 11 * k, p.eyeColor);
+      iris(g, x - side * 6 * k + (o.gaze?.[0] ?? 0), y + 6 * k + (o.gaze?.[1] ?? 0), 10 * k, 11 * k, p.eyeColor);
     },
   },
   tired: {

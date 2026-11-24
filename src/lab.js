@@ -1,6 +1,6 @@
 import { Stage } from './engine/stage.js';
 import { createCharacter } from './engine/character.js';
-import { EXPRESSIONS } from './engine/face.js';
+import { EMOTIONS } from './engine/emotions.js';
 import { HAIR_STYLES, HAIR_COLORS } from './engine/hair.js';
 import { EYE_STYLES, EYE_COLORS } from './engine/eyes.js';
 
@@ -113,7 +113,8 @@ try {
     character.play(names[i]);
     character.talking = names[i] === 'Talk';
   }, names.indexOf('Idle'));
-  chipRow($('expressions'), EXPRESSIONS.map((e) => e[0].toUpperCase() + e.slice(1)), (i) => character.setExpression(EXPRESSIONS[i]), 0);
+  const emotionIds = Object.keys(EMOTIONS);
+  chipRow($('expressions'), emotionIds.map((id) => EMOTIONS[id].label), (i) => character.setEmotion(emotionIds[i]), 0);
 
   toggle($('toggle-skeleton'), (on) => { character.showSkeleton = on; });
   toggle($('toggle-wire'), (on) => { character.wireframe = on; });

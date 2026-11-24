@@ -6,9 +6,14 @@ import { Face } from './face.js';
 import { createBodyMaterial, applyOutfit } from './outfit.js';
 import { createHairMaterial, loadHairGeometry } from './hair.js';
 import { loadGLTF } from './loader.js';
+import { EMOTIONS } from './emotions.js';
+import { Symbols } from './symbols.js';
 
 // A character is the canonical base + a spec. Everything that makes characters differ
 // lives in the spec; the mesh, skeleton and animations are shared.
+const _q = new THREE.Quaternion();
+const _e = new THREE.Euler();
+
 export const DEFAULT_SPEC = {
   skin: '#f8d3b0',
   height: 1,          // overall scale (1 = base height)
@@ -59,6 +64,11 @@ export class Character {
     this.face = new Face(this.faceMesh.material);
     this.hairMaterial = createHairMaterial();
     this.hairMesh = null;
+    this.symbols = new Symbols(this.bones.Head);
+    this.motion = null;        // body motion layered on the animation by the current emotion
+    this.nextMotion = null;
+    this.motionWeight = 0;
+    this.motionTime = 0;
 
     this.mixer = new THREE.AnimationMixer(model);
     this.clips = clips;
@@ -122,7 +132,15 @@ export class Character {
     this.current = next;
   }
 
-  setExpression(name) { this.face.setExpression(name); }
+  /** Show an emotion (see emotions.js): face, floating symbols and a small body motion. */
+  setEmotion(id) {
+    this.face.setEmotion(id);
+    const emotion = EMOTIONS[this.face.emotionId];
+    this.symbols.set(emotion.symbols ?? []);
+    this.nextMotion = emotion.motion ?? null;
+  }
+
+  setExpression(id) { this.setEmotion(id); }
   set talking(on) { this.face.talking = on; }
 
   /** An attachment bone for hats, held props, ears or tails (see rig.js SOCKETS). */
@@ -136,8 +154,45 @@ export class Character {
   }
 
   update(dt) {
+    this.restoreMotion();
     this.mixer.update(dt);
+    this.applyMotion(dt);
     this.face.update(dt);
+    this.symbols.update(dt);
+  }
+
+  // The mixer only rewrites a bone when its animated value changes, so offsets added after it
+  // would pile up frame after frame. Put back the mixer's own values before it runs again.
+  restoreMotion() {
+    for (const [target, value] of this.motionSaved ?? []) target.copy(value);
+    this.motionSaved = [];
+  }
+
+  /** Emotion motions are small rotations added on top of whatever the mixer just posed. */
+  applyMotion(dt) {
+    if (this.motion !== this.nextMotion) {
+      this.motionWeight = Math.max(0, this.motionWeight - dt * 4);
+      if (this.motionWeight === 0) { this.motion = this.nextMotion; this.motionTime = 0; }
+    } else {
+      this.motionWeight = Math.min(1, this.motionWeight + dt * 3);
+    }
+    if (!this.motion || !this.motionWeight) return;
+    this.motionTime += dt;
+    const t = this.motionTime, w = this.motionWeight, B = this.bones;
+    const save = (target) => this.motionSaved.push([target, target.clone()]);
+    const turn = (bone, x, y, z) => { save(bone.quaternion); bone.quaternion.multiply(_q.setFromEuler(_e.set(x * w, y * w, z * w))); };
+    const noise = (x) => Math.sin(x) * 0.6 + Math.sin(x * 2.3 + 1.7) * 0.4;
+    switch (this.motion) {
+      case 'tremble': turn(B.Head, noise(t * 40) * 0.035, noise(t * 37 + 3) * 0.035, 0); turn(B.Spine1, noise(t * 33 + 5) * 0.02, 0, noise(t * 29) * 0.02); break;
+      case 'bounce': save(B.Root.position); B.Root.position.y += 0.03 * Math.abs(Math.sin(t * 7)) * w; break;
+      case 'sway': turn(B.Head, 0, 0, 0.14 * Math.sin(t * 2.6)); turn(B.Spine1, 0, 0, 0.05 * Math.sin(t * 2.6 - 0.8)); break;
+      case 'slump': turn(B.Head, 0.28, 0, 0); turn(B.Neck, 0.08, 0, 0); turn(B.Spine1, 0.12, 0, 0); break;
+      case 'chinup': turn(B.Head, -0.18, 0, 0); turn(B.Spine1, -0.05, 0, 0); break;
+      case 'tilt': turn(B.Head, 0, 0, 0.2); break;
+      case 'nodoff': turn(B.Head, 0.22 + 0.12 * Math.sin(t * 1.3), 0, 0.05); break;
+      case 'sob': turn(B.Head, 0.12 + 0.04 * Math.sin(t * 16), 0, 0); turn(B.Spine1, 0.05 + 0.02 * Math.sin(t * 16), 0, 0); break;
+      default: break;
+    }
   }
 
   dispose() {
@@ -145,6 +200,7 @@ export class Character {
     this.bodyMesh.material.dispose();
     this.faceMesh.material.dispose();
     this.hairMaterial.dispose();
+    this.symbols.dispose();
     this.face.dispose();
     this.skeletonHelper.dispose?.();
     this.root.removeFromParent();
