@@ -3,6 +3,9 @@ import { createCharacter } from './engine/character.js';
 import { EMOTIONS } from './engine/emotions.js';
 import { HAIR_STYLES, HAIR_COLORS } from './engine/hair.js';
 import { EYE_STYLES, EYE_COLORS } from './engine/eyes.js';
+import { MOUTH_STYLES, NOSE_STYLES } from './engine/face-parts.js';
+import { BODY_TYPES } from './engine/body.js';
+import { EAR_STYLES } from './engine/ears.js';
 
 // Example specs: everything here is built from the same canonical base.
 const PRESETS = [
@@ -33,6 +36,12 @@ const PRESETS = [
   },
 ];
 
+const SKINS = [
+  { label: 'Porcelain', value: '#fde3cf' }, { label: 'Fair', value: '#f8d3b0' }, { label: 'Light', value: '#efc39b' },
+  { label: 'Medium', value: '#d9a37a' }, { label: 'Tan', value: '#c28a63' }, { label: 'Brown', value: '#a86f4c' },
+  { label: 'Dark', value: '#8d5a3b' }, { label: 'Deep', value: '#5e3a28' },
+];
+
 const $ = (id) => document.getElementById(id);
 const stage = new Stage($('stage'));
 
@@ -40,7 +49,7 @@ const stage = new Stage($('stage'));
 const dock = document.querySelector('.dock');
 new ResizeObserver(() => { $('stage').style.bottom = `${dock.offsetHeight}px`; }).observe(dock);
 
-function chipRow(container, labels, onPick, initial) {
+function chipRow(container, labels, onPick) {
   const buttons = labels.map((label, i) => {
     const b = Object.assign(document.createElement('button'), { type: 'button', textContent: label });
     b.setAttribute('aria-pressed', 'false');
@@ -51,9 +60,21 @@ function chipRow(container, labels, onPick, initial) {
     container.append(b);
     return b;
   });
-  buttons[initial]?.click();
   return buttons;
 }
+
+function swatchRow(container, colors, onPick) {
+  const buttons = chipRow(container, colors.map(() => ''), (i) => onPick(colors[i].value));
+  buttons.forEach((b, i) => {
+    b.classList.add('swatch');
+    b.style.setProperty('--c', colors[i].value);
+    b.setAttribute('aria-label', colors[i].label);
+    b.title = colors[i].label;
+  });
+  return buttons;
+}
+
+const press = (buttons, index) => buttons.forEach((b, i) => b.setAttribute('aria-pressed', String(i === index)));
 
 function toggle(button, onChange) {
   button.addEventListener('click', () => {
@@ -63,6 +84,20 @@ function toggle(button, onChange) {
   });
 }
 
+// Tabs: one group of rows at a time keeps the dock short on phones.
+const groups = [...document.querySelectorAll('.group')];
+const tabButtons = groups.map((group) => {
+  const b = Object.assign(document.createElement('button'), { type: 'button', textContent: group.dataset.tab });
+  b.setAttribute('role', 'tab');
+  b.addEventListener('click', () => {
+    groups.forEach((g) => { g.hidden = g !== group; });
+    tabButtons.forEach((t) => t.setAttribute('aria-selected', String(t === b)));
+  });
+  $('tabs').append(b);
+  return b;
+});
+tabButtons[0].setAttribute('aria-selected', 'true');
+
 try {
   const character = await createCharacter(PRESETS[0].spec);
   stage.add(character);
@@ -71,50 +106,62 @@ try {
   const { bones, triangles, clips } = character.stats;
   $('stats').innerHTML = `${bones} joints<br>${triangles.toLocaleString()} triangles<br>${clips} animations`;
 
-  // Hair and eyes are picked on their own; picking a character loads its eyes into the picker.
-  const eyeIds = Object.keys(EYE_STYLES);
-  const look = { preset: 0, hair: { style: HAIR_STYLES[0].id, color: HAIR_COLORS[0].value }, eyes: 'classic', eyeColor: EYE_COLORS[0].value };
+  // Everything picked here is kept when switching characters; picking a character loads its look.
+  const ids = (o) => Object.keys(o);
+  const eyeIds = ids(EYE_STYLES), mouthIds = ids(MOUTH_STYLES), noseIds = ids(NOSE_STYLES);
+  const bodyIds = ids(BODY_TYPES), earIds = ids(EAR_STYLES);
+  const hairStyles = [{ id: null, label: 'None' }, ...HAIR_STYLES];
+  const look = {
+    preset: 0, skin: SKINS[1].value, body: 'standard', ears: 'human',
+    hair: { style: HAIR_STYLES[0].id, color: HAIR_COLORS[0].value },
+    eyes: 'classic', eyeColor: EYE_COLORS[0].value, mouth: 'smile', nose: 'triangle',
+  };
   const refresh = () => {
     const spec = PRESETS[look.preset].spec;
-    character.apply({ ...spec, hair: { ...look.hair }, face: { ...spec.face, eyes: look.eyes, eyeColor: look.eyeColor } });
-  };
-  const press = (buttons, index) => buttons.forEach((b, i) => b.setAttribute('aria-pressed', String(i === index)));
-  const swatchRow = (container, colors, onPick) => {
-    const buttons = chipRow(container, colors.map(() => ''), (i) => onPick(colors[i].value), -1);
-    buttons.forEach((b, i) => {
-      b.classList.add('swatch');
-      b.style.setProperty('--c', colors[i].value);
-      b.setAttribute('aria-label', colors[i].label);
-      b.title = colors[i].label;
+    character.apply({
+      ...spec, skin: look.skin, body: look.body, ears: look.ears, hair: { ...look.hair },
+      face: { ...spec.face, eyes: look.eyes, eyeColor: look.eyeColor, mouth: look.mouth, nose: look.nose },
     });
-    return buttons;
   };
 
-  let eyeButtons = [], eyeColorButtons = [];
-  chipRow($('presets'), PRESETS.map((p) => p.label), (i) => {
+  const rows = {};
+  rows.presets = chipRow($('presets'), PRESETS.map((p) => p.label), (i) => {
     look.preset = i;
-    const face = PRESETS[i].spec.face ?? {};
-    look.eyes = face.eyes ?? 'classic';
-    look.eyeColor = face.eyeColor ?? EYE_COLORS[0].value;
-    press(eyeButtons, eyeIds.indexOf(look.eyes));
-    press(eyeColorButtons, EYE_COLORS.findIndex((c) => c.value === look.eyeColor));
+    const spec = PRESETS[i].spec, face = spec.face ?? {};
+    Object.assign(look, {
+      skin: spec.skin ?? SKINS[1].value, eyes: face.eyes ?? 'classic', eyeColor: face.eyeColor ?? EYE_COLORS[0].value,
+      mouth: face.mouth ?? 'smile', nose: face.nose ?? 'triangle',
+    });
+    press(rows.skins, SKINS.findIndex((c) => c.value === look.skin));
+    press(rows.eyes, eyeIds.indexOf(look.eyes));
+    press(rows.eyeColors, EYE_COLORS.findIndex((c) => c.value === look.eyeColor));
+    press(rows.mouths, mouthIds.indexOf(look.mouth));
+    press(rows.noses, noseIds.indexOf(look.nose));
     refresh();
-  }, -1);
-  const hairStyles = [{ id: null, label: 'None' }, ...HAIR_STYLES];
-  const hairButtons = chipRow($('hair'), hairStyles.map((h) => h.label), (i) => { look.hair.style = hairStyles[i].id; refresh(); }, -1);
-  const hairColorButtons = swatchRow($('hair-colors'), HAIR_COLORS, (c) => { look.hair.color = c; refresh(); });
-  eyeButtons = chipRow($('eyes'), eyeIds.map((id) => EYE_STYLES[id].label), (i) => { look.eyes = eyeIds[i]; refresh(); }, -1);
-  eyeColorButtons = swatchRow($('eye-colors'), EYE_COLORS, (c) => { look.eyeColor = c; refresh(); });
-  press(hairButtons, 1);
-  press(hairColorButtons, 0);
-  $('presets').firstElementChild.click();
+  });
+  rows.skins = swatchRow($('skins'), SKINS, (c) => { look.skin = c; refresh(); });
+  rows.hair = chipRow($('hair'), hairStyles.map((h) => h.label), (i) => { look.hair.style = hairStyles[i].id; refresh(); });
+  rows.hairColors = swatchRow($('hair-colors'), HAIR_COLORS, (c) => { look.hair.color = c; refresh(); });
+  rows.eyes = chipRow($('eyes'), eyeIds.map((id) => EYE_STYLES[id].label), (i) => { look.eyes = eyeIds[i]; refresh(); });
+  rows.eyeColors = swatchRow($('eye-colors'), EYE_COLORS, (c) => { look.eyeColor = c; refresh(); });
+  rows.mouths = chipRow($('mouths'), mouthIds.map((id) => MOUTH_STYLES[id]), (i) => { look.mouth = mouthIds[i]; refresh(); });
+  rows.noses = chipRow($('noses'), noseIds.map((id) => NOSE_STYLES[id]), (i) => { look.nose = noseIds[i]; refresh(); });
+  rows.bodies = chipRow($('bodies'), bodyIds.map((id) => BODY_TYPES[id].label), (i) => { look.body = bodyIds[i]; refresh(); });
+  rows.ears = chipRow($('ears'), earIds.map((id) => EAR_STYLES[id].label), (i) => { look.ears = earIds[i]; refresh(); });
+  press(rows.hair, 1);
+  press(rows.hairColors, 0);
+  press(rows.bodies, 0);
+  press(rows.ears, 0);
+  rows.presets[0].click();
+
   const names = character.clipNames;
-  chipRow($('clips'), names, (i) => {
+  const clipButtons = chipRow($('clips'), names, (i) => {
     character.play(names[i]);
     character.talking = names[i] === 'Talk';
-  }, names.indexOf('Idle'));
-  const emotionIds = Object.keys(EMOTIONS);
-  chipRow($('expressions'), emotionIds.map((id) => EMOTIONS[id].label), (i) => character.setEmotion(emotionIds[i]), 0);
+  });
+  clipButtons[names.indexOf('Idle')].click();
+  const emotionIds = ids(EMOTIONS);
+  chipRow($('expressions'), emotionIds.map((id) => EMOTIONS[id].label), (i) => character.setEmotion(emotionIds[i]))[0].click();
 
   toggle($('toggle-skeleton'), (on) => { character.showSkeleton = on; });
   toggle($('toggle-wire'), (on) => { character.wireframe = on; });

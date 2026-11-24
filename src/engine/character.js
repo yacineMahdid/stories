@@ -8,6 +8,8 @@ import { createHairMaterial, loadHairGeometry } from './hair.js';
 import { loadGLTF } from './loader.js';
 import { EMOTIONS } from './emotions.js';
 import { Symbols } from './symbols.js';
+import { applyBody } from './body.js';
+import { EAR_STYLES, buildEars } from './ears.js';
 
 // A character is the canonical base + a spec. Everything that makes characters differ
 // lives in the spec; the mesh, skeleton and animations are shared.
@@ -18,6 +20,8 @@ export const DEFAULT_SPEC = {
   skin: '#f8d3b0',
   height: 1,          // overall scale (1 = base height)
   headScale: 1,
+  body: 'standard',   // see body.js BODY_TYPES
+  ears: 'human',      // see ears.js EAR_STYLES
   hair: null,         // { style: 'bob', color: '#4a2f22' }, see hair.js
   outfit: null,       // see outfit.js
   face: {},           // see face.js DEFAULT_FACE
@@ -89,10 +93,27 @@ export class Character {
     this.spec = { ...DEFAULT_SPEC, ...spec };
     applyOutfit(this.bodyMesh.material, this.spec.skin, this.spec.outfit);
     this.root.scale.setScalar(this.spec.height);
-    this.bones.Head.scale.setScalar(this.spec.headScale);
+    this.bodyType = applyBody(this, this.spec.body);
+    this.bones.Head.scale.setScalar(this.spec.headScale * (this.bodyType.head ?? 1));
     this.face.setParams(this.spec.face);
     this.ready = this.setHair(this.spec.hair);
+    this.setEars(this.spec.ears);
     return this.ready;
+  }
+
+  /** Swap the ears (see ears.js). Animal ears take the hair color. */
+  setEars(style = 'human') {
+    this.spec.ears = style;
+    for (const o of this.earObjects ?? []) {
+      o.removeFromParent();
+      o.traverse((m) => { if (m.isMesh) { m.geometry.dispose(); m.material.dispose(); } });
+    }
+    const def = EAR_STYLES[style] ?? EAR_STYLES.human;
+    const s = Math.max(def.scale, 0.001);
+    this.bones.LeftEar.scale.setScalar(s);
+    this.bones.RightEar.scale.setScalar(s);
+    const colors = { fur: this.spec.hair?.color ?? '#4a2f22', skin: this.spec.skin };
+    this.earObjects = buildEars(style, colors).map(({ bone, object }) => { this.bones[bone].add(object); return object; });
   }
 
   /** Swap the hair style and/or color; `null` removes the hair. */
@@ -114,6 +135,7 @@ export class Character {
       this.hairMesh.geometry = geometry;
     }
     this.hairMaterial.color.set(hair.color ?? '#4a2f22');
+    if (this.spec.ears && EAR_STYLES[this.spec.ears]?.scale === 0) this.setEars(this.spec.ears); // fur follows the hair
   }
 
   get clipNames() { return this.clips.map((clip) => clip.name); }

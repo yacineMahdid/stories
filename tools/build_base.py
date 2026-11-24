@@ -33,8 +33,8 @@ SKELETON = [
     ('Neck',          'Spine1',      (0.000, 0.525, 0.045)),
     ('Head',          'Neck',        (0.000, 0.570, 0.030)),
     ('HeadTop_End',   'Head',        (0.000, 1.000, 0.000)),
-    ('LeftEar',       'Head',        (0.235, 0.690, -0.030)),
-    ('RightEar',      'Head',        (-0.235, 0.690, -0.030)),
+    ('LeftEar',       'Head',        (0.195, 0.686, -0.025)),   # at the ear root: scaling it
+    ('RightEar',      'Head',        (-0.195, 0.686, -0.025)),  # resizes or hides the ear
     ('LeftShoulder',  'Spine1',      (0.030, 0.490, 0.046)),
     ('LeftArm',       'LeftShoulder', (0.115, 0.480, 0.046)),
     ('LeftForeArm',   'LeftArm',     (0.190, 0.440, 0.046)),
@@ -82,8 +82,9 @@ def normalize_mesh(v):
     return (P - c) * s
 
 
-def weights_for(p):
-    """Return ({joint: weight}, region) for one rest-pose vertex position."""
+def weights_for(p, ear=0.0):
+    """Return ({joint: weight}, region) for one rest-pose vertex position.
+    `ear` (0..1) says how much the vertex belongs to the outer ear."""
     x, y, z = p
     side = 'Left' if x >= 0 else 'Right'
     ax = abs(x)
@@ -114,7 +115,8 @@ def weights_for(p):
     # Head and neck -------------------------------------------------------
     if y >= 0.545:
         h = smooth(0.545, 0.578, y)
-        add('Head', h)
+        add('Head', h * (1 - ear))
+        add(side + 'Ear', h * ear)
         add('Neck', 1 - h)
         return w, ('head' if y >= 0.565 else 'neck')
 
@@ -158,8 +160,9 @@ def top4(w):
     return items
 
 
-def loop_subdivide(P, tris, tri_uv):
-    """One step of Loop subdivision on a welded triangle mesh; UVs are split linearly per face."""
+def loop_subdivide(P, tris, tri_uv, fields=()):
+    """One step of Loop subdivision on a welded triangle mesh; UVs are split linearly per face.
+    Per-vertex scalar `fields` are carried along (edge points take the average of their ends)."""
     n = len(P)
     edge_faces = {}
     for f, (a, b, c) in enumerate(tris):
@@ -185,8 +188,9 @@ def loop_subdivide(P, tris, tri_uv):
             beta = 3 / 16 if k == 3 else 3 / (8 * k)
             moved[v] = (1 - k * beta) * P[v] + beta * P[list(nbrs[v])].sum(0)
 
-    edge_vertex, points = {}, []
+    edge_vertex, points, edge_ends = {}, [], []
     for (i, j), opposite in edge_faces.items():
+        edge_ends.append((i, j))
         if len(opposite) == 2:
             pt = 0.375 * (P[i] + P[j]) + 0.125 * (P[opposite[0]] + P[opposite[1]])
         else:
@@ -202,7 +206,9 @@ def loop_subdivide(P, tris, tri_uv):
         uab, ubc, uca = mid(ua, ub), mid(ub, uc), mid(uc, ua)
         tris2 += [(a, ab, ca), (ab, b, bc), (ca, bc, c), (ab, bc, ca)]
         uv2 += [(ua, uab, uca), (uab, ub, ubc), (uca, ubc, uc), (uab, ubc, uca)]
-    return np.vstack([moved, np.array(points)]), tris2, uv2
+    ends = np.array(edge_ends)
+    fields2 = [np.concatenate([f, (f[ends[:, 0]] + f[ends[:, 1]]) / 2]) for f in fields]
+    return np.vstack([moved, np.array(points)]), tris2, uv2, fields2
 
 
 def corner_normals(P, tris, crease_deg=60.0):
@@ -230,23 +236,75 @@ def corner_normals(P, tris, crease_deg=60.0):
     return out, smooth
 
 
+def ear_field(P, tris):
+    """1 for outer-ear vertices, 0 elsewhere. The ear is the cluster of vertices sticking out
+    at the side of the head; the ring where it joins the skull stays on the head."""
+    ax = np.abs(P[:, 0])
+    cand = (ax > 0.17) & (P[:, 1] > 0.628) & (P[:, 1] < 0.742) & (P[:, 2] > -0.06) & (P[:, 2] < 0.025)
+    touches_out = np.zeros(len(P), bool)
+    for a, b, c in tris:
+        for i, j in ((a, b), (b, c), (c, a)):
+            if cand[i] and not cand[j]:
+                touches_out[i] = True
+            if cand[j] and not cand[i]:
+                touches_out[j] = True
+    return (cand & ~touches_out).astype(float)
+
+
+MORPHS = ('chubby', 'muscle', 'slim')
+
+
+def body_morphs(P, N):
+    """Blend-shape offsets (body units) for body types, pushed along the smooth normals."""
+    out = {m: np.zeros_like(P) for m in MORPHS}
+    for i, (p, n) in enumerate(zip(P, N)):
+        _, region = weights_for(p)
+        x, y, z = p
+        front = smooth(0.0, 0.12, z)
+        belly = np.exp(-((y - 0.31) / 0.07) ** 2)
+        chest = np.exp(-((y - 0.45) / 0.05) ** 2)
+        if region in ('chest', 'pelvis'):
+            c = 0.012 + 0.03 * belly * (0.4 + 0.6 * front)
+            m = 0.018 * chest * (0.5 + 0.5 * front) + 0.016 * smooth(0.07, 0.12, abs(x)) * smooth(0.42, 0.48, y) - 0.005 * belly
+            s = -0.014 - 0.006 * belly
+        elif region == 'upperArm':
+            c, m, s = 0.012, 0.017, -0.007
+        elif region == 'foreArm':
+            c, m, s = 0.008, 0.012, -0.006
+        elif region == 'thigh':
+            c, m, s = 0.018, 0.012, -0.01
+        elif region == 'shin':
+            c, m, s = 0.008, 0.008, -0.006
+        elif region == 'neck':
+            c, m, s = 0.01, 0.01, -0.004
+        else:  # head, hands, feet keep their shape
+            continue
+        for name, amount in zip(MORPHS, (c, m, s)):
+            out[name][i] = n * amount
+        if region in ('chest', 'pelvis'):
+            out['chubby'][i][2] += 0.012 * belly * front  # the belly comes forward
+    return out
+
+
 def build(obj_path, subdivisions=1):
     v, vt, vn, corners = parse_obj(obj_path)
     P = normalize_mesh(v)
     VT = np.array(vt, dtype=float)
     tris = [tuple(c[0] for c in corners[k:k + 3]) for k in range(0, len(corners), 3)]
     tri_uv = [tuple((VT[c[1]][0], 1.0 - VT[c[1]][1]) for c in corners[k:k + 3]) for k in range(0, len(corners), 3)]
+    ear = ear_field(P, tris)
     for _ in range(subdivisions):
-        P, tris, tri_uv = loop_subdivide(P, tris, tri_uv)
+        P, tris, tri_uv, (ear,) = loop_subdivide(P, tris, tri_uv, (ear,))
     P[:, 1] -= P[:, 1].min()  # keep the feet on the ground after smoothing
     normals, smooth_n = corner_normals(P, tris)
 
-    # Weights and region depend only on the rest position.
+    # Weights and region depend only on the rest position (and the ear field).
     vert_w, vert_r = [], []
-    for p in P:
-        w, region = weights_for(p)
+    for p, e in zip(P, ear):
+        w, region = weights_for(p, e)
         vert_w.append(top4(w))
         vert_r.append(R[region])
+    morphs = body_morphs(P, smooth_n)
 
     # Each triangle gets one region (from its centroid) so outfit colors have crisp edges;
     # vertices on a region border are duplicated, with identical position, normal and weights.
@@ -264,6 +322,8 @@ def build(obj_path, subdivisions=1):
                 body['pos'].append(P[pi]); body['nor'].append(nrm); body['uv'].append(uv)
                 body['j'].append([j for j, _ in vert_w[pi]]); body['w'].append([a for _, a in vert_w[pi]])
                 body['r'].append(tri_region[f])
+                for name, d in morphs.items():
+                    body.setdefault('morph_' + name, []).append(d[pi])
             body['idx'].append(lookup[key])
 
     # Face shell: head triangles facing forward, pushed out a hair, planar UVs.
@@ -329,8 +389,13 @@ def write_glb(path, body, face, skin_rgb=(0.992, 0.839, 0.698)):
         }
         if with_region:
             attrs['_REGION'] = W.add(np.array(part['r'], np.float32), F32, 'SCALAR', 34962)
-        idx = W.add(np.array(part['idx'], np.uint16), U16, 'SCALAR', 34963)
-        return {'attributes': attrs, 'indices': idx, 'material': material}
+        idx = W.add(np.array(part['idx'], np.uint16 if len(part['pos']) < 65536 else np.uint32),
+                    U16 if len(part['pos']) < 65536 else 5125, 'SCALAR', 34963)
+        targets = []
+        for name in MORPHS:
+            d = np.array(part.get('morph_' + name) or np.zeros((len(part['pos']), 3)), np.float32)
+            targets.append({'POSITION': W.add(d, F32, 'VEC3', 34962, minmax=True)})
+        return {'attributes': attrs, 'indices': idx, 'material': material, 'targets': targets}
 
     # Nodes: 0 = character root, 1 = mesh node, 2.. = joints
     nodes = [{'name': 'CanonicalBase', 'children': [1, 2]}, {'name': 'Body', 'mesh': 0, 'skin': 0}]
@@ -356,7 +421,8 @@ def write_glb(path, body, face, skin_rgb=(0.992, 0.839, 0.698)):
         'scene': 0,
         'scenes': [{'nodes': [0]}],
         'nodes': nodes,
-        'meshes': [{'name': 'Body', 'primitives': [prim(body, 0, True), prim(face, 1, False)]}],
+        'meshes': [{'name': 'Body', 'primitives': [prim(body, 0, True), prim(face, 1, False)],
+                    'weights': [0.0] * len(MORPHS), 'extras': {'targetNames': list(MORPHS)}}],
         'skins': [{'name': 'CanonicalRig', 'joints': [jnode[n] for n in NAMES], 'skeleton': jnode['Root'],
                    'inverseBindMatrices': ibm_acc}],
         'materials': [

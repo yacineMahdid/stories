@@ -289,7 +289,93 @@ export const MOUTHS = {
   },
 };
 
+Object.assign(MOUTHS, {
+  bigsmile(g, x, y, p) { g.strokeStyle = p.mouthColor; g.lineWidth = 8; g.beginPath(); g.arc(x, y - 30, 46, 0.2 * Math.PI, 0.8 * Math.PI); g.stroke(); },
+  tiny(g, x, y, p) { g.strokeStyle = p.mouthColor; g.lineWidth = 6; g.beginPath(); g.arc(x, y - 6, 12, 0.25 * Math.PI, 0.75 * Math.PI); g.stroke(); },
+  vee(g, x, y, p) { g.strokeStyle = p.mouthColor; g.lineWidth = 6; g.beginPath(); g.moveTo(x - 12, y - 4); g.lineTo(x, y + 6); g.lineTo(x + 12, y - 4); g.stroke(); },
+  fang(g, x, y, p) {
+    MOUTHS.smile(g, x, y, p);
+    g.fillStyle = '#ffffff'; g.strokeStyle = p.mouthColor; g.lineWidth = 3;
+    g.beginPath(); g.moveTo(x + 8, y + 7); g.lineTo(x + 20, y + 4); g.lineTo(x + 15, y + 18); g.closePath(); g.fill(); g.stroke();
+  },
+  buck(g, x, y, p) {
+    g.fillStyle = '#ffffff'; g.strokeStyle = p.mouthColor; g.lineWidth = 3;
+    g.beginPath(); g.rect(x - 11, y + 6, 10, 13); g.rect(x + 1, y + 6, 10, 13); g.fill(); g.stroke();
+    MOUTHS.smile(g, x, y, p);
+  },
+  lips(g, x, y, p) {
+    const c = p.lipColor ?? '#d9566b';
+    g.fillStyle = c;
+    g.beginPath();
+    g.moveTo(x - 28, y + 4);
+    g.quadraticCurveTo(x - 14, y - 10, x - 4, y - 4); g.quadraticCurveTo(x, y - 7, x + 4, y - 4);
+    g.quadraticCurveTo(x + 14, y - 10, x + 28, y + 4);
+    g.quadraticCurveTo(x, y + 26, x - 28, y + 4);
+    g.closePath(); g.fill();
+    g.strokeStyle = 'rgba(90, 20, 35, 0.8)'; g.lineWidth = 3;
+    g.beginPath(); g.moveTo(x - 26, y + 4); g.quadraticCurveTo(x, y + 9, x + 26, y + 4); g.stroke();
+    g.fillStyle = 'rgba(255, 255, 255, 0.55)'; g.beginPath(); g.ellipse(x + 8, y + 12, 7, 3, 0, 0, TAU); g.fill();
+  },
+  kiss(g, x, y, p) {
+    g.fillStyle = p.lipColor ?? '#d9566b';
+    g.beginPath(); g.ellipse(x, y - 1, 12, 8, 0, 0, TAU); g.ellipse(x, y + 11, 13, 9, 0, 0, TAU); g.fill();
+    g.strokeStyle = 'rgba(90, 20, 35, 0.8)'; g.lineWidth = 3; g.beginPath(); g.moveTo(x - 9, y + 5); g.lineTo(x + 9, y + 5); g.stroke();
+  },
+  cheshire(g, x, y, p) {
+    g.beginPath(); g.moveTo(x - 58, y - 18); g.quadraticCurveTo(x, y + 6, x + 58, y - 18); g.quadraticCurveTo(x, y + 34, x - 58, y - 18); g.closePath();
+    g.fillStyle = '#ffffff'; g.fill(); g.lineWidth = 5; g.strokeStyle = p.mouthColor; g.stroke();
+    g.save(); g.clip(); g.lineWidth = 3;
+    for (let i = -4; i <= 4; i++) { g.beginPath(); g.moveTo(x + i * 12, y - 20); g.lineTo(x + i * 12, y + 34); g.stroke(); }
+    g.beginPath(); g.moveTo(x - 58, y - 4); g.quadraticCurveTo(x, y + 18, x + 58, y - 4); g.stroke();
+    g.restore();
+  },
+});
+
+// Resting mouths a character can be designed with (emotions may swap in others).
+export const MOUTH_STYLES = {
+  smile: 'Smile', bigsmile: 'Big smile', grin: 'Open smile', teeth: 'Toothy', cheshire: 'Wide grin',
+  fang: 'Fang', buck: 'Buck teeth', cat: 'Cat', vee: 'Vee', tiny: 'Tiny', small: 'Little o',
+  flat: 'Flat', smirk: 'Smirk', pout: 'Pout', lips: 'Lips', kiss: 'Kiss', tongue: 'Tongue',
+  frown: 'Frown', wavy: 'Wavy',
+};
+
 export const ANIMATED_MOUTHS = new Set(['laugh', 'shout', 'wail', 'drool']);
+
+// --- noses ---------------------------------------------------------------------------------------
+
+export const NOSES = {
+  triangle(g, x, y, p) { g.fillStyle = p.noseColor; g.beginPath(); g.moveTo(x - 18, y - 12); g.lineTo(x + 18, y - 12); g.lineTo(x, y + 14); g.closePath(); g.fill(); },
+  dot(g, x, y, p) { g.fillStyle = p.noseColor; g.beginPath(); g.ellipse(x, y, 13, 9, 0, 0, TAU); g.fill(); },
+  button(g, x, y, p) {
+    g.fillStyle = p.noseColor; g.beginPath(); g.arc(x, y, 15, 0, TAU); g.fill();
+    g.fillStyle = 'rgba(255, 255, 255, 0.6)'; g.beginPath(); g.arc(x - 5, y - 5, 4, 0, TAU); g.fill();
+  },
+  round(g, x, y, p) {
+    g.fillStyle = p.noseColor; g.beginPath(); g.ellipse(x, y + 2, 24, 20, 0, 0, TAU); g.fill();
+    g.strokeStyle = 'rgba(0, 0, 0, 0.25)'; g.lineWidth = 3; g.stroke();
+    g.fillStyle = 'rgba(255, 255, 255, 0.55)'; g.beginPath(); g.ellipse(x - 8, y - 6, 7, 5, -0.5, 0, TAU); g.fill();
+  },
+  oval(g, x, y, p) { g.fillStyle = p.noseColor; g.globalAlpha = 0.75; g.beginPath(); g.ellipse(x, y + 2, 20, 10, 0, 0, TAU); g.fill(); g.globalAlpha = 1; },
+  line(g, x, y, p) { g.strokeStyle = p.noseColor; g.lineWidth = 6; g.beginPath(); g.moveTo(x, y - 14); g.lineTo(x, y + 8); g.stroke(); },
+  hook(g, x, y, p) { g.strokeStyle = p.noseColor; g.lineWidth = 6; g.beginPath(); g.moveTo(x - 2, y - 16); g.lineTo(x + 8, y + 8); g.lineTo(x - 4, y + 10); g.stroke(); },
+  vee(g, x, y, p) { g.strokeStyle = p.noseColor; g.lineWidth = 6; g.beginPath(); g.moveTo(x - 9, y + 2); g.lineTo(x, y + 10); g.lineTo(x + 9, y + 2); g.stroke(); },
+  heart(g, x, y, p) { heartPath(g, x, y + 2, 13); g.fillStyle = p.noseColor; g.fill(); },
+  pig(g, x, y, p) {
+    g.fillStyle = p.noseColor; g.beginPath(); g.ellipse(x, y + 2, 26, 18, 0, 0, TAU); g.fill();
+    g.strokeStyle = 'rgba(0, 0, 0, 0.3)'; g.lineWidth = 3; g.stroke();
+    g.fillStyle = 'rgba(90, 30, 40, 0.75)'; g.beginPath(); g.ellipse(x - 9, y + 2, 4, 7, 0, 0, TAU); g.ellipse(x + 9, y + 2, 4, 7, 0, 0, TAU); g.fill();
+  },
+  dog(g, x, y) {
+    g.fillStyle = '#2a2224'; g.beginPath(); g.ellipse(x, y, 22, 15, 0, 0, TAU); g.fill();
+    g.fillStyle = 'rgba(255, 255, 255, 0.7)'; g.beginPath(); g.ellipse(x - 7, y - 6, 7, 4, -0.3, 0, TAU); g.fill();
+  },
+  none() {},
+};
+
+export const NOSE_STYLES = {
+  triangle: 'Triangle', dot: 'Dot', button: 'Button', round: 'Round', oval: 'Oval', line: 'Line',
+  hook: 'Hook', vee: 'Vee', heart: 'Heart', pig: 'Snout', dog: 'Pup', none: 'None',
+};
 
 // --- cheeks, tears, shade --------------------------------------------------------------------
 

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { EYE_STYLES } from './eyes.js';
 import { EMOTIONS } from './emotions.js';
 import {
-  EYE_MODES, ANIMATED_EYES, drawBrow, MOUTHS, ANIMATED_MOUTHS,
+  EYE_MODES, ANIMATED_EYES, drawBrow, MOUTHS, ANIMATED_MOUTHS, NOSES,
   drawCheeks, drawTears, ANIMATED_TEARS, drawShade, blushAt,
 } from './face-parts.js';
 
@@ -29,10 +29,11 @@ export const DEFAULT_FACE = {
   eyeLine: '#6b3a22',    // outline, lashes, closed-eye strokes
   eyeSize: 1,
   eyeSpacing: 1,
-  nose: 'triangle',      // triangle | dot | none
+  nose: 'triangle',      // any key of NOSES in face-parts.js
   noseColor: '#ec7a3a',
   mouth: 'smile',        // resting mouth: any key of MOUTHS in face-parts.js
   mouthColor: '#6b3a22',
+  lipColor: '#d9566b',
   blush: false,
   blushColor: '#f28b82',
   brows: false,
@@ -177,14 +178,7 @@ export class Face {
   }
 
   nose(x, y) {
-    const g = this.ctx, p = this.params;
-    if (p.nose === 'none') return;
-    g.fillStyle = p.noseColor;
-    if (p.nose === 'dot') {
-      g.beginPath(); g.ellipse(x, y, 13, 9, 0, 0, TAU); g.fill();
-      return;
-    }
-    g.beginPath(); g.moveTo(x - 18, y - 12); g.lineTo(x + 18, y - 12); g.lineTo(x, y + 14); g.closePath(); g.fill();
+    (NOSES[this.params.nose] ?? NOSES.triangle)(this.ctx, x, y, this.params);
   }
 
   talkMouth(x, y) {
