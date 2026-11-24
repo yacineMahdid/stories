@@ -301,8 +301,9 @@ export class World {
     for (const t of things.values()) {
       if (!t.facingTarget) continue;
       const target = things.get(t.facingTarget);
+      const home = this.places.get(t.place) ?? place; // "center" is the middle of the thing's own place
       if (target) t.facing = yawTo(t.pos, target.pos);
-      else if (t.facingTarget === 'center' && place) t.facing = yawTo(t.pos, place.pos);
+      else if (t.facingTarget === 'center' && home) t.facing = yawTo(t.pos, home.pos);
     }
 
     // Cast: the page's characters, placed by the direction or gathered automatically.
