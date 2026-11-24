@@ -1,0 +1,161 @@
+<title>Scene Viewer</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600&family=Fraunces:opsz,wght@9..144,500;9..144,600&display=swap">
+<style>
+  /* Layout: the scene fills the window. Top-left: the page card (where, when, what happens, continuity).
+     Top-right: the map. Bottom: the dock (pages, shots, time, weather, season, play). */
+  :root {
+    --bg: #cfe3f0;
+    --fg: #1d2421;
+    --muted: #5a665f;
+    --panel: rgba(250, 251, 247, 0.9);
+    --panel-solid: #fafbf7;
+    --line: rgba(29, 36, 33, 0.13);
+    --accent: #d4612c;
+    --accent-fg: #ffffff;
+    --pin: #c2255c;
+    --map-bg: #e9efe3;
+    --map-ink: #4b5a50;
+    --note: #f6efd9;
+    --font-display: "Space Grotesk", "Inter", system-ui, sans-serif;
+    --font-story: "Fraunces", Georgia, serif;
+    --font-ui: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1b2330; --fg: #eaeee9; --muted: #a8b4ac; --panel: rgba(26, 31, 29, 0.9); --panel-solid: #1a1f1d;
+      --line: rgba(234, 238, 233, 0.15); --accent: #f08a55; --accent-fg: #1d130d; --map-bg: #26302b; --map-ink: #b9c6bd; --note: #3a3526;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #1b2330; --fg: #eaeee9; --muted: #a8b4ac; --panel: rgba(26, 31, 29, 0.9); --panel-solid: #1a1f1d;
+    --line: rgba(234, 238, 233, 0.15); --accent: #f08a55; --accent-fg: #1d130d; --map-bg: #26302b; --map-ink: #b9c6bd; --note: #3a3526;
+    color-scheme: dark;
+  }
+
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-ui); overflow: hidden; }
+  #stage { position: fixed; inset: 0; }
+  #stage canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  #fade { position: fixed; inset: 0; background: #0d1014; opacity: 0; pointer-events: none; transition: opacity 0.45s ease; }
+  #fade.on { opacity: 1; }
+
+  .top {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 12px);
+    left: max(16px, env(safe-area-inset-left, 0px));
+    right: max(16px, env(safe-area-inset-right, 0px));
+    display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+    pointer-events: none;
+  }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    backdrop-filter: blur(10px); pointer-events: auto;
+  }
+  #page { width: min(25rem, 100%); padding: 12px 14px 12px; max-height: calc(100vh - 290px); overflow: auto; }
+  #page .crumbs { font: 500 0.7rem/1.3 var(--font-mono); color: var(--muted); letter-spacing: 0.02em; }
+  #page h1 { margin: 4px 0 2px; font: 600 1.3rem/1.2 var(--font-story); letter-spacing: -0.01em; }
+  #page .when { font-size: 0.8rem; color: var(--muted); }
+  #page .where { margin-top: 8px; font-size: 0.8rem; line-height: 1.45; }
+  #page .where b { font-weight: 600; }
+  #page .where span { color: var(--muted); }
+  #page .summary { margin: 8px 0 0; font: 400 0.92rem/1.5 var(--font-story); }
+  #page .cast { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 5px; }
+  #page .cast span { font-size: 0.72rem; border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; }
+  #page .notes { margin-top: 10px; display: grid; gap: 5px; }
+  #page .notes div { font-size: 0.76rem; line-height: 1.4; background: var(--note); border-radius: 8px; padding: 6px 9px; }
+  #page .notes div em { font-style: normal; color: var(--muted); font-family: var(--font-mono); font-size: 0.68rem; }
+  #page .warn { margin-top: 8px; font-size: 0.72rem; color: var(--muted); }
+  #page .warn summary { cursor: pointer; }
+  #page .warn ul { margin: 4px 0 0; padding-left: 1.1rem; }
+  #page.collapsed .body { display: none; }
+  #page .toggle { float: right; border: 0; padding: 2px 6px; font-size: 0.75rem; color: var(--muted); }
+
+  #map { width: 186px; padding: 8px; }
+  #map canvas { display: block; width: 170px; height: 170px; border-radius: 8px; cursor: pointer; }
+  #map .caption { font: 500 0.68rem/1.3 var(--font-mono); color: var(--muted); margin-top: 6px; text-align: center; }
+
+  .dock {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    padding-block: 10px calc(env(safe-area-inset-bottom, 0px) + 12px);
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    background: var(--panel); border-top: 1px solid var(--line); backdrop-filter: blur(10px);
+    display: grid; gap: 8px;
+  }
+  .row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .label { flex: none; width: 4.6rem; font-size: 0.68rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+  .chips { display: flex; gap: 6px; overflow-x: auto; min-width: 0; padding-bottom: 2px; scrollbar-width: thin; }
+  button {
+    flex: none; font: 500 0.8rem/1 var(--font-ui); color: var(--fg);
+    background: transparent; border: 1px solid var(--line); border-radius: 999px; padding: 7px 12px; cursor: pointer;
+  }
+  button:hover { border-color: var(--muted); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+  button.page { display: inline-flex; gap: 6px; align-items: baseline; }
+  button.page small { font: 500 0.68rem/1 var(--font-mono); opacity: 0.75; }
+  .time { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+  .time input { flex: 1; min-width: 120px; accent-color: var(--accent); }
+  .time output { font: 500 0.8rem/1 var(--font-mono); width: 3.2rem; text-align: right; }
+  #play { font-weight: 600; }
+
+  #status {
+    position: fixed; inset: 0; display: grid; place-items: center; pointer-events: none;
+    font-size: 0.9rem; color: var(--muted); text-align: center; padding: 16px;
+  }
+  #status[hidden] { display: none; }
+  body.bare .dock, body.bare .top { display: none; }
+  @media (max-width: 640px) {
+    #map { display: none; }
+    #page { max-height: 38vh; }
+    .label { width: 3.6rem; }
+  }
+</style>
+
+<div id="stage"></div>
+<div id="fade"></div>
+
+<div class="top">
+  <article class="card" id="page" aria-live="polite">
+    <button type="button" class="toggle" id="collapse" aria-label="Collapse the page card">&minus;</button>
+    <div class="crumbs" id="crumbs"></div>
+    <h1 id="title">Scene Viewer</h1>
+    <div class="body">
+      <div class="when" id="when"></div>
+      <div class="where" id="where"></div>
+      <p class="summary" id="summary"></p>
+      <div class="cast" id="cast"></div>
+      <div class="notes" id="notes"></div>
+      <details class="warn" id="warn" hidden><summary></summary><ul></ul></details>
+    </div>
+  </article>
+  <aside class="card" id="map" aria-label="Map">
+    <canvas width="340" height="340"></canvas>
+    <div class="caption" id="map-caption">Map</div>
+  </aside>
+</div>
+
+<div id="status">Loading the story&hellip;</div>
+
+<nav class="dock" aria-label="Scene controls">
+  <div class="row"><span class="label">Page</span><div class="chips"><button type="button" id="prev" aria-label="Previous page">&larr;</button><button type="button" id="next" aria-label="Next page">&rarr;</button><button type="button" id="play" aria-pressed="false">Play</button></div><div class="chips" id="pages"></div></div>
+  <div class="row"><span class="label">Shot</span><div class="chips" id="shots"></div></div>
+  <div class="row"><span class="label">Time</span><div class="time"><input type="range" id="hour" min="0" max="24" step="0.25" aria-label="Hour of the day"><output id="hour-out"></output></div></div>
+  <div class="row"><span class="label">Weather</span><div class="chips" id="weathers"></div></div>
+  <div class="row"><span class="label">Season</span><div class="chips" id="seasons"></div></div>
+</nav>
+
+<script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.187.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.187.0/examples/jsm/"
+    }
+  }
+</script>
+<script type="module" src="src/scene-viewer.js"></script>

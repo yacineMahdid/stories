@@ -1,0 +1,263 @@
+{
+  "version": 1,
+  "world": "world.json",
+  "map": { "scale": 0.05, "origin": [1000, 1000] },
+  "defaults": { "weather": "clear" },
+
+  "terrain": [
+    { "type": "river", "points": [[1880, -400], [1720, 300], [1630, 720], [1600, 1000], [1660, 1300], [1720, 1520], [1760, 1800]], "width": 90, "depth": 1.0 },
+    { "type": "sea", "points": [[-2600, 1560], [4800, 1470], [4800, 5400], [-2600, 5400]], "beach": 180 },
+    { "type": "hill", "at": [520, 1380], "r": 300, "height": 3.0 },
+    { "type": "hill", "at": [80, 300], "r": 420, "height": 2.2 },
+    { "type": "path", "surface": "dirt", "width": 34, "points": [[1170, 990], [1380, 975], [1560, 960], [1640, 958], [1780, 950], [1980, 930]] },
+    { "type": "path", "surface": "dirt", "width": 34, "points": [[880, 900], [740, 780], [600, 680], [470, 600]] },
+    { "type": "path", "surface": "dirt", "width": 30, "points": [[1040, 1170], [1100, 1320], [1170, 1440], [1180, 1490]] },
+    { "type": "path", "surface": "dirt", "width": 30, "points": [[870, 1090], [740, 1200], [620, 1300], [545, 1365]] },
+    { "type": "path", "surface": "stone", "width": 26, "points": [[1000, 830], [1000, 760]] },
+    { "type": "path", "surface": "dirt", "width": 26, "points": [[1560, 960], [1555, 860], [1545, 800]] }
+  ],
+
+  "places": {
+    "shape:square": {
+      "radius": 15,
+      "ground": { "surface": "stone", "r": 8.5 },
+      "wild": { "grass": 0.6, "flowers": 0.06 },
+      "things": [
+        { "id": "fountain", "kind": "fountain", "at": [0, 0], "note": "the old stone fountain" },
+        { "id": "hall", "kind": "hall", "at": [0, -13.5], "facing": 0, "note": "town hall with the clock tower" },
+        { "id": "bakery", "kind": "house", "at": [-9.5, -7.5], "facing": "fountain", "walls": "#f6e6c8", "roof": "#cf5a45", "sign": "Bakery", "awning": "#d9534a", "chimney": true, "note": "Juniper's bakery" },
+        { "id": "store", "kind": "house", "at": [10, -7], "facing": "fountain", "walls": "#d3e3f2", "roof": "#4f7fc0", "sign": "General Store", "awning": "#4f86c6" },
+        { "id": "house-mira", "kind": "house", "at": [-11.5, 5], "facing": "fountain", "walls": "#f3caa6", "roof": "#5c9e64", "size": "small", "flowerbox": true, "note": "the empty cottage Mira moves into" },
+        { "id": "house-biscuit", "kind": "house", "at": [11.5, 5.5], "facing": "fountain", "walls": "#f7e8a8", "roof": "#8d5b3e", "porch": true },
+        { "id": "square-lamps", "kind": "ring", "of": "lamp", "at": [0, 0], "r": 7.2, "count": 4, "start": 45 },
+        { "id": "bench-west", "kind": "bench", "at": [-4.2, 3.2], "facing": "fountain" },
+        { "id": "bench-east", "kind": "bench", "at": [4.2, 3.2], "facing": "fountain" },
+        { "id": "notices", "kind": "noticeboard", "at": [3.2, -9], "facing": 0 },
+        { "id": "signpost", "kind": "signpost", "at": [7.6, 1.5], "facing": 250, "labels": ["Old Mill", "Saltwind Pier", "Whisperwood"] },
+        { "id": "mailbox-mira", "kind": "mailbox", "at": [-9.4, 7.2], "facing": 60 },
+        { "id": "tree-nw", "kind": "tree", "at": [-14, -3], "variant": "round" },
+        { "id": "tree-ne", "kind": "tree", "at": [14.5, -1.5], "variant": "cherry" },
+        { "id": "tree-sw", "kind": "tree", "at": [-6.5, 12], "variant": "fruit", "fruit": "apple" },
+        { "id": "tree-se", "kind": "tree", "at": [6.5, 12.5], "variant": "round" },
+        { "id": "bushes", "kind": "row", "of": "bush", "from": [-5.5, -11], "to": [-2.5, -11], "count": 2, "variant": "flowering" },
+        { "id": "bushes-e", "kind": "row", "of": "bush", "from": [2.5, -11], "to": [5.5, -11], "count": 2, "variant": "flowering" },
+        { "kind": "scatter", "of": "flowers", "area": { "at": [0, 0], "r": 14 }, "avoid": { "r": 9.5 }, "count": 14, "params": { "species": ["tulip", "cosmos", "pansy"], "color": ["red", "yellow", "white", "pink"] } },
+        { "id": "barrels", "kind": "barrel", "at": [-7.2, -4.6] },
+        { "id": "crates", "kind": "crate", "at": [-6.6, -5.4] }
+      ]
+    },
+
+    "shape:mill": {
+      "radius": 6,
+      "wild": { "grass": 0.7, "flowers": 0.04 },
+      "things": [
+        { "id": "mill", "kind": "watermill", "at": [-0.6, 0], "facing": 270, "note": "Hattie's water mill; the wheel turns in the river" },
+        { "id": "bridge", "kind": "bridge", "at": [2.45, 11], "facing": 0, "length": 7.5, "width": 1.6, "style": "wood", "state": "intact", "note": "the old footbridge" },
+        { "id": "mill-fence", "kind": "fence", "at": [-2, 6.5], "length": 5, "style": "rail", "facing": 0 },
+        { "id": "mill-sacks", "kind": "sack", "at": [-3.6, 2.6] },
+        { "id": "mill-sacks2", "kind": "sack", "at": [-3.9, 2.0] },
+        { "id": "mill-cart", "kind": "cart", "at": [-5, 4.5], "facing": 200 },
+        { "id": "mill-haybale", "kind": "haybale", "at": [-6.2, -2] },
+        { "id": "mill-tree", "kind": "tree", "at": [-6, -6], "variant": "oak" },
+        { "id": "mill-tree2", "kind": "tree", "at": [7.5, 5], "variant": "willow" },
+        { "id": "mill-reeds", "kind": "row", "of": "reeds", "from": [1.2, 5], "to": [1.0, 8], "count": 2 },
+        { "id": "mill-lamp", "kind": "lamp", "at": [-3.8, 8.0] },
+        { "kind": "scatter", "of": "tree", "area": { "at": [-8, -14], "r": 10 }, "count": 7, "params": { "variant": ["round", "pine", "birch"] } }
+      ]
+    },
+
+    "shape:clearing": {
+      "radius": 7,
+      "wild": { "grass": 0.7, "flowers": 0.03 },
+      "things": [
+        { "id": "clearing-oak", "kind": "tree", "at": [-4.5, -5], "variant": "oak", "size": 1.3 },
+        { "id": "clearing-log", "kind": "log", "at": [-2.3, 0.6], "facing": 75 },
+        { "id": "clearing-stump", "kind": "stump", "at": [2.1, -1.6] },
+        { "id": "clearing-stump2", "kind": "stump", "at": [1.7, 2.2] },
+        { "id": "clearing-rocks", "kind": "rock", "at": [5.5, -3], "variant": "mossy" },
+        { "id": "clearing-mush", "kind": "mushroom", "at": [-5, 3.5], "variant": "glowing" },
+        { "id": "clearing-mush2", "kind": "mushroom", "at": [4.2, 4.5], "variant": "red" },
+        { "kind": "scatter", "of": "tree", "area": { "r": 26 }, "avoid": { "r": 8.5 }, "count": 60, "spacing": 2.4, "params": { "variant": ["oak", "pine", "pine", "round", "cedar"] } },
+        { "kind": "scatter", "of": "bush", "area": { "r": 12 }, "avoid": { "r": 7 }, "count": 10 },
+        { "kind": "scatter", "of": "mushroom", "area": { "r": 14 }, "avoid": { "r": 6 }, "count": 6, "params": { "variant": ["brown", "red"] } }
+      ]
+    },
+
+    "shape:pier": {
+      "radius": 5,
+      "wild": { "grass": 0.3, "flowers": 0 },
+      "things": [
+        { "id": "pier", "kind": "dock", "at": [0, 0.2], "facing": 0, "length": 8, "width": 1.5, "note": "Saltwind Pier" },
+        { "id": "rowboat", "kind": "boat", "at": [2.4, 6.5], "facing": 15, "state": "floating", "color": "#d9534a" },
+        { "id": "sailboat", "kind": "sailboat", "at": [-5, 12], "facing": -30 },
+        { "id": "beached", "kind": "boat", "at": [-4.5, -1.5], "facing": 120, "state": "beached", "color": "#4f86c6" },
+        { "id": "buoy", "kind": "buoy", "at": [5, 13] },
+        { "id": "lighthouse", "kind": "lighthouse", "at": [12, -3.5] },
+        { "id": "fishrack", "kind": "fishrack", "at": [-6.5, -4.5], "facing": 30 },
+        { "id": "pier-crates", "kind": "crate", "at": [1.6, -1.8] },
+        { "id": "pier-barrel", "kind": "barrel", "at": [2.4, -1.2] },
+        { "id": "palm1", "kind": "tree", "at": [-10, -5], "variant": "palm" },
+        { "id": "palm2", "kind": "tree", "at": [7, -6], "variant": "palm" },
+        { "kind": "scatter", "of": "shells", "area": { "at": [0, -2], "size": [24, 6] }, "count": 8, "onPaths": true },
+        { "id": "driftwood", "kind": "driftwood", "at": [-2.5, -3.2], "facing": 30 }
+      ]
+    },
+
+    "shape:hill": {
+      "radius": 5,
+      "height": 3.0,
+      "wild": { "grass": 0.7, "flowers": 0.12 },
+      "things": [
+        { "id": "windmill", "kind": "windmill", "at": [0, -1], "facing": 60 },
+        { "id": "hill-bench", "kind": "bench", "at": [3.2, 2.4], "facing": 120 },
+        { "id": "hill-lamp", "kind": "lamp", "at": [2.2, 3.6] },
+        { "kind": "scatter", "of": "flowers", "area": { "r": 9 }, "avoid": { "r": 3.5 }, "count": 10, "params": { "species": ["windflower", "cosmos"], "color": ["white", "purple", "pink"] } }
+      ]
+    }
+  },
+
+  "characters": {
+    "shape:mira": { "species": "human", "skin": "#f6d3b2", "hair": { "style": "bob", "color": "#5a3422" }, "outfit": { "top": "#d9473c", "sleeves": "long", "bottom": "#2f3d57", "legs": "knee", "shoes": "#f2c14c" }, "face": { "eyes": "classic", "blush": true } },
+    "shape:biscuit": { "species": "dog", "outfit": { "top": "#4f7fc0", "sleeves": "short", "bottom": "#2f3d57", "legs": "shorts" } },
+    "shape:juniper": { "species": "cat", "outfit": { "top": "#f6f1e7", "sleeves": "elbow", "bottom": "#9a5a3c", "legs": "shorts" } },
+    "shape:hattie": { "species": "horse", "outfit": { "top": "#f2e6c8", "sleeves": "short", "bottom": "#4f8a55", "legs": "pants", "hem": 0.34 } },
+    "shape:bruno": { "species": "gorilla", "outfit": { "top": "#c9a46a", "sleeves": "none", "bottom": "#5a4636", "legs": "pants" } },
+    "shape:pell": { "species": "frog", "outfit": { "top": "#f2c94c", "sleeves": "long", "bottom": "#3f5f8a", "legs": "pants", "shoes": "#3a3a3a" } }
+  },
+
+  "scenes": {
+    "shape:p1": {
+      "ambient": "petals",
+      "cast": [
+        { "who": "shape:mira", "at": [0.6, 5.2], "facing": "shape:biscuit", "do": "Wave", "feel": "cheerful", "hold": "held-bag" },
+        { "who": "shape:biscuit", "at": [1.9, 3.1], "facing": "shape:mira", "do": "Wave", "feel": "excited", "talk": true },
+        { "who": "shape:juniper", "at": "bakery.door", "do": "Stretch", "feel": "happy" }
+      ],
+      "camera": [
+        { "shot": "establishing", "from": 15, "label": "The square", "hold": 4 },
+        { "shot": "medium", "on": ["shape:mira", "shape:biscuit"], "label": "Hello", "hold": 4 },
+        { "shot": "close", "on": "shape:mira", "label": "Mira", "hold": 3 }
+      ]
+    },
+
+    "shape:p2": {
+      "cast": [
+        { "who": "shape:hattie", "at": [-1.5, 9.2], "facing": "bridge", "do": "Point", "feel": "proud", "talk": true },
+        { "who": "shape:mira", "at": [-2.5, 10.2], "facing": "bridge", "do": "Idle", "feel": "surprised", "hold": "held-book" }
+      ],
+      "camera": [
+        { "shot": "wide", "on": ["shape:hattie", "shape:mira", "bridge"], "from": 210, "label": "The mill", "hold": 4 },
+        { "shot": "two", "on": ["shape:hattie", "shape:mira"], "label": "Hattie and Mira" }
+      ]
+    },
+
+    "shape:p3": {
+      "weather": "storm",
+      "changes": [
+        { "set": "bridge", "to": { "state": "broken" }, "note": "The storm broke the old footbridge" }
+      ],
+      "dressing": [
+        { "id": "storm-branch", "kind": "log", "at": [-3.4, 11.6], "facing": 20, "note": "a branch torn down by the storm" },
+        { "id": "sandbags", "kind": "row", "of": "sack", "from": [-0.5, 3.8], "to": [-0.3, 6.2], "count": 3, "note": "sandbags along the bank" }
+      ],
+      "cast": [
+        { "who": "shape:hattie", "at": [-2.2, 8.6], "facing": "bridge", "do": "Cower", "feel": "scared", "hold": { "kind": "held-lantern" } },
+        { "who": "shape:bruno", "at": [-1.3, 9.6], "facing": "bridge", "do": "Point", "feel": "shocked" }
+      ],
+      "camera": [
+        { "shot": "wide", "on": ["shape:hattie", "shape:bruno", "bridge"], "from": 225, "label": "The bridge goes", "hold": 4, "move": "push" },
+        { "shot": "close", "on": "shape:hattie", "label": "Hattie" }
+      ]
+    },
+
+    "shape:p4": {
+      "continues": "shape:p3",
+      "weather": "fog",
+      "cast": [
+        { "who": "shape:hattie", "at": [-1.6, 9.7], "facing": "bridge", "do": "Facepalm", "feel": "gloomy" },
+        { "who": "shape:mira", "at": [-2.6, 10.6], "facing": "bridge", "do": "Think", "feel": "thinking" }
+      ],
+      "camera": [
+        { "shot": "wide", "on": ["shape:hattie", "shape:mira", "bridge"], "from": 210, "label": "In the fog" },
+        { "shot": "medium", "on": ["shape:hattie", "shape:mira"], "label": "What now?" }
+      ]
+    },
+
+    "shape:p5": {
+      "ambient": "fireflies",
+      "dressing": [
+        { "id": "campfire", "kind": "campfire", "at": [0, 0.3], "lit": true },
+        { "id": "tent", "kind": "tent", "at": [3.5, -3.8], "facing": 210, "color": "#f2c94c" },
+        { "id": "camp-lantern", "kind": "lamp", "at": [-3.2, -2.8], "height": 1.6, "lit": "always" }
+      ],
+      "cast": [
+        { "who": "shape:mira", "at": "clearing-log.left", "do": "Sit", "feel": "happy", "talk": true },
+        { "who": "shape:biscuit", "at": "clearing-stump.seat", "facing": "campfire", "do": "Sit", "feel": "laughing" },
+        { "who": "shape:bruno", "at": [0.9, 2.4], "facing": "campfire", "do": "SitCrossed", "feel": "cheerful" }
+      ],
+      "camera": [
+        { "shot": "wide", "on": ["shape:mira", "shape:biscuit", "shape:bruno", "campfire"], "from": 160, "label": "Campfire", "move": "orbit" },
+        { "shot": "close", "on": "shape:mira", "label": "Mira" }
+      ]
+    },
+
+    "shape:p6": {
+      "weather": "cloudy",
+      "changes": [
+        { "set": "bridge", "to": { "state": "new" }, "note": "Bruno rebuilt the footbridge" }
+      ],
+      "cast": [
+        { "who": "shape:bruno", "at": "bridge.middle", "facing": 180, "do": "HandsOnHips", "feel": "proud", "hold": "held-axe" },
+        { "who": "shape:hattie", "at": [5.6, 11.6], "facing": "shape:bruno", "do": "Cheer", "feel": "excited" },
+        { "who": "shape:mira", "at": [-2.4, 10.2], "facing": "shape:bruno", "do": "Clap", "feel": "happy" }
+      ],
+      "camera": [
+        { "shot": "wide", "on": ["shape:bruno", "shape:hattie", "shape:mira"], "from": 185, "label": "The new bridge" },
+        { "shot": "low", "on": "shape:bruno", "label": "Bruno", "from": 175 }
+      ]
+    },
+
+    "shape:p7": {
+      "ambient": "leaves",
+      "changes": [
+        { "look": "shape:mira", "to": { "outfit": { "top": "#f2c94c" } }, "note": "Mira wears her knitted yellow cardigan from now on" }
+      ],
+      "dressing": [
+        { "id": "stall-pastry", "kind": "stall", "at": [-5.6, -3.4], "facing": 55, "color": "#d9534a", "goods": "bread" },
+        { "id": "stall-fruit", "kind": "stall", "at": [5.6, -3.4], "facing": -55, "color": "#5aa56a", "goods": "fruit" },
+        { "id": "lanterns-a", "kind": "lanterns", "at": [0, -6.2], "length": 9, "facing": 0 },
+        { "id": "lanterns-b", "kind": "lanterns", "at": [-6.2, 0.2], "length": 8, "facing": 90 },
+        { "id": "lanterns-c", "kind": "lanterns", "at": [6.2, 0.2], "length": 8, "facing": 90 },
+        { "id": "bunting", "kind": "bunting", "at": [0, 7], "length": 10 },
+        { "id": "pumpkins", "kind": "pumpkin", "at": [-2.4, -6.4], "count": 4 },
+        { "id": "pumpkins2", "kind": "pumpkin", "at": [2.6, -6.4], "count": 3 },
+        { "id": "leaves", "kind": "leafpile", "at": [-11.5, -1] }
+      ],
+      "cast": [
+        { "who": "shape:juniper", "at": "stall-pastry.vendor", "do": "Wave", "feel": "laughing", "talk": true },
+        { "who": "shape:biscuit", "at": [1.2, 4.2], "facing": 180, "do": "Dance", "feel": "excited" },
+        { "who": "shape:mira", "at": "bench-west.left", "do": "Sit", "feel": "love", "hold": "held-cup" },
+        { "who": "shape:hattie", "at": "stall-fruit.customer", "do": "Talk", "feel": "cheerful", "talk": true },
+        { "who": "shape:bruno", "path": [[-2, 6.5], [3, 6.8], [4.5, 1.5]], "speed": 0.9, "feel": "happy", "hold": "held-lantern" }
+      ],
+      "camera": [
+        { "shot": "establishing", "from": 0, "label": "Festival", "hold": 4 },
+        { "shot": "medium", "on": ["shape:mira"], "label": "Mira on the bench", "from": 160 },
+        { "shot": "wide", "on": ["shape:juniper", "shape:hattie", "shape:biscuit"], "label": "The stalls", "move": "pan" }
+      ]
+    },
+
+    "shape:p8": {
+      "weather": "snow",
+      "cast": [
+        { "who": "shape:pell", "at": "pier.end", "do": "Sit", "feel": "cheerful", "hold": "held-fishingrod" },
+        { "who": "shape:mira", "at": [0.3, 5.2], "facing": "shape:pell", "do": "Idle", "feel": "cheerful", "hold": "held-umbrella" }
+      ],
+      "camera": [
+        { "shot": "wide", "on": ["shape:pell", "shape:mira"], "from": 300, "label": "The pier", "hold": 4 },
+        { "shot": "over", "on": ["shape:mira", "shape:pell"], "label": "Tea for Pell" },
+        { "shot": "establishing", "from": 330, "label": "Snowy coast" }
+      ]
+    }
+  }
+}

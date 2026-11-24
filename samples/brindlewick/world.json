@@ -1,0 +1,895 @@
+{
+ "document": {
+  "store": {
+   "shape:p7": {
+    "x": 24,
+    "y": 80,
+    "rotation": 0,
+    "isLocked": false,
+    "opacity": 1,
+    "meta": {},
+    "id": "shape:p7",
+    "type": "scene",
+    "parentId": "shape:ch-autumn",
+    "props": {
+     "w": 300,
+     "h": 260,
+     "title": "Lantern Festival",
+     "when": "dusk on festival night",
+     "at": {
+      "year": 1,
+      "month": 10,
+      "day": 31,
+      "hour": 19
+     },
+     "summary": "Lanterns over the square. Juniper sells pastries, Biscuit dances, Mira watches the lights come on.",
+     "characterIds": [
+      "shape:mira",
+      "shape:biscuit",
+      "shape:juniper",
+      "shape:hattie",
+      "shape:bruno"
+     ],
+     "locationIds": [
+      "shape:square"
+     ],
+     "modifiers": {
+      "shape:mira": {
+       "text": "wears her knitted yellow cardigan",
+       "persist": true
+      }
+     }
+    },
+    "index": "a1al6",
+    "typeName": "shape"
+   },
+   "shape:p8": {
+    "x": 24,
+    "y": 80,
+    "rotation": 0,
+    "isLocked": false,
+    "opacity": 1,
+    "meta": {},
+    "id": "shape:p8",
+    "type": "scene",
+    "parentId": "shape:ch-winter",
+    "props": {
+     "w": 300,
+     "h": 260,
+     "title": "First snow at the pier",
+     "when": "a snowy afternoon",
+     "at": {
+      "year": 1,
+      "month": 12,
+      "day": 20,
+      "hour": 15.5
+     },
+     "summary": "Old Pell keeps fishing in the snow. Mira brings him tea and an umbrella.",
+     "characterIds": [
+      "shape:pell",
+      "shape:mira"
+     ],
+     "locationIds": [
+      "shape:pier"
+     ],
+     "modifiers": {}
+    },
+    "index": "a1LeQ",
+    "typeName": "shape"
+   },
+   "page:backstory": {
+    "meta": {},
+    "id": "page:backstory",
+    "name": "Backstory",
+    "index": "a3",
+    "typeName": "page"
+   },
+   "shape:mira": {
+    "x": 40,
+    "y": 40,
+    "rotation": 0,
+    "isLocked": false,
+    "opacity": 1,
+    "meta": {},
+    "id": "shape:mira",
+    "type": "character",
+    "parentId": "page:characters",
+    "props": {
+     "w": 260,
+     "h": 360,
+     "name": "Mira",
+     "role": "Newcomer",
+     "color": "#e8590c",
+     "appearance": "A girl with a brown bob, a red cardigan and a satchel.",
+     "personality": "Curious, a little shy, writes everything down.",
+     "backstory": "",
+     "portraits": [],
+     "activePortrait": 0,
+     "born": null
+    },
+    "index": "a1x4n",
+    "typeName": "shape"
+   },
+   "shape:coast-line": {
+    "x": -600,
+    "y": 1560,
+    "rotation": 0,
+    "isLocked": false,
+    "opacity": 1,
+    "meta": {},
+    "id": "shape:coast-line",
+    "type": "line",
+    "parentId": "page:map",
+    "props": {
+     "dash": "draw",
+     "size": "xl",
+     "color": "blue",
+     "spline": "cubic",
+     "points": {
+      "a0": {
+       "id": "a0",
+       "index": "a1",
+       "x": 0,
+       "y": 0
+      },
+      "a1": {
+       "id": "a1",
+       "index": "a2",
+       "x": 3400,
+       "y": -90
+      }
+     },
+     "scale": 1
+    },
+    "index": "a7cgb",
+    "typeName": "shape"
+   },
+   "shape:ch-autumn": {
+    "x": 2040,
+    "y": 92,
+    "rotation": 0,
+    "isLocked": false,
+    "opacity": 1,
+    "meta": {},
+    "id": "shape:ch-autumn",
+    "type": "chapter",
+    "parentId": "shape:book1",
+    "props": {
+     "w": 348,
+     "h": 364,
+     "title": "Autumn",
+     "synopsis": "",
+     "color": "#2f9e44"
+    },
+    "index": "a2MXr",
+    "typeName": "shape"
+   },
+   "shape:lore-bridge": {
+    "x": 40,
+    "y": 40,
+    "rotation": 0,
+    "isLocked": false,
+    "opacity": 1,
+    "meta": {},
+    "id": "shape:lore-bridge",
+    "type": "lore",
+    "parentId": "page:backstory",
+    "props": {
+     "w": 320,
+     "h": 240,
+     "title": "The old footbridge",
+     "category": "history",
+     "body": "The footbridge by the mill was built by the first millers, forty years before the story begins.",
+     "start": {
+      "year": -40,
+      "month": null,
+      "day": null,
+      "hour": null
+     },
+     "end": {
+      "year": null,
+      "month": null,
+      "day": null,
+      "hour": null
+     }
+    },
+    "index": "a1p5A",
+    "typeName": "shape"
+   },
+   "page:story": {
+    "meta": {},
+    "id": "page:story",
+    "name": "Story",
+    "index": "a4",
+    "typeName": "page"
+   },
+   "shape:bruno": {
+    "x": 1200,
+    "y": 40,
+    "rotation": 0,
+    "isLocked": false,
+    "opacity": 1,
+    "meta": {},
+    "id": "shape:bruno",
+    "type": "character",
+    "parentId": "page:characters",
+    "props": {
+     "w": 260,
+     "h": 360,
+     "name": "Bruno",
+     "role": "Carpenter",
+     "color": "#495057",
+     "appearance": "A gorilla carpenter with a tool belt.",
+     "personality": "Quiet and strong; fixes things without being asked.",
+     "backstory": "",
+     "portraits": [],
+     "activePortrait": 0,
+     "born": null
+    },
+    "index": "a5uDA",
+    "typeName": "shape"
+   },
+   "shape:river-line": {
+    "x": 1880,
+    "y": -400,
+    "rotation": 0,
+    "isLocked": false,
+    "opacity": 1,
+    "meta": {},
+    "id": "shape:river-line",
+    "type": "line",
+    "parentId": "page:map",
+    "props": {
+     "dash": "draw",
+     "size": "xl",
+     "color": "light-blue",
+     "spline": "cubic",
+     "points": {
+      "a0": {
+       "id": "a0",
+       "index": "a1",
+       "x": 0,
+       "y": 0
+      },
+      "a1": {
+       "id": "a1",
+       "index": "a2",
+       "x": -160,
+       "y": 700
+      },
+      "a2": {
+       "id": "a2",
+       "index": "a3",
+       "x": -250,
+       "y": 1120
+      },
+      "a3": {
+       "id": "a3",
+       "index": "a4",
+       "x": -280,
+       "y": 1400
+      },
+      "a4": {
+       "id": "a4",
+       "index": "a5",
+       "x": -220,
+       "y": 1700
+      },
+      "a5": {
+       "id": "a5",
+       "index": "a6",
+       "x": -160,
+       "y": 1920
+      },
+      "a6": {
+       "id": "a6",
+       "index": "a7",
+       "x": -120,
+       "y": 2200
+      }
+     },
+     "scale": 1
+    },
+    "index": "a62tI",
+    "typeName": "shape"
+   },
+   "shape:hattie": {
+    "x": 910,
+    "y": 40,
+    "rotation": 0,
+    "isLocked": false,
+    "opacity": 1,
+    "meta": {},
+    "id": "shape:hattie",
+    "type": "character",
+    "parentId": "page:characters",
+    "props": {
+     "w": 260,
+     "h": 360,
+     "name": "Hattie",
+     "role": "Miller",
+     "color": "#1971c2",
+     "appearance": "A brown horse in green overalls.",
+     "personality": "Patient, proud of the mill, worries about the river.",
+     "backstory": "",
+     "portraits": [],
+     "activePortrait": 0,
+     "born": null
+    },
+    "index": "a45bj",
+    "typeName": "shape"
+   },
+   "shape:clearing": {
+    "x": 406,
+    "y": 525,
+    "rotation": 0,
+    "isLocked": false,
+    "opacity": 1,
+    "meta": {},
+    "id": "shape:clearing",
+    "type": "pin",
+    "parentId": "page:map",
+    "props": {
+     "w": 180,
+     "h": 64,
+     "name": "Whisperwood Clearing",
+     "kind": "place",
+     "color": "#2f9e44",
+     "description": "A mossy clearing deep in Whisperwood, ringed by old oaks and pines. Good for camping."
+    },
+    "index": "a3YTv",
+    "typeName": "shape"
+   },
+   "shape:pell": {
+    "x": 1490,
+    "y": 40,
+    "rotation": 0,
+    "isLocked": false,
+    "opacity": 1,
+    "meta": {},
+    "id": "shape:pell",
+    "type": "character",
+    "parentId": "page:characters",
+    "props": {
+     "w": 260,
+     "h": 360,
+     "name": "Old Pell",
+     "role": "Fisherman",
+     "color": "#0c8599",
+     "appearance": "An old frog in a yellow raincoat.",
+     "personality": "Tells long stories about the sea; most of them are true.",
+     "backstory": "",
+     "portraits": [],
+     "activePortrait": 0,
+     "born": null
+    },
+    "index": "a6xjb",
+    "typeName": "shape"
+   },
+   "shape:book1": {
+    "x": 24,
+    "y": 104,
+    "rotation": 0,
+    "isLocked": false,
+    "opacity": 1,
+    "meta": {},
+    "id": "shape:book1",
+    "type": "book",
+    "parentId": "shape:story",
+    "props": {
+     "w": 2816,
+     "h": 480,
+     "title": "Year One",
+     "synopsis": "",
+     "color": "#1971c2"
+    },
+    "index": "a1ozy",
+    "typeName": "shape"
+   },
+   "shape:biscuit": {
+    "x": 330,
+    "y": 40,
+    "rotation": 0,
+    "isLocked": false,
+    "opacity": 1,
+    "meta": {},
+    "id": "shape:biscuit",
+    "type": "character",
+    "parentId": "page:characters",
+    "props": {
+     "w": 260,
+     "h": 360,
+     "name": "Biscuit",
+     "role": "Mail carrier",
+     "color": "#f08c00",
+     "appearance": "A golden dog in a blue mail uniform.",
+     "personality": "Cheerful, knows everyone, always in a hurry.",
+     "backstory": "",
+     "portraits": [],
+     "activePortrait": 0,
+     "born": null
+    },
+    "index": "a26nb",
+    "typeName": "shape"
+   },
+   "page:map": {
+    "meta": {},
+    "id": "page:map",
+    "name": "Map",
+    "index": "a2",
+    "typeName": "page"
+   },
+   "shape:ch-winter": {
+    "x": 2416,
+    "y": 92,
+    "rotation": 0,
+    "isLocked": false,
+    "opacity": 1,
+    "meta": {},
+    "id": "shape:ch-winter",
+    "type": "chapter",
+    "parentId": "shape:book1",
+    "props": {
+     "w": 348,
+     "h": 364,
+     "title": "Winter",
+     "synopsis": "",
+     "color": "#2f9e44"
+    },
+    "index": "a3AKM",
+    "typeName": "shape"
+   },
+   "page:characters": {
+    "meta": {},
+    "id": "page:characters",
+    "name": "Characters",
+    "index": "a2ixI",
+    "typeName": "page"
+   },
+   "shape:mill": {
+    "x": 1546,
+    "y": 705,
+    "rotation": 0,
+    "isLocked": false,
+    "opacity": 1,
+    "meta": {},
+    "id": "shape:mill",
+    "type": "pin",
+    "parentId": "page:map",
+    "props": {
+     "w": 180,
+     "h": 64,
+     "name": "Old Mill",
+     "kind": "place",
+     "color": "#1971c2",
+     "description": "A water mill on the east bank of the Brindle river. Its wooden footbridge is older than anyone in the village."
+    },
+    "index": "a26Tb",
+    "typeName": "shape"
+   },
+   "user:8eg9mqu7BCCfjZtuUMDTf": {
+    "name": "",
+    "color": "#02B1CC",
+    "imageUrl": "",
+    "meta": {},
+    "id": "user:8eg9mqu7BCCfjZtuUMDTf",
+    "typeName": "user"
+   },
+   "shape:lore-festival": {
+    "x": 400,
+    "y": 40,
+    "rotation": 0,
+    "isLocked": false,
+    "opacity": 1,
+    "meta": {},
+    "id": "shape:lore-festival",
+    "type": "lore",
+    "parentId": "page:backstory",
+    "props": {
+     "w": 320,
+     "h": 240,
+     "title": "The Lantern Festival",
+     "category": "culture",
+     "body": "Every autumn the village hangs paper lanterns in the square on the last night of the tenth month.",
+     "start": {
+      "year": -60,
+      "month": 10,
+      "day": 31,
+      "hour": null
+     },
+     "end": {
+      "year": null,
+      "month": null,
+      "day": null,
+      "hour": null
+     }
+    },
+    "index": "a2Cb6",
+    "typeName": "shape"
+   },
+   "shape:square": {
+    "x": 986,
+    "y": 965,
+    "rotation": 0,
+    "isLocked": false,
+    "opacity": 1,
+    "meta": {},
+    "id": "shape:square",
+    "type": "pin",
+    "parentId": "page:map",
+    "props": {
+     "w": 180,
+     "h": 64,
+     "name": "Brindlewick Square",
+     "kind": "town",
+     "color": "#e8590c",
+     "description": "The heart of the village: a cobbled square around an old stone fountain, with the bakery, the general store and the town hall."
+    },
+    "index": "a1SNA",
+    "typeName": "shape"
+   },
+   "shape:p1": {
+    "x": 24,
+    "y": 80,
+    "rotation": 0,
+    "isLocked": false,
+    "opacity": 1,
+    "meta": {},
+    "id": "shape:p1",
+    "type": "scene",
+    "parentId": "shape:ch-spring",
+    "props": {
+     "w": 300,
+     "h": 260,
+     "title": "Morning in the square",
+     "when": "a bright spring morning",
+     "at": {
+      "year": 1,
+      "month": 4,
+      "day": 3,
+      "hour": 9
+     },
+     "summary": "Mira arrives in Brindlewick. Biscuit waves her over by the fountain while Juniper opens the bakery.",
+     "characterIds": [
+      "shape:mira",
+      "shape:biscuit",
+      "shape:juniper"
+     ],
+     "locationIds": [
+      "shape:square"
+     ],
+     "modifiers": {}
+    },
+    "index": "a1VSX",
+    "typeName": "shape"
+   },
+   "document:document": {
+    "gridSize": 10,
+    "name": "",
+    "meta": {},
+    "id": "document:document",
+    "typeName": "document"
+   },
+   "shape:hill": {
+    "x": 506,
+    "y": 1345,
+    "rotation": 0,
+    "isLocked": false,
+    "opacity": 1,
+    "meta": {},
+    "id": "shape:hill",
+    "type": "pin",
+    "parentId": "page:map",
+    "props": {
+     "w": 180,
+     "h": 64,
+     "name": "Lantern Hill",
+     "kind": "landmark",
+     "color": "#ae3ec9",
+     "description": "A grassy hill west of the square with a windmill on top and a view over the whole village."
+    },
+    "index": "a52br",
+    "typeName": "shape"
+   },
+   "shape:p2": {
+    "x": 352,
+    "y": 80,
+    "rotation": 0,
+    "isLocked": false,
+    "opacity": 1,
+    "meta": {},
+    "id": "shape:p2",
+    "type": "scene",
+    "parentId": "shape:ch-spring",
+    "props": {
+     "w": 300,
+     "h": 260,
+     "title": "The old mill",
+     "when": "late morning",
+     "at": {
+      "year": 1,
+      "month": 4,
+      "day": 3,
+      "hour": 11
+     },
+     "summary": "Hattie shows Mira the mill and the creaky old footbridge over the river.",
+     "characterIds": [
+      "shape:mira",
+      "shape:hattie"
+     ],
+     "locationIds": [
+      "shape:mill"
+     ],
+     "modifiers": {}
+    },
+    "index": "a24n6",
+    "typeName": "shape"
+   },
+   "shape:p3": {
+    "x": 680,
+    "y": 80,
+    "rotation": 0,
+    "isLocked": false,
+    "opacity": 1,
+    "meta": {},
+    "id": "shape:p3",
+    "type": "scene",
+    "parentId": "shape:ch-spring",
+    "props": {
+     "w": 300,
+     "h": 260,
+     "title": "Storm over the river",
+     "when": "a stormy evening",
+     "at": {
+      "year": 1,
+      "month": 4,
+      "day": 9,
+      "hour": 19
+     },
+     "summary": "A storm swells the river. With a crack, the old footbridge gives way. Hattie and Bruno watch from the bank.",
+     "characterIds": [
+      "shape:hattie",
+      "shape:bruno"
+     ],
+     "locationIds": [
+      "shape:mill"
+     ],
+     "modifiers": {}
+    },
+    "index": "a3wA2",
+    "typeName": "shape"
+   },
+   "shape:ch-spring": {
+    "x": 24,
+    "y": 92,
+    "rotation": 0,
+    "isLocked": false,
+    "opacity": 1,
+    "meta": {},
+    "id": "shape:ch-spring",
+    "type": "chapter",
+    "parentId": "shape:book1",
+    "props": {
+     "w": 1988,
+     "h": 364,
+     "title": "Spring",
+     "synopsis": "",
+     "color": "#2f9e44"
+    },
+    "index": "a1ezq",
+    "typeName": "shape"
+   },
+   "shape:story": {
+    "x": 0,
+    "y": 0,
+    "rotation": 0,
+    "isLocked": false,
+    "opacity": 1,
+    "meta": {},
+    "id": "shape:story",
+    "type": "story",
+    "parentId": "page:story",
+    "props": {
+     "w": 2840,
+     "h": 608,
+     "title": "Brindlewick",
+     "synopsis": "A sample world for the scene machinery: a newcomer's first year in a small village.",
+     "color": "#e8590c"
+    },
+    "index": "a1G0U",
+    "typeName": "shape"
+   },
+   "shape:p4": {
+    "x": 1008,
+    "y": 80,
+    "rotation": 0,
+    "isLocked": false,
+    "opacity": 1,
+    "meta": {},
+    "id": "shape:p4",
+    "type": "scene",
+    "parentId": "shape:ch-spring",
+    "props": {
+     "w": 300,
+     "h": 260,
+     "title": "The morning after",
+     "when": "foggy dawn, the next day",
+     "at": {
+      "year": 1,
+      "month": 4,
+      "day": 10,
+      "hour": 7
+     },
+     "summary": "Mira and Hattie come back in the fog. The bridge is broken in the middle; a fallen branch lies across the path.",
+     "characterIds": [
+      "shape:mira",
+      "shape:hattie"
+     ],
+     "locationIds": [
+      "shape:mill"
+     ],
+     "modifiers": {}
+    },
+    "index": "a4gd6",
+    "typeName": "shape"
+   },
+   "shape:juniper": {
+    "x": 620,
+    "y": 40,
+    "rotation": 0,
+    "isLocked": false,
+    "opacity": 1,
+    "meta": {},
+    "id": "shape:juniper",
+    "type": "character",
+    "parentId": "page:characters",
+    "props": {
+     "w": 260,
+     "h": 360,
+     "name": "Juniper",
+     "role": "Baker",
+     "color": "#c2255c",
+     "appearance": "An orange tabby cat in a white apron.",
+     "personality": "Warm, bossy about bread, laughs loudly.",
+     "backstory": "",
+     "portraits": [],
+     "activePortrait": 0,
+     "born": null
+    },
+    "index": "a3vTE",
+    "typeName": "shape"
+   },
+   "shape:p5": {
+    "x": 1336,
+    "y": 80,
+    "rotation": 0,
+    "isLocked": false,
+    "opacity": 1,
+    "meta": {},
+    "id": "shape:p5",
+    "type": "scene",
+    "parentId": "shape:ch-spring",
+    "props": {
+     "w": 300,
+     "h": 260,
+     "title": "Campfire in Whisperwood",
+     "when": "night",
+     "at": {
+      "year": 1,
+      "month": 4,
+      "day": 10,
+      "hour": 21
+     },
+     "summary": "Mira, Biscuit and Bruno camp in the clearing and plan how to rebuild the bridge.",
+     "characterIds": [
+      "shape:mira",
+      "shape:biscuit",
+      "shape:bruno"
+     ],
+     "locationIds": [
+      "shape:clearing"
+     ],
+     "modifiers": {}
+    },
+    "index": "a55VM",
+    "typeName": "shape"
+   },
+   "shape:p6": {
+    "x": 1664,
+    "y": 80,
+    "rotation": 0,
+    "isLocked": false,
+    "opacity": 1,
+    "meta": {},
+    "id": "shape:p6",
+    "type": "scene",
+    "parentId": "shape:ch-spring",
+    "props": {
+     "w": 300,
+     "h": 260,
+     "title": "A new bridge",
+     "when": "a cloudy afternoon, three weeks later",
+     "at": {
+      "year": 1,
+      "month": 5,
+      "day": 2,
+      "hour": 14
+     },
+     "summary": "Bruno finishes the new footbridge. Hattie cheers from the far bank.",
+     "characterIds": [
+      "shape:bruno",
+      "shape:hattie",
+      "shape:mira"
+     ],
+     "locationIds": [
+      "shape:mill"
+     ],
+     "modifiers": {}
+    },
+    "index": "a6OCf",
+    "typeName": "shape"
+   },
+   "shape:pier": {
+    "x": 1166,
+    "y": 1455,
+    "rotation": 0,
+    "isLocked": false,
+    "opacity": 1,
+    "meta": {},
+    "id": "shape:pier",
+    "type": "pin",
+    "parentId": "page:map",
+    "props": {
+     "w": 180,
+     "h": 64,
+     "name": "Saltwind Pier",
+     "kind": "landmark",
+     "color": "#0c8599",
+     "description": "A long wooden pier on the south beach, with fishing boats and a striped lighthouse."
+    },
+    "index": "a4G0r",
+    "typeName": "shape"
+   }
+  },
+  "schema": {
+   "schemaVersion": 2,
+   "sequences": {
+    "com.tldraw.store": 5,
+    "com.tldraw.asset": 1,
+    "com.tldraw.camera": 1,
+    "com.tldraw.document": 2,
+    "com.tldraw.instance": 26,
+    "com.tldraw.instance_page_state": 5,
+    "com.tldraw.page": 1,
+    "com.tldraw.instance_presence": 6,
+    "com.tldraw.pointer": 1,
+    "com.tldraw.shape": 4,
+    "com.tldraw.user": 1,
+    "com.tldraw.asset.image": 6,
+    "com.tldraw.asset.video": 5,
+    "com.tldraw.asset.bookmark": 2,
+    "com.tldraw.shape.group": 0,
+    "com.tldraw.shape.text": 4,
+    "com.tldraw.shape.bookmark": 4,
+    "com.tldraw.shape.draw": 5,
+    "com.tldraw.shape.geo": 14,
+    "com.tldraw.shape.note": 15,
+    "com.tldraw.shape.line": 5,
+    "com.tldraw.shape.frame": 1,
+    "com.tldraw.shape.arrow": 8,
+    "com.tldraw.shape.highlight": 4,
+    "com.tldraw.shape.embed": 4,
+    "com.tldraw.shape.image": 7,
+    "com.tldraw.shape.video": 6,
+    "com.tldraw.shape.character": 0,
+    "com.tldraw.shape.pin": 0,
+    "com.tldraw.shape.lore": 0,
+    "com.tldraw.shape.scene": 0,
+    "com.tldraw.shape.story": 0,
+    "com.tldraw.shape.book": 0,
+    "com.tldraw.shape.chapter": 0,
+    "com.tldraw.binding.arrow": 1
+   }
+  }
+ }
+}

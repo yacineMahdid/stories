@@ -1,0 +1,114 @@
+<title>Prop Lab</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600&display=swap">
+<style>
+  /* Layout: a full-bleed 3D stage, the title and the selected prop's notes top-left, stats top-right, a control dock along the bottom. */
+  :root {
+    --bg: #cfe3f0;
+    --fg: #1b2320;
+    --muted: #56625b;
+    --panel: rgba(248, 250, 246, 0.88);
+    --line: rgba(27, 35, 32, 0.14);
+    --accent: #d4612c;
+    --accent-fg: #ffffff;
+    --label-bg: rgba(255, 255, 255, 0.82);
+    --font-display: "Space Grotesk", "Inter", system-ui, sans-serif;
+    --font-ui: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1d2633; --fg: #e9eee9; --muted: #a9b5ad;
+      --panel: rgba(27, 32, 30, 0.88); --line: rgba(233, 238, 233, 0.16);
+      --accent: #f08a55; --accent-fg: #1d130d; --label-bg: rgba(27, 32, 30, 0.8); color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #1d2633; --fg: #e9eee9; --muted: #a9b5ad;
+    --panel: rgba(27, 32, 30, 0.88); --line: rgba(233, 238, 233, 0.16);
+    --accent: #f08a55; --accent-fg: #1d130d; --label-bg: rgba(27, 32, 30, 0.8); color-scheme: dark;
+  }
+
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-ui); overflow: hidden; }
+  #stage { position: fixed; inset: 0; }
+  #stage canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  #labels { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+  #labels span {
+    position: absolute; transform: translate(-50%, 0); white-space: nowrap;
+    font: 500 0.72rem/1.2 var(--font-ui); color: var(--fg); background: var(--label-bg);
+    padding: 3px 7px; border-radius: 6px; border: 1px solid var(--line);
+  }
+
+  .hud {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 14px);
+    left: max(16px, env(safe-area-inset-left, 0px));
+    right: max(16px, env(safe-area-inset-right, 0px));
+    display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 8px 16px;
+    pointer-events: none;
+  }
+  .hud h1 { margin: 0; font: 600 1.25rem/1.2 var(--font-display); letter-spacing: -0.01em; }
+  .hud .about { margin: 6px 0 0; max-width: 34rem; font-size: 0.8rem; line-height: 1.45; color: var(--muted); }
+  .hud .params { margin: 6px 0 0; max-width: 34rem; font: 400 0.7rem/1.5 var(--font-mono); color: var(--muted); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; backdrop-filter: blur(8px); }
+  .stats { font: 500 0.75rem/1.5 var(--font-mono); color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+
+  .dock {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    padding-block: 10px calc(env(safe-area-inset-bottom, 0px) + 12px);
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    background: var(--panel); border-top: 1px solid var(--line); backdrop-filter: blur(10px);
+    display: grid; gap: 8px;
+  }
+  .row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .label { flex: none; width: 4.8rem; font-size: 0.68rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+  .chips { display: flex; gap: 6px; overflow-x: auto; min-width: 0; padding-bottom: 2px; scrollbar-width: thin; }
+  button {
+    flex: none; font: 500 0.8rem/1 var(--font-ui); color: var(--fg);
+    background: transparent; border: 1px solid var(--line); border-radius: 999px; padding: 7px 12px; cursor: pointer;
+  }
+  button:hover { border-color: var(--muted); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+  #status { position: fixed; inset: 0; display: grid; place-items: center; pointer-events: none; font-size: 0.9rem; color: var(--muted); }
+  #status[hidden] { display: none; }
+  body.bare .dock, body.bare .hud { display: none; }
+  @media (max-width: 560px) { .stats, .hud .params { display: none; } }
+</style>
+
+<div id="stage"></div>
+<div id="labels"></div>
+
+<header class="hud">
+  <div class="card" style="pointer-events:auto">
+    <h1 id="title">Prop Lab</h1>
+    <p class="about" id="about">Every set piece scenes can use, in every season and at any hour.</p>
+    <p class="params" id="params"></p>
+  </div>
+  <div class="stats card" id="stats"></div>
+</header>
+
+<div id="status">Building props&hellip;</div>
+
+<nav class="dock" aria-label="Prop controls">
+  <div class="row"><span class="label">Family</span><div class="chips" id="families"></div></div>
+  <div class="row"><span class="label">Prop</span><div class="chips" id="kinds"></div></div>
+  <div class="row"><span class="label">Season</span><div class="chips" id="seasons"></div></div>
+  <div class="row"><span class="label">Time</span><div class="chips" id="times"></div></div>
+  <div class="row"><span class="label">Weather</span><div class="chips" id="weathers"></div></div>
+  <div class="row"><span class="label">Show</span><div class="chips" id="shows"></div></div>
+</nav>
+
+<script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.187.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.187.0/examples/jsm/"
+    }
+  }
+</script>
+<script type="module" src="src/props-lab.js"></script>
