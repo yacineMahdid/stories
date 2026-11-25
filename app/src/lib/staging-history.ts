@@ -35,6 +35,8 @@ const put = (editor: Editor, mark: Mark) => {
 }
 /** Is path `a` the same as `b`, or inside it? */
 const within = (a: string[], b: string[]) => b.length <= a.length && b.every((k, i) => a[i] === k)
+/** Does `o` write everything at `path`? (A rename moves an entry; it doesn't write what is in it.) */
+const covers = (o: Op, path: string[]) => o.op !== 'rename' && within(path, o.path)
 
 /**
  * Starts a new undo step for an edit of `key` (a field of a card, e.g. "shape:mira|name"),
@@ -61,8 +63,8 @@ export function edit3d(editor: Editor, ops: Op[], key = ops.map((o) => o.path.jo
   const step = current ? steps.get(current) : undefined
   if (step) {
     // The same field again: still the same step. Its first values are the ones Undo brings back.
-    step.undo = [...undo.filter((u) => !step.undo.some((o) => within(u.path, o.path))), ...step.undo]
-    step.redo = [...step.redo.filter((r) => !ops.some((o) => within(r.path, o.path))), ...ops]
+    step.undo = [...undo.filter((u) => !step.undo.some((o) => covers(o, u.path))), ...step.undo]
+    step.redo = [...step.redo.filter((r) => !ops.some((o) => covers(o, r.path))), ...ops]
     return true
   }
   const id = `${session}-${++count}`

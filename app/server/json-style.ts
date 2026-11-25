@@ -1,6 +1,6 @@
-import { editJson, JsonEditRefused, type JsonOp } from './json-edit.ts'
+import { editJson, isIndex, JsonEditRefused, nameTaken, spotOf, type JsonOp, type Removed } from './json-edit.ts'
 
-export { JsonEditRefused, type JsonOp }
+export { JsonEditRefused, type JsonOp, type Removed }
 
 /**
  * JSON in the hand-written style of the direction files (see samples/brindlewick/staging.json),
@@ -52,34 +52,59 @@ export function parseDirection(text: string): Record<string, unknown> {
 
 const BAD_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
 
-/** Only well-formed set and delete operations on a non-empty path of names. */
+const isName = (k: unknown) => typeof k === 'string' && !BAD_KEYS.has(k)
+const isRemoved = (r: unknown): r is Removed =>
+  isObj(r) && typeof r.text === 'string' && [r.after, r.before].every((k) => k === undefined || k === null || typeof k === 'string')
+
+/** Only well-formed set, delete and rename operations on a non-empty path of names. */
 export function checkOps(ops: unknown): JsonOp[] {
   if (!Array.isArray(ops)) throw new JsonEditRefused('Expected { "ops": [...] }.')
   for (const op of ops as JsonOp[]) {
     const kind = (op as { op?: unknown } | null)?.op
-    if (kind !== 'set' && kind !== 'delete') throw new JsonEditRefused(`Unknown operation ${JSON.stringify(kind)}.`)
-    if (!Array.isArray(op.path) || !op.path.length || op.path.some((k) => typeof k !== 'string' || BAD_KEYS.has(k))) throw new JsonEditRefused(`Bad path ${JSON.stringify(op.path)}.`)
+    if (kind !== 'set' && kind !== 'delete' && kind !== 'rename') throw new JsonEditRefused(`Unknown operation ${JSON.stringify(kind)}.`)
+    if (!Array.isArray(op.path) || !op.path.length || !op.path.every(isName)) throw new JsonEditRefused(`Bad path ${JSON.stringify(op.path)}.`)
     if (op.op === 'set' && op.value === undefined) throw new JsonEditRefused(`A set at ${op.path.join(' › ')} needs a value.`)
+    if (op.op === 'rename' && !isName(op.to)) throw new JsonEditRefused(`A rename at ${op.path.join(' › ')} needs a new name.`)
+    // Text to put back only helps the layout: one that isn't is dropped, and the edit still lands.
+    if (op.restore !== undefined && !isRemoved(op.restore)) delete op.restore
   }
   return ops as JsonOp[]
 }
 
-/** The same edit on the parsed document, with the same rules as the text edit. */
+/** Fill `node` again with `entries`, in their order (as own keys, whatever their names). */
+function refill(node: Record<string, unknown>, entries: [string, unknown][]) {
+  for (const k of Object.keys(node)) delete node[k]
+  for (const [k, v] of entries) Object.defineProperty(node, k, { value: v, writable: true, enumerable: true, configurable: true })
+}
+
+/** The same edit on the parsed document, with the same rules as the text edit (key order too). */
 export function applyOp(doc: Record<string, unknown>, op: JsonOp) {
   let node: Record<string, unknown> = doc
   for (let d = 0; d < op.path.length - 1; d++) {
     const key = op.path[d]
     const next = node[key]
     if (!isObj(next)) {
-      if (op.op === 'delete') return
+      if (op.op !== 'set') return
       if (Array.isArray(next) && next.length) throw new JsonEditRefused(`"${op.path.slice(0, d + 1).join(' › ')}" is a list in staging.json, not an object; change it by hand.`)
       node[key] = {}
     }
     node = node[key] as Record<string, unknown>
   }
   const last = op.path[op.path.length - 1]
-  if (op.op === 'set') node[last] = op.value
-  else delete node[last]
+  if (op.op === 'delete') { delete node[last]; return }
+  if (op.op === 'rename') {
+    if (!Object.hasOwn(node, last) || op.to === last) return
+    if (Object.hasOwn(node, op.to)) throw nameTaken(op.path, op.to)
+    const value = node[last]
+    if (isIndex(last) || isIndex(op.to)) { delete node[last]; node[op.to] = value; return } // moves to the end
+    refill(node, Object.entries(node).map(([k, v]) => [k === last ? op.to : k, v]))
+    return
+  }
+  const spot = !Object.hasOwn(node, last) && op.restore ? spotOf(Object.keys(node), last, op.restore) : -1
+  if (spot < 0) { node[last] = op.value; return }
+  const entries = Object.entries(node)
+  entries.splice(spot, 0, [last, op.value])
+  refill(node, entries)
 }
 
 /**
@@ -87,14 +112,19 @@ export function applyOp(doc: Record<string, unknown>, op: JsonOp) {
  * against the same edits applied to the parsed document; if splicing can't be trusted, the
  * whole file is written in the hand style instead (same content, new layout).
  */
-export function patchText(text: string, ops: JsonOp[]): { text: string; doc: Record<string, unknown>; spliced: boolean } {
+export function patchText(text: string, ops: JsonOp[]): { text: string; doc: Record<string, unknown>; spliced: boolean; removed: (Removed | null)[] } {
   const doc = parseDirection(text)
   let out = text
   let spliced = true
+  const removed: (Removed | null)[] = [] // what each edit took out of the text, for its Undo
   for (const op of ops) {
     applyOp(doc, op) // refusals throw before anything is written
     if (!spliced) continue
-    try { out = editJson(out, op, STYLE) } catch (e) { if (e instanceof JsonEditRefused) throw e; spliced = false }
+    try {
+      const r = editJson(out, op, STYLE)
+      out = r.text
+      removed.push(r.removed)
+    } catch (e) { if (e instanceof JsonEditRefused) throw e; spliced = false }
   }
   if (spliced) {
     try { spliced = JSON.stringify(parseDirection(out)) === JSON.stringify(doc) } catch { spliced = false }
@@ -103,5 +133,5 @@ export function patchText(text: string, ops: JsonOp[]): { text: string; doc: Rec
     const eol = text.includes('\r\n') ? '\r\n' : '\n'
     out = (text.startsWith('﻿') ? '﻿' : '') + formatJSON(doc).replace(/\n/g, eol) + eol
   }
-  return { text: out, doc, spliced }
+  return { text: out, doc, spliced, removed: spliced ? removed : ops.map(() => null) }
 }

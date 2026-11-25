@@ -3,12 +3,18 @@ import { useSyncExternalStore } from 'react'
 /**
  * The 3D direction (staging.json in the data folder): character looks, place presets and
  * everything else a scene needs in 3D (see docs/scenes.md). The file is also edited by hand, so
- * the app never writes a copy of the whole thing: each change is a small set/delete that the dev
- * server splices into the file on disk, and the server answers with the file as it now is.
+ * the app never writes a copy of the whole thing: each change is a small set, delete or rename
+ * that the dev server splices into the file on disk, and the server answers with the file as it
+ * now is.
  */
 export type Direction = Record<string, any>
 export type StagingStatus = 'loading' | 'ready' | 'saving' | 'saved' | 'error'
-export type Op = { op: 'set'; path: string[]; value: unknown } | { op: 'delete'; path: string[] }
+export type Op =
+  | { op: 'set'; path: string[]; value: unknown }
+  | { op: 'delete'; path: string[] }
+  | { op: 'rename'; path: string[]; to: string } // the key at `path` becomes `to`, in its place
+/** The text an edit took out of the file, as the server answers it (see app/server/json-edit.ts). */
+type Removed = { text: string; after?: string | null; before?: string | null }
 
 /** Where the direction lives, for messages (data/ unless the app was started with STORY_DATA). */
 export const STAGING_FILE = `${__STORY_DATA__}/staging.json`
@@ -30,20 +36,51 @@ const isObject = (v: unknown): v is Direction => !!v && typeof v === 'object' &&
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 const readError = () => `${unreadable} Fix it; it is read again when you come back to this tab${pending.length ? ', and the changes not saved yet are saved then' : ''}.`
 
+// An Undo puts back the very text its edit took out of the file (a hand-written entry, its blank
+// line, its place among the others), not just the same values: the server's answer to each edit
+// says what it took out, and the Undo sends that along.
+const undoes = new WeakMap<Op, Op>() // an Undo's op → the edit it takes back
+const took = new WeakMap<Op, Removed>() // an edit → what it last took out of the file
+const restoreOf = (op: Op) => { const e = undoes.get(op); return e && took.get(e) }
+
+// Key order as the server keeps it (see spotOf and applyOp in app/server), so the copy here lists
+// the entries in the file's order.
+const isIndex = (k: string) => /^(?:0|[1-9]\d*)$/.test(k) && Number(k) < 2 ** 32 - 1
+function spotOf(keys: string[], key: string, { after, before }: Removed): number {
+  if (after === undefined || before === undefined || isIndex(key) || keys.some(isIndex)) return -1
+  const at = after === null ? 0 : keys.indexOf(after) + 1
+  if (after !== null && !at) return -1
+  return (before === null ? at === keys.length : keys[at] === before) ? at : -1
+}
+function refill(node: Direction, entries: [string, unknown][]) {
+  for (const k of Object.keys(node)) delete node[k]
+  for (const [k, v] of entries) Object.defineProperty(node, k, { value: v, writable: true, enumerable: true, configurable: true })
+}
+
 /** The same edit the server makes, on the copy here (see app/server/json-style.ts). */
 function apply(doc: Direction, op: Op): Direction {
   const next = structuredClone(doc)
   let node: any = next
   for (const key of op.path.slice(0, -1)) {
     if (!isObject(node[key])) {
-      if (op.op === 'delete' || (Array.isArray(node[key]) && node[key].length)) return next
+      if (op.op !== 'set' || (Array.isArray(node[key]) && node[key].length)) return next
       node[key] = {}
     }
     node = node[key]
   }
   const last = op.path[op.path.length - 1]
-  if (op.op === 'set') node[last] = op.value
-  else delete node[last]
+  if (op.op === 'delete') delete node[last]
+  else if (op.op === 'rename') {
+    if (!Object.hasOwn(node, last) || Object.hasOwn(node, op.to)) return next // nothing to rename, or the name is taken (refused)
+    const value = node[last]
+    if (isIndex(last) || isIndex(op.to)) { delete node[last]; node[op.to] = value }
+    else refill(node, Object.entries(node).map(([k, v]) => [k === last ? op.to : k, v]))
+  } else {
+    const back = Object.hasOwn(node, last) ? undefined : restoreOf(op)
+    const spot = back ? spotOf(Object.keys(node), last, back) : -1
+    if (spot < 0) node[last] = op.value
+    else { const entries = Object.entries(node); entries.splice(spot, 0, [last, op.value]); refill(node, entries) }
+  }
   return next
 }
 
@@ -79,16 +116,22 @@ export async function loadStaging(): Promise<void> {
 
 async function flush(keepalive = false) {
   if (readFailed || status === 'loading' || !pending.length) return
-  const ops = pending
-  pending = []
+  // An Undo waits for the answer to the edit it takes back, which says what to put back (unless
+  // the tab is closing: then everything goes now).
+  const held = keepalive ? -1 : pending.findIndex((op, i) => { const e = undoes.get(op); const j = e ? pending.indexOf(e) : -1; return j >= 0 && j < i })
+  const ops = held > 0 ? pending.slice(0, held) : pending
+  pending = pending.slice(ops.length)
   inflight = ops
   status = 'saving'
   notify()
   let failed = false
   try {
-    const res = await fetch('/api/staging', { method: 'PATCH', body: JSON.stringify({ ops }), keepalive })
+    const body = JSON.stringify({ ops: ops.map((op) => ({ ...op, restore: restoreOf(op) })) })
+    const res = await fetch('/api/staging', { method: 'PATCH', body, keepalive })
     if (!res.ok) throw await failure(res, `Saving ${STAGING_FILE} failed`)
-    let fresh: Direction = await res.json()
+    const answer: { doc: Direction; removed?: (Removed | null)[] } = await res.json()
+    ops.forEach((op, i) => { const r = answer.removed?.[i]; if (r) took.set(op, r); else took.delete(op) })
+    let fresh = answer.doc
     for (const op of pending) fresh = apply(fresh, op) // changes made while saving
     if (!same(fresh, direction)) direction = fresh // an identical answer changes nothing on screen
     status = pending.length ? 'saving' : 'saved'
@@ -105,6 +148,7 @@ async function flush(keepalive = false) {
   // A failed save is tried again by itself, a little later each time (2 s, 4 s … a minute), and
   // soon if you came back to the tab while it was on its way.
   if (failed) { schedule(rereadAfterSave ? 400 : Math.min(60_000, 2_000 * 2 ** failures++)); rereadAfterSave = false }
+  else if (held > 0) schedule(0) // the Undo held back above
   else if (rereadAfterSave && !pending.length && !readFailed) { rereadAfterSave = false; void loadStaging() }
 }
 
@@ -117,8 +161,8 @@ function schedule(delay = 400) {
 export const canEdit = () => status !== 'loading' && !readFailed
 
 /**
- * Change the direction: a few sets and deletes that land together. Refused (false) until the
- * file has been read, so nothing the app didn't see can be overwritten.
+ * Change the direction: a few sets, deletes and renames that land together. Refused (false)
+ * until the file has been read, so nothing the app didn't see can be overwritten.
  */
 export function edit(ops: Op[]): boolean {
   if (!canEdit() || !ops.length) return false
@@ -139,11 +183,32 @@ export function undoOf(ops: Op[]): Op[] {
   let d = direction
   const back: Op[] = []
   for (const op of ops) {
-    const was = op.path.reduce<unknown>((n, k) => (isObject(n) ? n[k] : undefined), d)
-    back.unshift(was === undefined ? { op: 'delete', path: op.path } : { op: 'set', path: op.path, value: was })
+    const u = inverse(d, op)
+    if (u) { undoes.set(u, op); back.unshift(u) }
     d = apply(d, op)
   }
   return back
+}
+
+/** The edit that takes `op` back on `d`, or null when `op` changes nothing there. */
+function inverse(d: Direction, op: Op): Op | null {
+  let node: Direction = d
+  for (let i = 0; i < op.path.length; i++) {
+    const key = op.path[i]
+    const path = op.path.slice(0, i + 1)
+    const has = Object.hasOwn(node, key)
+    if (i === op.path.length - 1) {
+      if (op.op === 'rename') return has && op.to !== key && !Object.hasOwn(node, op.to) ? { op: 'rename', path: [...op.path.slice(0, -1), op.to], to: key } : null
+      return has ? { op: 'set', path, value: node[key] } : op.op === 'set' ? { op: 'delete', path } : null
+    }
+    if (!isObject(node[key])) {
+      // A set makes the objects on its way (or one in place of a stray value): that is what goes.
+      if (op.op !== 'set' || (Array.isArray(node[key]) && node[key].length)) return null
+      return has ? { op: 'set', path, value: node[key] } : { op: 'delete', path }
+    }
+    node = node[key]
+  }
+  return null
 }
 
 /**
