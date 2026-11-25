@@ -1,16 +1,18 @@
-import { Component, createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Component, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { getSnapshot, type Editor, type TLShape } from 'tldraw'
 import type { CharacterShape, PinShape, SceneShape } from '../shapes/types'
-import { coverPreviews, directionKey, effectiveSpec, getStudio, getPreview, guessLook, lookOptions, placePresets, weathers, WorldView, type Look, type StageState } from '../three/bridge.js'
+import { coverPreviews, directionKey, effectiveSpec, getStudio, getPreview, guessLook, lookOptions, placePresets, weathers, WorldView, type Look, type Picked, type StageState } from '../three/bridge.js'
 import { getStaging, STAGING_FILE, useStaging, useStagingStatus, type Direction, type Op } from '../lib/staging'
 import { edit3d } from '../lib/staging-history'
 import { uploadFile } from '../lib/persistence'
 import { resizeKeepingOrder } from '../lib/structure'
+import { sceneEntryKey } from '../lib/direct'
+import { createDirectEdits, DirectPanel, useDirectKeys, useDirectPointer } from './DirectPanel'
 
 /* ───────────── shared ───────────── */
 
-/** Opens the full 3D stage at a page, from anywhere in the app. */
-export const StageContext = createContext<(pageId?: string) => void>(() => {})
+/** Opens the full 3D stage at a page, from anywhere in the app (`direct`: in Direct mode). */
+export const StageContext = createContext<(pageId?: string, opts?: { direct?: boolean }) => void>(() => {})
 
 /** Mounts a shared 3D view's element in this spot while it is on screen. */
 function Slot({ view, className = 'three-slot' }: { view: { mount(el: HTMLElement): void; unmount(el: HTMLElement): void }; className?: string }) {
@@ -25,6 +27,10 @@ function Slot({ view, className = 'three-slot' }: { view: { mount(el: HTMLElemen
 
 /** The canvas document, refreshed shortly after it stops changing. */
 export function useCanvasDocument(editor: Editor, delay = 700) {
+  return useLiveDocument(editor, delay)[0]
+}
+/** The same, and a function that takes it now (after a change made with the 3D direction). */
+function useLiveDocument(editor: Editor, delay: number) {
   const [doc, setDoc] = useState(() => getSnapshot(editor.store).document)
   useEffect(() => {
     let t: ReturnType<typeof setTimeout> | undefined
@@ -34,7 +40,8 @@ export function useCanvasDocument(editor: Editor, delay = 700) {
     }, { scope: 'document' })
     return () => { clearTimeout(t); stop() }
   }, [editor, delay])
-  return doc
+  const now = useCallback(() => setDoc(getSnapshot(editor.store).document), [editor])
+  return [doc, now] as const
 }
 
 function fileFrom(blob: Blob, name: string) {
@@ -70,10 +77,7 @@ const CARD = { characters: 'character', places: 'pin', scenes: 'scene' }
 
 /** The key of a card's entry in the direction, the way the 3D world finds it (a page: by id or title). */
 function entryOf(d: Direction, section: Section, id: string, name: string): string | null {
-  if (section !== 'scenes') return directionKey(d, section, id, name)
-  const scenes = isPlain(d.scenes) ? d.scenes : {}
-  if (Object.hasOwn(scenes, id)) return id
-  return (name && Object.keys(scenes).find((k) => k.toLowerCase() === name.toLowerCase())) || null
+  return section === 'scenes' ? sceneEntryKey(d, id, name) : directionKey(d, section, id, name)
 }
 
 /**
@@ -397,6 +401,7 @@ export function PagePreview({ editor, shape }: { editor: Editor; shape: SceneSha
       {state && <Warnings list={view.warnings} />}
       <div className="ins-row">
         <button className="primary" onClick={() => openStage(shape.id)}>Open 3D stage</button>
+        <button onClick={() => openStage(shape.id, { direct: true })} title="Open the 3D stage at this page in Direct mode: place the cast and props, and save it to the page">Direct in 3D</button>
         <button disabled={saving || busy} onClick={addStill}><Busy on={saving}>{shape.props.still ? 'Replace the card’s still' : 'Put this shot on the card'}</Busy></button>
         {shape.props.still && <button onClick={removeStill}>Remove still</button>}
       </div>
@@ -409,13 +414,46 @@ export function PagePreview({ editor, shape }: { editor: Editor; shape: SceneSha
 
 const SEASONS = ['spring', 'summer', 'autumn', 'winter']
 const fmtHour = (h: number) => `${String(Math.floor(h) % 24).padStart(2, '0')}:${String(Math.round((h % 1) * 60) % 60).padStart(2, '0')}`
+// While directing, the canvas only changes by the panel's own edits and Undo, and edits should show
+// at once: a short wait for the canvas and before a re-stage (a few quick edits still make one),
+// and "Staging…" only for a re-stage that takes a while (a new set).
+const DIRECT_DOC_MS = 30
+const DIRECT_SETTLE_MS = 60
+const SLOW_MS = 400
 
-/** Every page of the story in 3D, full screen: pages, shots, time, weather, season and Play. */
-export function StageOverlay({ editor, pageId, onClose }: { editor: Editor; pageId?: string; onClose: () => void }) {
+/**
+ * Every page of the story in 3D, full screen: pages, shots, time, weather, season and Play. Direct
+ * mode (`direct`: open in it) directs the page on screen: see DirectPanel.tsx.
+ */
+export function StageOverlay({ editor, pageId, direct: directAtOpen = false, onClose }: { editor: Editor; pageId?: string; direct?: boolean; onClose: () => void }) {
   const direction = useStaging()
-  const doc = useCanvasDocument(editor)
+  const [direct, setDirect] = useState(directAtOpen)
+  const directRef = useRef(direct)
+  directRef.current = direct
+  const [doc, docNow] = useLiveDocument(editor, direct ? DIRECT_DOC_MS : 700)
   const view = useMemo(() => new WorldView(), [])
   const rootRef = useRef<HTMLDivElement>(null)
+  const barRef = useRef<HTMLElement>(null)
+  const dockRef = useRef<HTMLElement>(null)
+  const [pages, setPages] = useState<{ id: string; title: string; path: string }[]>([])
+  const [current, setCurrent] = useState<string | undefined>(pageId)
+  const [state, setState] = useState<StageState | null>(null)
+  const [shot, setShot] = useState(0)
+  const [busy, setBusy] = useState(true)
+  const [playing, setPlaying] = useState(false)
+  const shownRef = useRef<string | null>(null)
+  const sync = () => { setState(view.state ? { ...view.state } : null); setShot(view.shotIndex) }
+
+  // Direct mode: what is selected (a cast member or a prop of the page), and every edit.
+  const [selected, setSelected] = useState<Picked | null>(null)
+  const selectedRef = useRef(selected)
+  selectedRef.current = selected
+  const stagedRef = useRef<{ id: string; title: string } | null>(null)
+  stagedRef.current = state ? { id: state.page.id, title: state.page.title } : null
+  const edits = useMemo(() => createDirectEdits(editor, view, { page: () => stagedRef.current, canvasChanged: docNow }), [editor, view])
+  const { editable } = useStagingStatus()
+  const canStage = editable && !state?.locked
+
   useEffect(() => {
     coverPreviews(true)
     // While the stage is open, the canvas underneath takes no keys (Backspace would delete the
@@ -431,6 +469,7 @@ export function StageOverlay({ editor, pageId, onClose }: { editor: Editor; page
     root?.focus()
     if (import.meta.env.DEV) (window as any).stageView = view // handy for debugging in the console
     return () => {
+      edits.close() // a slider's edit still waiting is saved
       behind.forEach((el) => el.removeAttribute('inert'))
       view.dispose()
       coverPreviews(false)
@@ -438,14 +477,12 @@ export function StageOverlay({ editor, pageId, onClose }: { editor: Editor; page
       else if (wasFocused && (canvasHadFocus || !opener)) editor.focus()
     }
   }, [view])
-  const [pages, setPages] = useState<{ id: string; title: string; path: string }[]>([])
-  const [current, setCurrent] = useState<string | undefined>(pageId)
-  const [state, setState] = useState<StageState | null>(null)
-  const [shot, setShot] = useState(0)
-  const [busy, setBusy] = useState(true)
-  const [playing, setPlaying] = useState(false)
-  const shownRef = useRef<string | null>(null)
-  const sync = () => { setState(view.state ? { ...view.state } : null); setShot(view.shotIndex) }
+
+  // A selection that is no longer on stage (taken out, removed, undone) goes.
+  const dropGone = () => {
+    const sel = selectedRef.current
+    if (sel && !(sel.kind === 'cast' ? view.castInfo().some((c) => c.who === sel.id) : view.thingMark(sel.id))) setSelected(null)
+  }
 
   useEffect(() => {
     view.setWorld(doc, direction)
@@ -458,10 +495,12 @@ export function StageOverlay({ editor, pageId, onClose }: { editor: Editor; page
     const keepShot = shownRef.current === id
     if (keepShot && view.showing('page', id)) { sync(); setBusy(false); return } // nothing 3D changed
     setBusy(true)
+    // Directing, the camera stays exactly where it is (the director keeps it while directing anyway).
+    const directing = directRef.current
     const t = setTimeout(() => {
       shownRef.current = id
-      view.showPage(id, {}, { keepShot }).then((s) => { if (live && s) sync() }).catch((e) => console.error(e)).finally(() => { if (live) setBusy(false) })
-    }, SETTLE_MS)
+      view.showPage(id, {}, directing ? { keepCamera: keepShot } : { keepShot }).then((s) => { if (live && s) { sync(); dropGone() } }).catch((e) => console.error(e)).finally(() => { if (live) setBusy(false) })
+    }, directing ? DIRECT_SETTLE_MS : SETTLE_MS)
     return () => { live = false; clearTimeout(t) }
   }, [doc, direction, current])
 
@@ -482,6 +521,7 @@ export function StageOverlay({ editor, pageId, onClose }: { editor: Editor; page
   }, [playing, busy, shot, index, pages.length])
 
   useEffect(() => {
+    if (direct) return // Direct mode has keys of its own (useDirectKeys below)
     const key = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
       if ((e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'SELECT') return
@@ -490,10 +530,15 @@ export function StageOverlay({ editor, pageId, onClose }: { editor: Editor; page
     }
     window.addEventListener('keydown', key)
     return () => window.removeEventListener('keydown', key)
-  }, [index, pages])
+  }, [index, pages, direct])
+
+  // The time, weather and season of watch mode are the viewer's own; Direct mode shows and saves
+  // the page's, so turning it on puts the page's back.
+  const viewerMoment = useRef(false)
 
   // A new season rebuilds the set: show "Staging…" first, then do the work.
   const changeSeason = (season: string) => {
+    viewerMoment.current = true
     setBusy(true)
     setTimeout(() => view.retime({ season }).then(sync).finally(() => setBusy(false)), 50)
   }
@@ -502,18 +547,82 @@ export function StageOverlay({ editor, pageId, onClose }: { editor: Editor; page
     if (m.hour != null || m.weather) setState((s) => (s ? { ...s, ...m } as StageState : s))
     view.retime(m).then(() => setState({ ...(view.state as StageState) }))
   }
+  const viewerRetime = (m: { hour?: number; weather?: string }) => { viewerMoment.current = true; retime(m) }
+
+  /* ── Direct mode ── */
+
+  useEffect(() => {
+    view.setDirecting(direct)
+    if (!direct) {
+      edits.flush()
+      setSelected(null)
+      return
+    }
+    setPlaying(false)
+    if (viewerMoment.current) {
+      viewerMoment.current = false
+      view.restage().then((s) => { if (s) sync() })
+    }
+  }, [direct])
+  // The selection shows on stage (a ring, a box) while directing, kept by id through re-stages.
+  useEffect(() => { view.select(direct ? selected?.kind ?? null : null, selected?.id ?? null) }, [direct, selected])
+  useEffect(() => setSelected(null), [current]) // another page: nothing selected
+
+  // "Staging…" while directing: only when a re-stage takes a while.
+  const [slow, setSlow] = useState(false)
+  useEffect(() => {
+    if (!busy || !direct) { setSlow(false); return }
+    const t = setTimeout(() => setSlow(true), SLOW_MS)
+    return () => clearTimeout(t)
+  }, [busy, direct])
+
+  // The panel sits between the stage bar and the dock, whatever their height (they wrap when narrow).
+  useEffect(() => {
+    const root = rootRef.current, bar = barRef.current, dock = dockRef.current
+    if (!direct || !root || !bar || !dock) return
+    const fit = () => {
+      root.style.setProperty('--bar-h', `${Math.round(bar.getBoundingClientRect().height)}px`)
+      root.style.setProperty('--dock-h', `${Math.round(dock.getBoundingClientRect().height)}px`)
+    }
+    const ro = new ResizeObserver(fit)
+    ro.observe(bar)
+    ro.observe(dock)
+    fit()
+    return () => ro.disconnect()
+  }, [direct])
+
+  useDirectPointer(view, direct, {
+    canStage: () => canStage,
+    select: setSelected,
+    moved: (p, what) => (p.kind === 'cast' ? edits.moved(p.id, what) : edits.propMoved(p.id, what)),
+  })
+  useDirectKeys(direct, {
+    selected: () => selectedRef.current,
+    canStage: () => canStage,
+    deselect: () => setSelected(null),
+    close: onClose,
+    page: (step) => { edits.flush(); go(index + step) },
+    undo: () => { edits.flush(); editor.undo() },
+    redo: () => { edits.flush(); editor.redo() },
+    leaveField: () => { (document.activeElement as HTMLElement | null)?.blur(); rootRef.current?.focus() },
+    nudge: (p, right, away) => edits.nudge(p.kind, p.id, right, away),
+    turn: (p, deg) => edits.turn(p.kind, p.id, deg),
+    remove: (p) => edits.removeProp(p.id, () => setSelected(null)),
+  })
 
   return (
-    <div className="stage-overlay" role="dialog" aria-modal="true" aria-label="3D stage" tabIndex={-1} ref={rootRef}>
+    <div className={direct ? 'stage-overlay directing' : 'stage-overlay'} role="dialog" aria-modal="true" aria-label="3D stage" tabIndex={-1} ref={rootRef}>
       <Slot view={view} className="stage-view" />
-      <header className="stage-bar">
+      <header className="stage-bar" ref={barRef}>
         <button onClick={onClose} aria-label="Close the 3D stage">✕</button>
         <button disabled={index <= 0} onClick={() => go(index - 1)} aria-label="Previous page">←</button>
         <select value={current ?? ''} onChange={(e) => setCurrent(e.target.value)}>
           {pages.map((p) => <option key={p.id} value={p.id}>{p.path} {p.title}</option>)}
         </select>
         <button disabled={index >= pages.length - 1} onClick={() => go(index + 1)} aria-label="Next page">→</button>
-        <button className={playing ? 'on' : ''} onClick={() => setPlaying(!playing)}>{playing ? 'Stop' : 'Play'}</button>
+        <button className={playing ? 'on' : ''} disabled={direct} onClick={() => setPlaying(!playing)}>{playing ? 'Stop' : 'Play'}</button>
+        <button className={direct ? 'on' : ''} aria-pressed={direct} onClick={() => setDirect(!direct)}
+          title="Direct this page: select and drag the cast and props, set what they do and feel, and save it to the page">Direct</button>
       </header>
       {state && (
         <aside className="stage-card">
@@ -530,14 +639,22 @@ export function StageOverlay({ editor, pageId, onClose }: { editor: Editor; page
           <Warnings list={view.warnings} />
         </aside>
       )}
-      <footer className="stage-dock">
+      {direct && state && (
+        <aside className="direct-panel" aria-label="Direction">
+          <ThreeBoundary>
+            <DirectPanel editor={editor} view={view} state={state} selected={selected} onSelect={setSelected} edits={edits} retime={retime} />
+          </ThreeBoundary>
+        </aside>
+      )}
+      <footer className="stage-dock" ref={dockRef}>
         <div className="three-chips">
           {view.shots.map((s, i) => <button key={i} className={i === shot ? 'on' : ''} onClick={() => { view.shot(i); setShot(i) }}>{s.label ?? s.shot ?? `Shot ${i + 1}`}</button>)}
         </div>
-        {state && (
+        {/* Directing, the moment is the page's own and lives in the panel (Moment); here it is the viewer's. */}
+        {state && !direct && (
           <div className="stage-moment">
-            <label>Time <input type="range" min={0} max={24} step={0.25} value={state.hour} onChange={(e) => retime({ hour: Number(e.target.value) })} /> <output>{fmtHour(state.hour)}</output></label>
-            <select value={state.weather} onChange={(e) => retime({ weather: e.target.value })} aria-label="Weather">
+            <label>Time <input type="range" min={0} max={24} step={0.25} value={state.hour} onChange={(e) => viewerRetime({ hour: Number(e.target.value) })} /> <output>{fmtHour(state.hour)}</output></label>
+            <select value={state.weather} onChange={(e) => viewerRetime({ weather: e.target.value })} aria-label="Weather">
               {weathers.map((w) => <option key={w.id} value={w.id}>{w.label}</option>)}
             </select>
             <select value={state.season} onChange={(e) => changeSeason(e.target.value)} aria-label="Season">
@@ -546,7 +663,7 @@ export function StageOverlay({ editor, pageId, onClose }: { editor: Editor; page
           </div>
         )}
       </footer>
-      {busy && <div className="three-loading big">Staging…</div>}
+      {busy && (!direct || slow) && <div className="three-loading big">Staging…</div>}
       {!busy && !pages.length && <div className="three-loading big empty">Add pages on the Story tab to see them here.</div>}
     </div>
   )

@@ -98,17 +98,18 @@ export default function App() {
   const [editor, setEditor] = useState<Editor | null>(null)
   const [save, setSave] = useState<SaveState>('saved')
 
-  const [stage, setStage] = useState<{ open: boolean; pageId?: string }>({ open: false })
+  const [stage, setStage] = useState<{ open: boolean; pageId?: string; direct?: boolean }>({ open: false })
 
   useEffect(() => {
     loadStaging()
     loadWorld().then((data) => setWorld({ loaded: true, data }), (e) => setWorld({ loaded: true, data: null, error: String(e) }))
   }, [])
 
-  // The 3D stage opens at the given page, or at the selected page, or at the first one.
-  const openStage = (pageId?: string) => {
+  // The 3D stage opens at the given page, or at the selected page, or at the first one;
+  // `direct`: in Direct mode, to direct that page.
+  const openStage = (pageId?: string, opts?: { direct?: boolean }) => {
     const sel = editor?.getOnlySelectedShape()
-    setStage({ open: true, pageId: pageId ?? (sel?.type === 'scene' ? sel.id : undefined) })
+    setStage({ open: true, pageId: pageId ?? (sel?.type === 'scene' ? sel.id : undefined), direct: !!opts?.direct })
   }
 
   useEffect(() => (editor ? startAutosave(editor, setSave) : undefined), [editor])
@@ -141,7 +142,7 @@ export default function App() {
       </div>
       {editor && pageId === 'page:story' && <Timeline editor={editor} />}
       {editor && pageId === 'page:backstory' && <Chronology editor={editor} />}
-      {editor && stage.open && <StageOverlay editor={editor} pageId={stage.pageId} onClose={() => setStage({ open: false })} />}
+      {editor && stage.open && <StageOverlay editor={editor} pageId={stage.pageId} direct={stage.direct} onClose={() => setStage({ open: false })} />}
     </div>
     </StageContext.Provider>
   )

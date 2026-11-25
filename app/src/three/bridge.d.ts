@@ -249,6 +249,10 @@ export class WorldView {
   readonly controls: { enabled: boolean }
   /** Staging work waiting or under way: ignore pointerdown until it is done. */
   readonly pending: boolean
+  /** Resolves once no staging work is waiting or under way (also work queued meanwhile). */
+  idle(): Promise<void>
+  /** Stage the page on screen again as the direction has it (the viewer's own time, weather and season go), keeping the camera. */
+  restage(): Promise<StageState | null>
   /** The camera was moved by hand since a shot last framed it. */
   readonly userCamera: boolean
 

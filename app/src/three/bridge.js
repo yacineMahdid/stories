@@ -239,6 +239,8 @@ export class WorldView {
   }
   /** Staging work waiting or under way (a re-stage in flight: leave the models alone until it is done). */
   get pending() { return (this.jobs ?? 0) > 0; }
+  /** Resolves once no staging work is waiting or under way (also work queued meanwhile). */
+  idle() { return this.busy.then(() => (this.pending && !this.disposed ? this.idle() : undefined)); }
 
   /**
    * Stage a page. `keepShot` re-stages the same page on the shot it was on (framed again unless
@@ -258,6 +260,17 @@ export class WorldView {
       this.shown = state ? { kind: 'page', id: pageId, version, ticket } : null;
       return state;
     });
+  }
+
+  /**
+   * Stage the page on screen again as the direction has it: the time, weather and season the viewer
+   * picked (retime) go, the camera stays. Null when no page is on screen.
+   */
+  restage() {
+    const s = this.shown;
+    if (s?.kind !== 'page') return Promise.resolve(null);
+    this.shown = null;
+    return this.showPage(s.id, {}, { keepCamera: true });
   }
 
   showPlace(pinId, moment = {}) {
