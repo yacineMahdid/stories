@@ -19,6 +19,8 @@ export const placePresets: string[]
 export const weathers: Option[]
 
 export function guessLook(card: { id: string; name: string; role?: string; appearance?: string; color?: string }): Look
+export function effectiveSpec(look: Look): Look
+export function directionKey(direction: Direction, section: 'characters' | 'places', id: string, name?: string): string | null
 
 export interface Studio {
   mount(parent: HTMLElement): void
@@ -48,12 +50,12 @@ export class WorldView {
   unmount(parent: HTMLElement): void
   setWorld(document: unknown, direction: Direction): unknown
   pages(): { index: number; id: string; title: string; path: string }[]
-  showPage(pageId: string, overrides?: { hour?: number; weather?: string; season?: string }): Promise<StageState | null>
+  showPage(pageId: string, overrides?: { hour?: number; weather?: string; season?: string }, options?: { keepShot?: boolean }): Promise<StageState | null>
   showPlace(pinId: string, moment?: { hour?: number; weather?: string; season?: string }): Promise<StageState | null>
   shot(i: number): Shot | undefined
   readonly shots: Shot[]
   readonly state: StageState | null
-  retime(moment: { hour?: number; weather?: string; season?: string }): Promise<unknown> | undefined
+  retime(moment: { hour?: number; weather?: string; season?: string }): Promise<unknown>
   still(width?: number, height?: number): Promise<Blob>
   dispose(): void
 }

@@ -328,8 +328,10 @@ export class Director {
     if (this.set) this.set.world = world;
   }
 
-  async showState(state, overrides = {}) {
-    if (!state) return null;
+  async showState(state, overrides = {}, { keepShot = false } = {}) {
+    if (!state || this.disposed) return null;
+    const sameScene = keepShot && this.state && this.state.page?.id === state.page?.id;
+    const previousShot = this.shotIndex;
     Object.assign(state, Object.fromEntries(Object.entries(overrides).filter(([, v]) => v != null)));
     this.state = state;
     const key = this.setKeyFor(state);
@@ -342,8 +344,12 @@ export class Director {
     }
     this.stage.setMoment({ hour: state.hour, weather: state.weather, season: state.season, day: state.day, ambient: state.ambient });
     await this.stageCast(state);
+    if (this.disposed) return null;
     this.shots = state.shots;
-    this.shot(0);
+    // Re-staging the same page (the canvas changed) keeps the shot, and leaves alone a camera
+    // the viewer has moved.
+    if (!sameScene) this.shot(0);
+    else if (!this.userCamera) this.shot(Math.min(previousShot, this.shots.length - 1));
     for (const w of this.set.warnings) if (!state.warnings.includes(w)) state.warnings.push(w);
     return state;
   }
@@ -368,9 +374,15 @@ export class Director {
     const spec = buildSpec(this.world.specFor(c, entry.look));
     if (entry.scale) spec.height = (spec.height ?? 1) * entry.scale;
     const key = JSON.stringify(spec);
+    // One model per character, even when two stagings ask for it at once.
+    if (this.pending?.has(c.id)) await this.pending.get(c.id).catch(() => {});
     let character = this.characters.get(c.id);
     if (!character) {
-      character = await createCharacter(spec);
+      this.pending ??= new Map();
+      const making = createCharacter(spec);
+      this.pending.set(c.id, making);
+      try { character = await making; } finally { this.pending.delete(c.id); }
+      if (this.disposed) { character.dispose(); return null; }
       character.specKey = key;
       this.characters.set(c.id, character);
     } else if (character.specKey !== key) {
@@ -391,7 +403,8 @@ export class Director {
       }
     }
     this.cast.clear();
-    const members = await Promise.all(state.cast.map(async (entry) => ({ entry, character: await this.characterFor(entry) })));
+    const members = (await Promise.all(state.cast.map(async (entry) => ({ entry, character: await this.characterFor(entry) })))).filter((m) => m.character);
+    if (this.disposed) return;
     // Positions first (facing can point at other cast members).
     for (const m of members) {
       m.mark = this.markFor(m.entry, state);
@@ -758,6 +771,7 @@ export class Director {
 
   /** Release the set and the cast (when a stage closes for good). */
   dispose() {
+    this.disposed = true;
     this.set?.dispose();
     this.set = null;
     for (const c of this.characters.values()) c.dispose();

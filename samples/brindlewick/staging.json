@@ -5,9 +5,9 @@
   "defaults": { "weather": "clear" },
 
   "terrain": [
-    { "type": "river", "points": [[2050, -2400], [1880, -400], [1720, 300], [1630, 720], [1600, 1000], [1660, 1300], [1720, 1520], [1760, 1800], [1800, 2400]], "width": 90, "depth": 1.0 },
+    { "type": "river", "points": [[2050, -2400], [1880, -400], [1720, 300], [1630, 720], [1600, 1000], [1660, 1300], [1720, 1520], [1760, 1800], [1800, 2400]], "width": 90, "depth": 1 },
     { "type": "sea", "points": [[-2600, 1560], [4800, 1470], [4800, 5400], [-2600, 5400]], "beach": 180 },
-    { "type": "hill", "at": [520, 1380], "r": 300, "height": 3.0 },
+    { "type": "hill", "at": [520, 1380], "r": 300, "height": 3 },
     { "type": "hill", "at": [80, 300], "r": 420, "height": 2.2 },
     { "type": "path", "surface": "dirt", "width": 34, "points": [[1170, 990], [1380, 975], [1560, 960], [1640, 958], [1780, 950], [1980, 930]] },
     { "type": "path", "surface": "dirt", "width": 34, "points": [[880, 900], [740, 780], [600, 680], [470, 600]] },
@@ -55,12 +55,12 @@
         { "id": "bridge", "kind": "bridge", "at": [2.45, 11], "facing": 0, "length": 7.5, "width": 1.6, "style": "wood", "state": "intact", "note": "the old footbridge" },
         { "id": "mill-fence", "kind": "fence", "at": [-2, 6.5], "length": 5, "style": "rail", "facing": 0 },
         { "id": "mill-sacks", "kind": "sack", "at": [-3.6, 2.6] },
-        { "id": "mill-sacks2", "kind": "sack", "at": [-3.9, 2.0] },
+        { "id": "mill-sacks2", "kind": "sack", "at": [-3.9, 2] },
         { "id": "mill-cart", "kind": "cart", "at": [-5, 4.5], "facing": 200 },
         { "id": "mill-haybale", "kind": "haybale", "at": [-6.2, -2] },
         { "id": "mill-tree", "kind": "tree", "at": [-6, -6], "variant": "oak" },
         { "id": "mill-tree2", "kind": "tree", "at": [7.5, 5], "variant": "willow" },
-        { "id": "mill-reeds", "kind": "row", "of": "reeds", "from": [1.2, 5], "to": [1.0, 8], "count": 2 },
+        { "id": "mill-reeds", "kind": "row", "of": "reeds", "from": [1.2, 5], "to": [1, 8], "count": 2 },
         { "id": "mill-lamp", "kind": "lamp", "at": [-5.4, 7.2] },
         { "kind": "scatter", "of": "tree", "area": { "at": [-8, -14], "r": 10 }, "count": 7, "params": { "variant": ["round", "pine", "birch"] } }
       ]
@@ -105,7 +105,7 @@
 
     "shape:hill": {
       "radius": 5,
-      "height": 3.0,
+      "height": 3,
       "wild": { "grass": 0.7, "flowers": 0.12 },
       "things": [
         { "id": "windmill", "kind": "windmill", "at": [0, -1], "facing": 60 },

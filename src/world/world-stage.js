@@ -69,6 +69,11 @@ export class WorldStage {
   dispose() {
     this.renderer.setAnimationLoop(null);
     this.resizeObserver.disconnect();
+    this.controls.dispose();
+    this.sky.mesh.geometry.dispose();
+    this.sky.material.dispose();
+    this.envScene.traverse((o) => { if (o.isMesh) o.geometry.dispose(); });
+    this.weather.object.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
     this.envTarget?.dispose();
     this.pmrem.dispose();
     this.renderer.dispose();
@@ -107,10 +112,7 @@ export class WorldStage {
     this.scene.fog.far = a.fogFar;
     this.renderer.toneMappingExposure = a.exposure;
 
-    WORLD_UNIFORMS.uSnow.value = a.snow;
-    WORLD_UNIFORMS.uWet.value = a.wet;
-    WORLD_UNIFORMS.uGlow.value = a.glow;
-    WORLD_UNIFORMS.uWind.value = a.wind;
+    this.applyMoment();
     this.weather.set(a, ambient);
     this.placeLights();
 
@@ -118,6 +120,19 @@ export class WorldStage {
     const changed = !prev || prev.weather !== a.weather || prev.season !== a.season || Math.abs(prev.hour - a.hour) > 0.2;
     if (changed) this.bakeEnvironment();
     return a;
+  }
+
+  /**
+   * The kit materials read the moment from shared uniforms; with two stages on screen (the
+   * inspector and the full stage), each writes its own moment before it draws.
+   */
+  applyMoment() {
+    const a = this.moment;
+    if (!a) return;
+    WORLD_UNIFORMS.uSnow.value = a.snow;
+    WORLD_UNIFORMS.uWet.value = a.wet;
+    WORLD_UNIFORMS.uGlow.value = a.glow;
+    WORLD_UNIFORMS.uWind.value = a.wind;
   }
 
   bakeEnvironment() {
@@ -162,6 +177,7 @@ export class WorldStage {
 
   /** Advance the world by dt seconds and draw one frame. */
   step(dt) {
+    this.applyMoment();
     WORLD_UNIFORMS.uTime.value += dt;
     this.sky.uniforms.uTime.value = WORLD_UNIFORMS.uTime.value;
     for (const thing of this.updatables) thing.update(dt);

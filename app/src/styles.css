@@ -212,3 +212,4 @@ button.link { border: 0; background: none; color: var(--muted); font-size: 12px;
 /* a page's 3D still sits across the top of its card */
 .sc-scene.has-still { padding-top: 0; }
 .sc-still { display: block; width: calc(100% + 28px); margin: 0 -14px 4px; aspect-ratio: 16 / 9; max-height: 46%; object-fit: cover; flex-shrink: 0; }
+.three-error { color: var(--error); font-size: 12px; }

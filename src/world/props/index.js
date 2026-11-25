@@ -14,12 +14,18 @@ import { Parts, finish, rng, hashString, roundBox, signMaterial, footprintOf } f
  *
  * `p` is the params with defaults filled in. `ctx` is { season, hour, weather, night, rng, seed, id }.
  */
-const MODULES = [['nature', './nature.js', 'NATURE'], ['buildings', './buildings.js', 'BUILDINGS'], ['village', './village.js', 'VILLAGE'], ['waterside', './waterside.js', 'WATERSIDE']];
+// Literal import() calls so bundlers can find the files; each family still loads on its own.
+const MODULES = [
+  ['nature', () => import('./nature.js'), 'NATURE'],
+  ['buildings', () => import('./buildings.js'), 'BUILDINGS'],
+  ['village', () => import('./village.js'), 'VILLAGE'],
+  ['waterside', () => import('./waterside.js'), 'WATERSIDE'],
+];
 
 // Families load independently: a broken family file leaves the others working.
 export const FAMILIES = {};
 export const LOAD_ERRORS = {};
-const loaded = await Promise.allSettled(MODULES.map(([, path, name]) => import(path).then((m) => m[name] ?? {})));
+const loaded = await Promise.allSettled(MODULES.map(([, load, name]) => load().then((m) => m[name] ?? {})));
 loaded.forEach((r, i) => {
   const [family] = MODULES[i];
   FAMILIES[family] = r.status === 'fulfilled' ? r.value : {};

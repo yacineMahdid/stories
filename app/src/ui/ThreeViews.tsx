@@ -1,8 +1,8 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { getSnapshot, useValue, type Editor } from 'tldraw'
+import { getSnapshot, type Editor } from 'tldraw'
 import type { CharacterShape, PinShape, SceneShape } from '../shapes/types'
-import { coverPreviews, getStudio, getPreview, guessLook, lookOptions, placePresets, weathers, WorldView, type Look, type StageState } from '../three/bridge.js'
-import { updateStaging, useStaging, type Direction } from '../lib/staging'
+import { coverPreviews, directionKey, effectiveSpec, getStudio, getPreview, guessLook, lookOptions, placePresets, weathers, WorldView, type Look, type StageState } from '../three/bridge.js'
+import { deleteIn, setIn, useStaging, useStagingStatus } from '../lib/staging'
 import { uploadFile } from '../lib/persistence'
 import { fitAncestors } from '../lib/structure'
 
@@ -48,22 +48,36 @@ function Busy({ on, children }: { on: boolean; children: ReactNode }) {
 
 const clean = (o: Record<string, any>) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== ''))
 
+/** A select's options, plus the current value when the file holds one the list doesn't have. */
+function Options({ value, list }: { value: string; list: [string, string][] }) {
+  return (
+    <>
+      {value && !list.some(([v]) => v === value) && <option value={value}>{value} (from the file)</option>}
+      {list.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+    </>
+  )
+}
+
 /** The character's 3D look: a live model, a few controls, and a button to add it as a portrait. */
 export function CharacterLook({ shape, onPortrait }: { editor: Editor; shape: CharacterShape; onPortrait: (url: string) => void }) {
   const p = shape.props
   const direction = useStaging()
-  const stored: Look | undefined = direction.characters?.[shape.id]
+  const { status, error } = useStagingStatus()
+  // The look may be keyed by id or by name (hand-written); edits go back under the same key.
+  const entryKey = directionKey(direction, 'characters', shape.id, p.name) ?? shape.id
+  const stored: Look | undefined = direction.characters?.[entryKey]
   const look: Look = useMemo(() => stored ?? guessLook({ id: shape.id, name: p.name, role: p.role, appearance: p.appearance, color: p.color }), [stored, shape.id, p.name, p.role, p.appearance, p.color])
+  const spec = useMemo(() => effectiveSpec(look), [look]) // species defaults filled in, for the controls
   const studio = useMemo(getStudio, [])
   const [busy, setBusy] = useState(false)
   const key = JSON.stringify(look)
   useEffect(() => { studio.show(look) }, [key])
 
-  const save = (next: Look) => updateStaging((d: Direction) => ({ ...d, characters: { ...(d.characters ?? {}), [shape.id]: clean(next) } }))
+  const save = (next: Look) => setIn(['characters', entryKey], clean(next))
   const set = (patch: Look) => save({ ...look, ...patch })
-  const setIn = (group: 'outfit' | 'face' | 'hair', patch: Record<string, any>) => save({ ...look, [group]: clean({ ...(look[group] ?? {}), ...patch }) })
+  const setGroup = (group: 'outfit' | 'face' | 'hair', patch: Record<string, any>) => save({ ...look, [group]: clean({ ...(look[group] ?? {}), ...patch }) })
   const species = look.species ?? 'human'
-  const outfit = look.outfit ?? {}
+  const outfit = spec.outfit ?? {}
 
   const addPortrait = async () => {
     setBusy(true)
@@ -79,59 +93,61 @@ export function CharacterLook({ shape, onPortrait }: { editor: Editor; shape: Ch
       <div className="three-grid">
         <label>Species
           <select value={species} onChange={(e) => save({ ...look, species: e.target.value, skin: undefined, fur: undefined })}>
-            {lookOptions.species.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+            <Options value={species} list={lookOptions.species.map((s) => [s.id, s.label])} />
           </select>
         </label>
         <label>{species === 'human' ? 'Skin' : 'Fur'}
-          <input type="color" value={look.skin ?? '#f8d3b0'} onChange={(e) => set({ skin: e.target.value })} />
+          <input type="color" value={spec.skin ?? '#f8d3b0'} onChange={(e) => set({ skin: e.target.value })} />
         </label>
         <label>Hair
           <select value={look.hair?.style ?? ''} onChange={(e) => save({ ...look, hair: e.target.value ? { color: look.hair?.color ?? '#4a2f22', style: e.target.value } : undefined })}>
-            {lookOptions.hair.map((h) => <option key={h.id} value={h.id}>{h.label}</option>)}
+            <Options value={look.hair?.style ?? ''} list={lookOptions.hair.map((h) => [h.id, h.label])} />
           </select>
         </label>
         <label>Hair colour
-          <select value={look.hair?.color ?? ''} disabled={!look.hair?.style} onChange={(e) => setIn('hair', { color: e.target.value })}>
-            {lookOptions.hairColors.map((h) => <option key={h.id} value={h.value}>{h.label}</option>)}
+          <select value={look.hair?.color ?? ''} disabled={!look.hair?.style} onChange={(e) => setGroup('hair', { color: e.target.value })}>
+            <Options value={look.hair?.color ?? ''} list={lookOptions.hairColors.map((h) => [h.value, h.label])} />
           </select>
         </label>
         <label>Eyes
-          <select value={look.face?.eyes ?? 'classic'} onChange={(e) => setIn('face', { eyes: e.target.value })}>
-            {lookOptions.eyes.map((h) => <option key={h.id} value={h.id}>{h.label}</option>)}
+          <select value={spec.face?.eyes ?? 'classic'} onChange={(e) => setGroup('face', { eyes: e.target.value })}>
+            <Options value={spec.face?.eyes ?? 'classic'} list={lookOptions.eyes.map((h) => [h.id, h.label])} />
           </select>
         </label>
         <label>Body
-          <select value={look.body ?? 'standard'} onChange={(e) => set({ body: e.target.value })}>
-            {lookOptions.bodies.map((h) => <option key={h.id} value={h.id}>{h.label}</option>)}
+          <select value={spec.body ?? 'standard'} onChange={(e) => set({ body: e.target.value })}>
+            <Options value={spec.body ?? 'standard'} list={lookOptions.bodies.map((h) => [h.id, h.label])} />
           </select>
         </label>
         <label>Top
-          <input type="color" value={outfit.top ?? '#e2483c'} onChange={(e) => setIn('outfit', { top: e.target.value })} />
+          <input type="color" value={outfit.top ?? '#e2483c'} onChange={(e) => setGroup('outfit', { top: e.target.value })} />
         </label>
         <label>Sleeves
-          <select value={outfit.sleeves ?? 'short'} onChange={(e) => setIn('outfit', { sleeves: e.target.value })}>
-            {lookOptions.sleeves.map((s) => <option key={s}>{s}</option>)}
+          <select value={outfit.sleeves ?? 'short'} onChange={(e) => setGroup('outfit', { sleeves: e.target.value })}>
+            <Options value={outfit.sleeves ?? 'short'} list={lookOptions.sleeves.map((s) => [s, s])} />
           </select>
         </label>
         <label>Bottom
-          <input type="color" value={outfit.bottom ?? '#2f3640'} onChange={(e) => setIn('outfit', { bottom: e.target.value })} />
+          <input type="color" value={outfit.bottom ?? '#2f3640'} onChange={(e) => setGroup('outfit', { bottom: e.target.value })} />
         </label>
         <label>Legs
-          <select value={outfit.legs ?? 'shorts'} onChange={(e) => setIn('outfit', { legs: e.target.value })}>
-            {lookOptions.legs.map((s) => <option key={s}>{s}</option>)}
+          <select value={outfit.legs ?? 'shorts'} onChange={(e) => setGroup('outfit', { legs: e.target.value })}>
+            <Options value={outfit.legs ?? 'shorts'} list={lookOptions.legs.map((s) => [s, s])} />
           </select>
         </label>
         <label>Shoes
-          <input type="color" value={outfit.shoes ?? '#4a3a30'} onChange={(e) => setIn('outfit', { shoes: e.target.value })} />
+          <input type="color" value={outfit.shoes ?? '#4a3a30'} onChange={(e) => setGroup('outfit', { shoes: e.target.value })} />
         </label>
       </div>
       <div className="ins-row">
         <button className="primary" disabled={busy} onClick={addPortrait}><Busy on={busy}>Add as portrait</Busy></button>
-        <button onClick={() => updateStaging((d: Direction) => { const c = { ...(d.characters ?? {}) }; delete c[shape.id]; return { ...d, characters: c } })} title="Forget the edits and guess the look from the card's text again">
+        <button disabled={!stored} onClick={() => deleteIn(['characters', entryKey])} title="Forget the edits and guess the look from the card's text again">
           Guess from text
         </button>
       </div>
-      <small className="muted">{stored ? 'Saved in data/staging.json.' : 'Guessed from the card. Change anything to keep it.'} Drag the model to turn it.</small>
+      <small className={status === 'error' ? 'three-error' : 'muted'}>
+        {status === 'error' ? error : stored ? (status === 'saving' ? 'Saving to data/staging.json…' : 'Saved in data/staging.json.') : 'Guessed from the card. Change anything to keep it.'} Drag the model to turn it.
+      </small>
     </div>
   )
 }
@@ -144,9 +160,9 @@ export function PlacePreview({ editor, shape }: { editor: Editor; shape: PinShap
   const doc = useCanvasDocument(editor)
   const view = useMemo(getPreview, [])
   const [busy, setBusy] = useState(true)
-  const placeDir = direction.places?.[shape.id]
+  const entryKey = directionKey(direction, 'places', shape.id, shape.props.name) ?? shape.id
+  const placeDir = direction.places?.[entryKey]
   const handStaged = !!placeDir?.things
-  const sig = useValue('pin 3d', () => { const s = editor.getShape(shape.id) as PinShape | undefined; return s ? JSON.stringify([s.x, s.y, s.props]) : '' }, [editor, shape.id])
 
   useEffect(() => {
     let live = true
@@ -154,14 +170,14 @@ export function PlacePreview({ editor, shape }: { editor: Editor; shape: PinShap
     view.setWorld(doc, direction)
     view.showPlace(shape.id).catch((e) => console.error(e)).finally(() => { if (live) setBusy(false) })
     return () => { live = false }
-  }, [sig, direction, shape.id, doc])
+  }, [direction, shape.id, doc])
 
-  const setPreset = (preset: string) => updateStaging((d: Direction) => {
-    const places = { ...(d.places ?? {}) }
-    if (preset) places[shape.id] = { ...(places[shape.id] ?? {}), preset }
-    else delete places[shape.id]
-    return { ...d, places }
-  })
+  // 'Automatic' removes only the preset; anything else written for the place stays.
+  const setPreset = (preset: string) => {
+    if (preset) setIn(['places', entryKey, 'preset'], preset)
+    else if (placeDir && Object.keys(placeDir).some((k) => k !== 'preset')) deleteIn(['places', entryKey, 'preset'])
+    else deleteIn(['places', entryKey])
+  }
 
   return (
     <div className="three-panel">
@@ -195,11 +211,15 @@ export function PagePreview({ editor, shape }: { editor: Editor; shape: SceneSha
   const [shot, setShot] = useState(0)
   const [saving, setSaving] = useState(false)
 
+  const shownRef = useRef<string | null>(null)
   useEffect(() => {
     let live = true
     setBusy(true)
     view.setWorld(doc, direction)
-    view.showPage(shape.id).then((s) => { if (live) { setState(s); setShot(0) } }).catch((e) => console.error(e)).finally(() => { if (live) setBusy(false) })
+    // The same page again (the canvas changed): keep the shot and the camera.
+    const keepShot = shownRef.current === shape.id
+    shownRef.current = shape.id
+    view.showPage(shape.id, {}, { keepShot }).then((s) => { if (live) { setState(s); if (!keepShot) setShot(0) } }).catch((e) => console.error(e)).finally(() => { if (live) setBusy(false) })
     return () => { live = false }
   }, [doc, direction, shape.id])
 
@@ -265,6 +285,7 @@ export function StageOverlay({ editor, pageId, onClose }: { editor: Editor; page
   const [shot, setShot] = useState(0)
   const [busy, setBusy] = useState(true)
   const [playing, setPlaying] = useState(false)
+  const shownRef = useRef<string | null>(null)
 
   useEffect(() => {
     view.setWorld(doc, direction)
@@ -275,7 +296,9 @@ export function StageOverlay({ editor, pageId, onClose }: { editor: Editor; page
     if (id !== current) setCurrent(id)
     let live = true
     setBusy(true)
-    view.showPage(id).then((s) => { if (live) { setState(s); setShot(0) } }).finally(() => { if (live) setBusy(false) })
+    const keepShot = shownRef.current === id
+    shownRef.current = id
+    view.showPage(id, {}, { keepShot }).then((s) => { if (live) { setState(s); if (!keepShot) setShot(0) } }).catch((e) => console.error(e)).finally(() => { if (live) setBusy(false) })
     return () => { live = false }
   }, [doc, direction, current])
 
@@ -307,8 +330,8 @@ export function StageOverlay({ editor, pageId, onClose }: { editor: Editor; page
   }, [index, pages])
 
   const retime = (m: { hour?: number; weather?: string; season?: string }) => {
-    view.retime(m)?.then(() => setState({ ...(view.state as StageState) }))
     if (m.hour != null || m.weather) setState((s) => (s ? { ...s, ...m } as StageState : s))
+    view.retime(m).then(() => setState({ ...(view.state as StageState) }))
   }
 
   return (
@@ -347,7 +370,7 @@ export function StageOverlay({ editor, pageId, onClose }: { editor: Editor; page
             <select value={state.weather} onChange={(e) => retime({ weather: e.target.value })} aria-label="Weather">
               {weathers.map((w) => <option key={w.id} value={w.id}>{w.label}</option>)}
             </select>
-            <select value={state.season} onChange={(e) => { setBusy(true); view.retime({ season: e.target.value })?.then(() => { setState({ ...(view.state as StageState) }); setBusy(false) }) }} aria-label="Season">
+            <select value={state.season} onChange={(e) => { setBusy(true); view.retime({ season: e.target.value }).then(() => setState({ ...(view.state as StageState) })).finally(() => setBusy(false)) }} aria-label="Season">
               {SEASONS.map((s) => <option key={s} value={s}>{s[0].toUpperCase() + s.slice(1)}</option>)}
             </select>
           </div>

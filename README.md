@@ -27,7 +27,7 @@ Then open http://localhost:5173.
 
 **3D stage** (top bar) plays the whole story full screen: pages, camera shots, time of day, weather, season.
 
-The 3D direction (looks, place sets, blocking, cameras) is saved in `data/staging.json` (format in `docs/scenes.md`).
+The 3D direction (looks, place sets, blocking, cameras) is saved in `data/staging.json` (format in `docs/scenes.md`). The app only rewrites the entries you change, so the file can be edited by hand alongside it.
 
 **Continuity checks** flag deleted references, missing time or places, a character in two places at the same moment, a character appearing before they are born, and pages that jump back in time.
 **Export story bible** writes `data/exports/story-bible.md`: lore in date order, characters, places, then the full Story → Book → Chapter → Page tree. Each page lists each character's age and effective look, plus which backstory is history, ongoing, or has not happened yet at that moment.

@@ -8,7 +8,7 @@ import { EYE_STYLES } from '../../../src/engine/eyes.js';
 import { BODY_TYPES } from '../../../src/engine/body.js';
 import { WorldStage } from '../../../src/world/world-stage.js';
 import { readCanvas } from '../../../src/world/canvas.js';
-import { World, guessSpec, PLACE_PRESETS } from '../../../src/world/staging.js';
+import { World, guessSpec, PLACE_PRESETS, directionKey } from '../../../src/world/staging.js';
 import { Director, buildSpec } from '../../../src/world/director.js';
 import { WEATHERS } from '../../../src/world/sky.js';
 
@@ -22,6 +22,10 @@ export const lookOptions = {
   legs: ['shorts', 'knee', 'pants'],
 };
 export const placePresets = PLACE_PRESETS;
+export { directionKey };
+
+/** The full character spec a look becomes (species defaults filled in), to show real values. */
+export function effectiveSpec(look) { return buildSpec(look); }
 export const weathers = Object.entries(WEATHERS).map(([id, w]) => ({ id, label: w.label }));
 
 /** A first 3D look for a character card, from its name, role and appearance text. */
@@ -161,35 +165,47 @@ export class WorldView {
     return (this.world?.scenes ?? []).map((s, i) => ({ index: i, id: s.page.id, title: s.page.title, path: s.page.path }));
   }
 
-  showPage(pageId, overrides = {}) {
-    this.busy = this.busy.then(async () => {
+  /** Run staging work one job at a time; a failed job never blocks the ones after it. */
+  queue(job) {
+    const run = this.busy.then(() => (this.disposed ? null : job()));
+    this.busy = run.catch((e) => console.error('[3d]', e));
+    return run;
+  }
+
+  /** Stage a page. `keepShot` re-stages the same page without resetting the camera. */
+  showPage(pageId, overrides = {}, { keepShot = false } = {}) {
+    return this.queue(() => {
       const i = this.world?.sceneIndex.get(pageId);
       if (i == null) return null;
-      return this.director.show(i, overrides);
+      return this.director.showState(this.world.sceneState(i), overrides, { keepShot });
     });
-    return this.busy;
   }
 
   showPlace(pinId, moment = {}) {
-    this.busy = this.busy.then(() => this.director.showPlace(pinId, moment));
-    return this.busy;
+    return this.queue(() => this.director.showPlace(pinId, moment));
   }
 
   shot(i) { return this.director?.shot(i); }
   get shots() { return this.director?.shots ?? []; }
   get state() { return this.director?.state ?? null; }
-  retime(moment) { return this.director?.retime(moment); }
+  retime(moment) { return this.queue(() => this.director?.retime(moment)); }
 
   /** A 16:9 still of what the camera sees now. */
   async still(width = 1280, height = 720) {
     await this.busy;
+    this.stage.applyMoment();
     return capture(this.stage.renderer, this.stage.scene, this.stage.camera, width, height, null);
   }
 
+  /** Close for good, once whatever is staging has finished. */
   dispose() {
-    this.director?.dispose();
-    this.stage.dispose();
+    this.disposed = true;
+    this.director && (this.director.disposed = true);
     this.el.remove();
+    this.busy.finally(() => {
+      this.director?.dispose();
+      this.stage.dispose();
+    });
   }
 }
 

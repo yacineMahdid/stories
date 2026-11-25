@@ -35,6 +35,20 @@ function deepMerge(a, b) {
   return out;
 }
 
+/**
+ * The key of a canvas shape's entry in a direction section ('characters' or 'places'), the way
+ * World finds it: by shape id, by id without "shape:", or by name (any case). Null when none.
+ */
+export function directionKey(direction, section, id, name) {
+  const entries = direction?.[section] ?? {};
+  if (id in entries) return id;
+  const bare = String(id).replace(/^shape:/, '');
+  if (bare in entries) return bare;
+  const low = (name ?? '').toLowerCase();
+  if (low) for (const k of Object.keys(entries)) if (k.toLowerCase() === low) return k;
+  return null;
+}
+
 export function yawTo(from, to) {
   return Math.atan2(to[0] - from[0], to[1] - from[1]) / D2R;
 }
@@ -57,7 +71,8 @@ export class World {
     // Places: every pin, with its direction (or an automatic set when there is none).
     this.places = new Map();
     for (const pin of canvas.pins.values()) {
-      let dir = direction.places?.[pin.id] ?? this.placeDirectionByName(pin.name);
+      const placeKey = directionKey(direction, 'places', pin.id, pin.name);
+      let dir = placeKey != null ? direction.places[placeKey] : null;
       // { "preset": "forest" } picks an automatic set instead of guessing it from the pin's text.
       if (dir?.preset && !dir.things) dir = { ...autoPlace(pin, dir.preset), ...dir };
       const place = {
@@ -96,9 +111,15 @@ export class World {
 
     // Characters: canvas cards + 3D looks from the direction.
     this.characters = new Map();
-    for (const c of canvas.characters.values()) this.characters.set(c.id, { ...c, spec: direction.characters?.[c.id] ?? this.characterDirectionByName(c.name) ?? null });
+    for (const c of canvas.characters.values()) {
+      const key = directionKey(direction, 'characters', c.id, c.name);
+      this.characters.set(c.id, { ...c, spec: key != null ? direction.characters[key] : null });
+    }
+    // Looks for characters that aren't on the canvas: a deleted card's look ("shape:..." key)
+    // is ignored; a look keyed by a plain name stands in as a character of its own.
     for (const [key, spec] of Object.entries(direction.characters ?? {})) {
-      if (!byIdOrName(this.characters, key)) this.characters.set(key, { id: key, name: spec.name ?? key, spec });
+      if (key.startsWith('shape:') || byIdOrName(this.characters, key)) continue;
+      this.characters.set(key, { id: key, name: spec.name ?? key, spec });
     }
 
     // Scenes in reading order.
@@ -108,16 +129,6 @@ export class World {
 
   warn(text) { if (!this.warnings.includes(text)) this.warnings.push(text); }
 
-  placeDirectionByName(name) {
-    const low = (name ?? '').toLowerCase();
-    for (const [k, v] of Object.entries(this.direction.places ?? {})) if (k.toLowerCase() === low) return v;
-    return null;
-  }
-  characterDirectionByName(name) {
-    const low = (name ?? '').toLowerCase();
-    for (const [k, v] of Object.entries(this.direction.characters ?? {})) if (k.toLowerCase() === low) return v;
-    return null;
-  }
   sceneDirectionByTitle(title) {
     const low = (title ?? '').toLowerCase();
     if (!low) return null;
@@ -126,6 +137,14 @@ export class World {
   }
 
   placeByName(ref) { return byIdOrName(this.places, ref); }
+
+  /** Where a page happens before the map has any pins: an empty meadow at the origin. */
+  nowhere() {
+    return {
+      id: '', pin: null, name: 'Nowhere yet', kind: 'place', description: 'Add a pin on the map and put this page there.',
+      pos: [0, 0], rotate: 0, radius: 10, ground: null, wild: { grass: 0.55, flowers: 0.05 }, staged: false, dir: { things: [] },
+    };
+  }
   character(ref) { return byIdOrName(this.characters, ref); }
 
   mapToWorld([mx, my]) {
@@ -227,6 +246,10 @@ export class World {
     if (!place) {
       place = this.places.values().next().value ?? null;
       if (!page.locationIds?.length) warnings.push('This page has no place on the map yet; showing the first place.');
+    }
+    if (!place) {
+      place = this.nowhere();
+      warnings.push('There are no pins on the map yet: add one and put this page there.');
     }
 
     // Moment.
