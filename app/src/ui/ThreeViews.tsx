@@ -78,9 +78,10 @@ function entryOf(d: Direction, section: Section, id: string, name: string): stri
 
 /**
  * A look, place or page direction written by hand under a card's name (a page's title) would
- * stop matching when the card is renamed: move it under the card's id first, so it stays with
- * the card. Another card that still has the old name keeps it; the renamed one gets a copy.
- * `step` is the rename's undo step, so one Undo takes back both.
+ * stop matching when the card is renamed: rename its key to the card's id first (in place, so
+ * the file keeps its layout), so it stays with the card. Another card that still has the old
+ * name keeps it; the renamed one gets a copy. `step` is the rename's undo step, so one Undo
+ * takes back both.
  */
 export function followRename(editor: Editor, section: Section, id: string, oldName: string, newName: string, step: string) {
   if (oldName === newName) return
@@ -89,9 +90,8 @@ export function followRename(editor: Editor, section: Section, id: string, oldNa
   if (key == null || key === id || key === id.replace(/^shape:/, '') || key.toLowerCase() === newName.toLowerCase()) return
   const nameOf = (s: TLShape) => String((s.props as Record<string, unknown>)[section === 'scenes' ? 'title' : 'name'] ?? '')
   const shared = editor.store.allRecords().some((r) => r.typeName === 'shape' && r.type === CARD[section] && r.id !== id && entryOf(d, section, r.id, nameOf(r)) === key)
-  const ops: Op[] = [{ op: 'set', path: [section, id], value: d[section][key] }]
-  if (!shared) ops.push({ op: 'delete', path: [section, key] })
-  edit3d(editor, ops, step)
+  const op: Op = shared ? { op: 'set', path: [section, id], value: d[section][key] } : { op: 'rename', path: [section, key], to: id }
+  edit3d(editor, [op], step)
 }
 
 /** How long the selection must rest before a 3D preview is (re)built. */

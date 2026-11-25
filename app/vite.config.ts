@@ -59,8 +59,8 @@ function storyDataApi(): Plugin {
             return res.end('ok')
           }
           // The 3D direction (looks, places, staging): data/staging.json, see docs/scenes.md.
-          // It is also written by hand, so the app sends small edits (set or delete one path)
-          // that are applied to the file as it is on disk, never a stale copy of all of it.
+          // It is also written by hand, so the app sends small edits (set, delete or rename one
+          // path) that are applied to the file as it is on disk, never a stale copy of all of it.
           if (url.pathname === '/api/staging' && req.method === 'GET') {
             if (!fs.existsSync(STAGING_FILE)) { res.statusCode = 204; return res.end() }
             // A broken file is an error the app must show, not an empty direction.
@@ -71,11 +71,12 @@ function storyDataApi(): Plugin {
           if (url.pathname === '/api/staging' && req.method === 'PATCH') {
             const ops = checkOps(JSON.parse((await readBody(req)).toString('utf8'))?.ops)
             const before = fs.existsSync(STAGING_FILE) ? fs.readFileSync(STAGING_FILE, 'utf8') : formatJSON({ version: 1 }) + '\n'
-            const { text, doc } = patchText(before, ops) // only the touched spans change
+            const { text, doc, removed } = patchText(before, ops) // only the touched spans change
             fs.writeFileSync(STAGING_FILE + '.tmp', text)
             fs.renameSync(STAGING_FILE + '.tmp', STAGING_FILE)
             res.setHeader('content-type', 'application/json')
-            return res.end(JSON.stringify(doc))
+            // The file as it now is, and the text each edit took out of it, for its Undo to put back.
+            return res.end(JSON.stringify({ doc, removed }))
           }
           if (url.pathname === '/api/upload' && req.method === 'POST') {
             const name = `${crypto.randomUUID().slice(0, 8)}-${safeName(url.searchParams.get('name') ?? 'file')}`

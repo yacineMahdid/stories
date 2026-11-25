@@ -28,7 +28,7 @@ export function checkStory(world) {
     }
     if (state.weather && !WEATHERS[state.weather]) problems.push(`Unknown weather "${state.weather}".`);
     for (const c of state.cast) {
-      const name = c.character.name;
+      const name = String(c.character.name ?? '').trim() || 'A character with no name';
       if (c.do && !clips.has(c.do)) problems.push(`${name}: no animation "${c.do}".`);
       if (c.feel && !EMOTIONS[c.feel]) problems.push(`${name}: no emotion "${c.feel}".`);
       const hold = typeof c.hold === 'string' ? c.hold : c.hold?.kind;
@@ -43,10 +43,13 @@ export function checkStory(world) {
     for (const shot of state.shots) {
       for (const ref of shot.on ? (Array.isArray(shot.on) ? shot.on : [shot.on]) : []) {
         if (state.cast.some((c) => c.who === ref || c.character.name === ref) || state.things.has(ref)) continue;
-        // Named like the cards are: a card id says little to the person reading this.
+        // Named like the cards are: a card id says little to the person reading this, and a deleted
+        // card goes by the "name" its look keeps.
         const who = world.character(ref);
-        problems.push(who ? `A shot looks at ${who.name}, who is not in this page.`
-          : String(ref).startsWith('shape:') ? 'A shot looks at a character whose card was deleted.'
+        const gone = !who && String(ref).startsWith('shape:') ? world.lookName(ref) : null;
+        problems.push(who ? `A shot looks at ${String(who.name ?? '').trim() || 'a character with no name'}, who is not in this page.`
+          : gone ? `A shot looks at ${gone}, whose card was deleted.`
+          : gone === '' ? 'A shot looks at a character whose card was deleted.'
           : `A shot looks at "${ref}", who is not in this page.`);
       }
     }

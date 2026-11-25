@@ -32,9 +32,16 @@ const ACTION = 34;      // grass tufts and wild flowers grow within this radius 
 const LANE = { back: 2, length: 18, half: 6 };
 // Ground cover too low to hide anyone: it may grow in a camera's lane.
 const LOW_KINDS = new Set(['flowers', 'grass', 'mushroom', 'lilypads', 'leafpile', 'shells']);
+// Buildings that fill their box: nobody is seen through one. (Most other boxes are largely air: a
+// fountain's above its basin, a tree's under its crown, a tent's out to its guy ropes, a
+// windmill's round its sails, a bridge, a gate or a ruin.)
+const SOLID_KINDS = new Set(['house', 'hall', 'barn', 'shed', 'hut', 'tower', 'lighthouse', 'watermill']);
 
 /** Adds a staging note to a page's state, once. */
 const noteTo = (state) => (text) => { if (!state.warnings.includes(text)) state.warnings.push(text); };
+
+/** A camera brought in to `closer` of its planned distance widens its lens (up to 65°), so the subjects keep their place in the frame. */
+const widened = (fov, closer) => (closer < 0.7 ? Math.min(2 * Math.atan(Math.tan((fov * D2R) / 2) / closer) / D2R, 65) : fov);
 
 /* ───────────── the set ───────────── */
 
@@ -109,6 +116,8 @@ class SceneSet {
       object.scale.setScalar(t.scale ?? 1);
       this.object.add(object);
       object.updateMatrixWorld(true);
+      // Its box as built, for framing: a flame's flicker or a boat's bob must not change a shot.
+      object.userData.bounds = boundsOf(object);
       if (object.userData.tick) this.ticks.push(object);
     }
 
@@ -484,7 +493,17 @@ export class Director {
         if (clip === 'Sit') clip = 'SitFloor';
         if (clip === 'LieDown' || clip === 'Sleep') pose = 'lie';
       }
+      // A character kept from the last page starts this one as a new one would. Its emotion's
+      // motion from the last frame comes off the bones (Character.update lays it on the mixer's
+      // pose), and the clip asked for takes over at once: placeCharacter switches with a fade of
+      // no length at the mixer's clock, and the setTime below winds that clock back, so the old
+      // clip would hold for as long as the last page was shown.
+      character.restoreMotion();
       placeCharacter(character, { position: mark.position, yaw, pose }, clip ?? (pose !== 'stand' ? POSE_CLIPS[pose] : 'Idle'));
+      for (const action of character.actions.values()) {
+        if (action === character.current) action.setEffectiveWeight(1);
+        else action.stop();
+      }
       const feel = entry.feel && EMOTIONS[entry.feel] ? entry.feel : 'neutral';
       if (entry.feel && !EMOTIONS[entry.feel]) state.warnings.push(`No emotion called "${entry.feel}" (${entry.character.name}).`);
       character.setEmotion(feel);
@@ -494,6 +513,9 @@ export class Director {
       const member = { character, entry, walker: null, held: null };
       if (entry.hold) member.held = this.hold(character, entry.hold, state);
       if (entry.path?.length) member.walker = new Walker(this, character, entry, state);
+      // The body as staged, for framing: not as it breathes later, nor its shadow on the floor
+      // (a new model's starts out wide), so a shot frames the same whenever it is shown.
+      member.body = boundsOf(character.model);
       this.cast.set(entry.who, member);
     }
   }
@@ -624,10 +646,10 @@ export class Director {
       }
       const object = this.set.objects.get(ref);
       if (object) {
-        const box = boundsOf(object);
+        const box = object.userData.bounds ?? boundsOf(object);
         const c = box.getCenter(new THREE.Vector3());
         const size = box.getSize(new THREE.Vector3());
-        out.push({ center: c, head: c.clone().setY(box.max.y * 0.8 + c.y * 0.2), radius: Math.max(size.x, size.y, size.z) * 0.5, yaw: object.rotation.y, height: size.y });
+        out.push({ center: c, head: c.clone().setY(box.max.y * 0.8 + c.y * 0.2), radius: Math.max(size.x, size.y, size.z) * 0.5, yaw: object.rotation.y, height: size.y, box });
       }
     }
     return out;
@@ -745,10 +767,10 @@ export class Director {
         // An explicit `from` is honored within a small swing.
         if (subs.length && kind !== 'establishing' && kind !== 'top') {
           const planned = pos.distanceTo(target);
-          pos = this.clearView(pos, target, subs, shot.from == null ? 80 : 24, kind) ?? pos;
+          const widen = shot.fov == null;
+          pos = this.clearView(pos, target, subs, shot.from == null ? 80 : 24, kind, fov, widen) ?? pos;
           // Come in close, the lens widens so the subjects keep their place in the frame.
-          const closer = pos.distanceTo(target) / planned;
-          if (closer < 0.7 && shot.fov == null) fov = Math.min(2 * Math.atan(Math.tan((fov * D2R) / 2) / closer) / D2R, 65);
+          if (widen) fov = widened(fov, pos.distanceTo(target) / planned);
         }
       }
     }
@@ -773,9 +795,16 @@ export class Director {
    * prop stands in front of the subjects on screen: a lamp post between two people ruins a
    * two-shot even when it hides neither of them.
    */
-  clearView(pos, target, subs, maxSwing = 80, kind = 'medium') {
+  clearView(pos, target, subs, maxSwing = 80, kind = 'medium', fov = 35, widen = false) {
     const boxes = this.blockerBoxes(target);
+    // Each view is judged through the lens it will be shown with: this shot's own (wider when the
+    // camera comes in close), not whatever the last shot left on the camera.
     const cam = this.stage.camera.clone();
+    const planned = pos.distanceTo(target);
+    const lensAt = (p) => {
+      const f = widen ? widened(fov, p.distanceTo(target) / planned) : fov;
+      if (cam.fov !== f) { cam.fov = f; cam.updateProjectionMatrix(); }
+    };
     const corners = (box) => [0, 1, 2, 3, 4, 5, 6, 7].map((i) => new THREE.Vector3(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z));
     const rectOf = (points, c) => {
       let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, near = Infinity;
@@ -787,10 +816,33 @@ export class Director {
       }
       return { x0, x1, y0, y1, near };
     };
+    // The same for a box, its edges cut at the near plane: beside or behind a camera that has come
+    // in close, a box's corners behind the lens would land mirrored across the frame.
+    const clippedRectOf = (box, c) => {
+      const pts = corners(box);
+      const near = Math.min(...pts.map((q) => q.distanceTo(c.position)));
+      for (const q of pts) q.applyMatrix4(c.matrixWorldInverse);
+      const zn = -c.near, kept = pts.filter((q) => q.z <= zn);
+      for (let i = 0; i < 8; i++) {
+        for (const bit of [1, 2, 4]) {
+          const a = pts[i], b = pts[i | bit];
+          if ((a.z <= zn) !== (b.z <= zn)) kept.push(a.clone().lerp(b, (zn - a.z) / (b.z - a.z)));
+        }
+      }
+      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+      for (const q of kept) {
+        q.applyMatrix4(c.projectionMatrix);
+        x0 = Math.min(x0, q.x); x1 = Math.max(x1, q.x); y0 = Math.min(y0, q.y); y1 = Math.max(y1, q.y);
+      }
+      return { x0, x1, y0, y1, near };
+    };
     const subjectPoints = subs.flatMap((s) => [s.center.clone().addScalar(-s.radius), s.center.clone().addScalar(s.radius), s.head]);
     // How much stands in front of the subjects on screen. A thin post counts as a quarter of
-    // the frame's width, because it splits the picture even when it hides little.
-    const occlusion = (p) => {
+    // the frame's width, because it splits the picture even when it hides little. `clipped`
+    // judges the boxes cut at the near plane (for the close views; the farther ones keep the
+    // plain projection the directed shots are framed by).
+    const occlusion = (p, clipped = false) => {
+      lensAt(p);
       cam.position.copy(p);
       cam.lookAt(target);
       cam.updateMatrixWorld(true);
@@ -801,7 +853,7 @@ export class Director {
       for (const b of boxes) {
         // The camera inside something (a canopy, a house) sees nothing else.
         if (b.clone().expandByScalar(0.35).containsPoint(p)) { score += 3; continue; }
-        const r = rectOf(corners(b), cam);
+        const r = clipped ? clippedRectOf(b, cam) : rectOf(corners(b), cam);
         if (r.near > nearest - 0.15) continue;
         // A big thing close to the lens (a roof, a canopy) spoils the frame even beside the cast.
         const fx = Math.min(r.x1, 1) - Math.max(r.x0, -1), fy = Math.min(r.y1, 1) - Math.max(r.y0, -1);
@@ -830,8 +882,9 @@ export class Director {
       }
       return ((b / faces.length) * 0.5 + worst * 0.5) * faceWeight;
     };
-    // The cast hides each other too: a face behind someone else's body.
-    const bodies = [...this.cast.values()].map((m) => boundsOf(m.character.root));
+    // The cast hides each other too: a face behind someone else's body (as staged; a walker
+    // where it is now).
+    const bodies = [...this.cast.values()].map((m) => (m.walker || !m.body ? boundsOf(m.character.model) : m.body));
     const ray = new THREE.Ray(), hit = new THREE.Vector3();
     const hidden = (p) => {
       if (faces.length < 2 && bodies.length < 2) return 0;
@@ -845,8 +898,40 @@ export class Director {
       }
       return faces.length ? (n / faces.length) * faceWeight * 1.5 : 0;
     };
+    // How far the line from p toward q runs through box b, stopping `short` before q.
+    const through = (p, q, b, short = 0) => {
+      const len = p.distanceTo(q);
+      let t0 = 0, t1 = len - short;
+      if (t1 <= 0) return 0;
+      for (const a of ['x', 'y', 'z']) {
+        const d = (q[a] - p[a]) / len;
+        if (Math.abs(d) < 1e-9) {
+          if (p[a] < b.min[a] || p[a] > b.max[a]) return 0;
+          continue;
+        }
+        const u = (b.min[a] - p[a]) / d, v = (b.max[a] - p[a]) / d;
+        t0 = Math.max(t0, Math.min(u, v));
+        t1 = Math.min(t1, Math.max(u, v));
+      }
+      return Math.max(0, t1 - t0);
+    };
+    // A building in front of most of the faces walls the view off, and occlusion() can't tell: it
+    // counts any one box as at most the subjects' whole area on screen, so a mill that hides the
+    // whole cast from a far camera can cost less than two props that each hide a little. A walled
+    // view is taken only when every view is walled. A building counts where the line to a head
+    // runs well through its box (not just across a corner of it), and not when the shot is on it.
+    const own = new Set(subs.map((s) => s.box));
+    const walls = [];
+    for (const o of this.set.objects.values()) {
+      const b = o.userData.bounds;
+      if (b && SOLID_KINDS.has(o.userData.kind) && !own.has(b)) walls.push(b);
+    }
+    const walled = (p) => {
+      const n = faces.filter((s) => walls.some((b) => !b.containsPoint(s.head) && through(p, s.head, b, s.radius) > 1.5)).length;
+      return n * 2 > faces.length ? 10 : 0;
+    };
     const off = pos.clone().sub(target);
-    let best = pos, bestScore = occlusion(pos) + hidden(pos) + backs(pos);
+    let best = pos, bestScore = occlusion(pos) + hidden(pos) + backs(pos) + walled(pos);
     if (bestScore - backs(pos) < 0.02) return pos;
     // Try swinging around the subjects, coming closer or backing off, and rising; small
     // departures from the intended framing cost a little, so they only win when they help.
@@ -860,7 +945,7 @@ export class Director {
         if (!step && k === 1 && !up) continue;
         const o = flat.clone().multiplyScalar(k).applyAxisAngle(new THREE.Vector3(0, 1, 0), step * D2R).setY(rise * k + up);
         const p = target.clone().add(o);
-        const score = occlusion(p) + hidden(p) + backs(p) + Math.abs(step) * 0.0015 + Math.abs(1 - k) * 0.12 + up * 0.06;
+        const score = occlusion(p) + hidden(p) + backs(p) + walled(p) + Math.abs(step) * 0.0015 + Math.abs(1 - k) * 0.12 + up * 0.06;
         if (window.DEBUG_FRAMING) console.log('framing', step, k, up, score.toFixed(2));
         if (score < bestScore - 0.03) { best = p; bestScore = score; }
       }
@@ -872,6 +957,9 @@ export class Director {
       const dx = p.x - s.center.x, dz = p.z - s.center.z;
       return (Math.sin(s.yaw) * dx + Math.cos(s.yaw) * dz) / (Math.hypot(dx, dz) || 1) < -0.25;
     }).length;
+    // In close, a big prop's box corners are all far off and occlusion() can miss it: a closer
+    // view must keep clear of every prop and see each subject's head and middle past them.
+    const propBetween = (p, s) => [s.head, s.center].some((q) => boxes.some((b) => !b.containsPoint(q) && through(p, q, b, s.radius) > 0));
     if (away(best) > away(pos)) {
       let near = null, nearScore = Infinity;
       for (const step of [0, 8, -8, 16, -16, 24, -24]) {
@@ -881,10 +969,12 @@ export class Director {
           const o = flat.clone().multiplyScalar(k).applyAxisAngle(new THREE.Vector3(0, 1, 0), step * D2R).setY(rise * k + up);
           const p = target.clone().add(o);
           if (away(p) > away(pos) || Math.min(...subs.map((s) => s.center.distanceTo(p) - s.radius)) < 1.2) continue;
-          const score = occlusion(p) + hidden(p) + backs(p) + Math.abs(step) * 0.0015 + Math.abs(1 - k) * 0.12 + up * 0.06;
+          if (boxes.some((b) => b.distanceToPoint(p) < 1) || subs.some((s) => propBetween(p, s))) continue;
+          const score = occlusion(p, true) + hidden(p) + backs(p) + Math.abs(step) * 0.0015 + Math.abs(1 - k) * 0.12 + up * 0.06;
           if (score < nearScore) { near = p; nearScore = score; }
         }
       }
+      // A walled view (it scores 10 more) loses to any of these.
       if (near && nearScore < bestScore + faceWeight * 0.5) best = near;
     }
     return best;
@@ -895,7 +985,7 @@ export class Director {
     const boxes = [];
     for (const o of this.set.objects.values()) {
       if (o.position.distanceTo(near) > 30) continue;
-      const b = boundsOf(o);
+      const b = o.userData.bounds ?? boundsOf(o);
       if (!b.isEmpty() && b.max.y - b.min.y > 0.25) boxes.push(b);
     }
     const m = new THREE.Matrix4();
