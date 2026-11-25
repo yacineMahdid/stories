@@ -10,6 +10,7 @@ import { centerOfView, ensurePages, getCharacters, getLore, getPins, getScenes, 
 import { exportStoryBible } from './lib/exportBible'
 import { addStructural } from './lib/structure'
 import { loadStaging, useStagingStatus } from './lib/staging'
+import { attachStagingHistory } from './lib/staging-history'
 import { StageContext, StageOverlay } from './ui/ThreeViews'
 
 // The four workspaces replace tldraw's own page menu.
@@ -34,6 +35,7 @@ function addShape(editor: Editor) {
   let { x, y } = centerOfView(editor)
   x -= spec.w / 2
   y -= spec.h / 2
+  editor.markHistoryStoppingPoint('add')
   editor.createShape({ type: spec.type, x, y })
   const created = editor.getCurrentPageShapesSorted().at(-1)
   if (created) editor.select(created.id)
@@ -103,6 +105,7 @@ export default function App() {
   }
 
   useEffect(() => (editor ? startAutosave(editor, setSave) : undefined), [editor])
+  useEffect(() => (editor ? attachStagingHistory(editor) : undefined), [editor]) // Undo/Redo of 3D edits
 
   const pageId = useValue('page', () => editor?.getCurrentPageId(), [editor])
 

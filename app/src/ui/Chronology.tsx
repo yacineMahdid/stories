@@ -12,6 +12,7 @@ function layoutByDate(editor: Editor) {
   if (!lore.length) return
   const y = Math.min(...lore.map((l) => l.y))
   let x = Math.min(...lore.map((l) => l.x))
+  editor.markHistoryStoppingPoint('arrange lore')
   editor.run(() => lore.forEach((l) => { editor.updateShape({ id: l.id, type: 'lore', x, y }); x += l.props.w + 40 }))
   editor.zoomToFit({ animation: { duration: 300 } })
 }

@@ -2,7 +2,8 @@ import { Component, createContext, useContext, useEffect, useMemo, useRef, useSt
 import { getSnapshot, type Editor } from 'tldraw'
 import type { CharacterShape, PinShape, SceneShape } from '../shapes/types'
 import { coverPreviews, directionKey, effectiveSpec, getStudio, getPreview, guessLook, lookOptions, placePresets, weathers, WorldView, type Look, type StageState } from '../three/bridge.js'
-import { deleteIn, edit, getStaging, setIn, STAGING_FILE, useStaging, useStagingStatus, type Op } from '../lib/staging'
+import { getStaging, STAGING_FILE, useStaging, useStagingStatus, type Op } from '../lib/staging'
+import { edit3d } from '../lib/staging-history'
 import { uploadFile } from '../lib/persistence'
 import { resizeKeepingOrder } from '../lib/structure'
 
@@ -68,12 +69,12 @@ export class ThreeBoundary extends Component<{ children: ReactNode }, { error: s
  * A look or place written by hand under a card's name would stop matching when the card is
  * renamed: move it under the card's id first, so it stays with the card.
  */
-export function followRename(section: 'characters' | 'places', id: string, oldName: string, newName: string) {
+export function followRename(editor: Editor, section: 'characters' | 'places', id: string, oldName: string, newName: string) {
   if (oldName === newName) return
   const d = getStaging()
   const key = directionKey(d, section, id, oldName)
   if (key == null || key === id || key === id.replace(/^shape:/, '') || key.toLowerCase() === newName.toLowerCase()) return
-  edit([{ op: 'set', path: [section, id], value: d[section][key] }, { op: 'delete', path: [section, key] }])
+  edit3d(editor, [{ op: 'set', path: [section, id], value: d[section][key] }, { op: 'delete', path: [section, key] }])
 }
 
 /** How long the selection must rest before a 3D preview is (re)built. */
@@ -118,7 +119,7 @@ function lookOps(base: string[], from: Record<string, any>, to: Record<string, a
   return ops
 }
 
-export function CharacterLook({ shape, onPortrait }: { editor: Editor; shape: CharacterShape; onPortrait: (url: string) => void }) {
+export function CharacterLook({ editor, shape, onPortrait }: { editor: Editor; shape: CharacterShape; onPortrait: (url: string) => void }) {
   const p = shape.props
   const direction = useStaging()
   const { status, error, editable } = useStagingStatus()
@@ -139,8 +140,8 @@ export function CharacterLook({ shape, onPortrait }: { editor: Editor; shape: Ch
   // written, so hand edits to the other fields survive.
   const save = (next: Look) => {
     const base = ['characters', entryKey]
-    if (!stored) edit([{ op: 'set', path: base, value: clean(next) }])
-    else edit(lookOps(base, stored, clean(next)))
+    if (!stored) edit3d(editor, [{ op: 'set', path: base, value: clean(next) }])
+    else edit3d(editor, lookOps(base, stored, clean(next)))
   }
   // Animals start without hair, like the guessed looks; going back to a person brings back
   // their skin and hair (or the card's guess).
@@ -230,7 +231,7 @@ export function CharacterLook({ shape, onPortrait }: { editor: Editor; shape: Ch
       </fieldset>
       <div className="ins-row">
         <button className="primary" disabled={busy} onClick={addPortrait}><Busy on={busy}>Add as portrait</Busy></button>
-        <button disabled={!stored || !editable} onClick={() => deleteIn(['characters', entryKey])} title="Forget the edits and guess the look from the card's text again">
+        <button disabled={!stored || !editable} onClick={() => edit3d(editor, [{ op: 'delete', path: ['characters', entryKey] }])} title="Forget the edits and guess the look from the card's text again (Undo brings them back)">
           Guess from text
         </button>
       </div>
@@ -269,9 +270,9 @@ export function PlacePreview({ editor, shape }: { editor: Editor; shape: PinShap
 
   // 'Automatic' removes only the preset; anything else written for the place stays.
   const setPreset = (preset: string) => {
-    if (preset) setIn(['places', entryKey, 'preset'], preset)
-    else if (placeDir && Object.keys(placeDir).some((k) => k !== 'preset')) deleteIn(['places', entryKey, 'preset'])
-    else deleteIn(['places', entryKey])
+    if (preset) edit3d(editor, [{ op: 'set', path: ['places', entryKey, 'preset'], value: preset }])
+    else if (placeDir && Object.keys(placeDir).some((k) => k !== 'preset')) edit3d(editor, [{ op: 'delete', path: ['places', entryKey, 'preset'] }])
+    else edit3d(editor, [{ op: 'delete', path: ['places', entryKey] }])
   }
 
   return (

@@ -135,6 +135,7 @@ export function addStructural(editor: Editor, type: StructureType) {
   const parent = targetParent(editor, type)
   const [w, h] = LEVEL[type].min
   let id: TLShapeId | undefined
+  editor.markHistoryStoppingPoint(`add ${type}`)
   editor.run(() => {
     if (parent) {
       const siblings = structuralChildren(editor, parent.id)
@@ -238,6 +239,7 @@ function tidy(editor: Editor, shape: ContainerShape | SceneShape): { w: number; 
 }
 
 export function tidyAll(editor: Editor) {
+  editor.markHistoryStoppingPoint('tidy layout')
   editor.run(() => {
     const top = structuralChildren(editor, STORY_PAGE)
     top.forEach((s) => tidy(editor, s))

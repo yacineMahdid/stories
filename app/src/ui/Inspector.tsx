@@ -10,7 +10,17 @@ import { CharacterLook, followRename, PagePreview, PlacePreview, ThreeBoundary }
 
 type Props<S extends TLShape> = { editor: Editor; shape: S }
 
+/**
+ * One Undo per edit: a change to another field or card, or after a pause, starts a new undo
+ * step (typing a word in one field is one step, not one per letter, and not lumped with
+ * everything since the last click on the canvas).
+ */
+let lastEdit = { key: '', at: 0 }
 function update<S extends TLShape>(editor: Editor, shape: S, props: Partial<S['props']>) {
+  const key = `${shape.id}|${Object.keys(props).sort().join(',')}`
+  const now = Date.now()
+  if (key !== lastEdit.key || now - lastEdit.at > 1500) editor.markHistoryStoppingPoint('inspector edit')
+  lastEdit = { key, at: now }
   editor.updateShape({ id: shape.id, type: shape.type, props } as any)
 }
 
@@ -107,7 +117,7 @@ function CharacterInspector({ editor, shape }: Props<CharacterShape>) {
   return (
     <>
       <h2 style={{ color: p.color }}>Character</h2>
-      <Field label="Name"><input value={p.name} onChange={(e) => { followRename('characters', shape.id, p.name, e.target.value); set({ name: e.target.value }) }} /></Field>
+      <Field label="Name"><input value={p.name} onChange={(e) => { followRename(editor, 'characters', shape.id, p.name, e.target.value); set({ name: e.target.value }) }} /></Field>
       <Field label="Role"><input value={p.role} placeholder="protagonist, rival, mentor…" onChange={(e) => set({ role: e.target.value })} /></Field>
       <Field label="Colour"><ColorPicker value={p.color} onChange={(color) => set({ color })} /></Field>
       <Field label="Born (world year)" hint="Optional. Their age is worked out on every page.">
@@ -149,7 +159,7 @@ function PinInspector({ editor, shape }: Props<PinShape>) {
   return (
     <>
       <h2 style={{ color: p.color }}>Map pin</h2>
-      <Field label="Name"><input value={p.name} onChange={(e) => { followRename('places', shape.id, p.name, e.target.value); set({ name: e.target.value }) }} /></Field>
+      <Field label="Name"><input value={p.name} onChange={(e) => { followRename(editor, 'places', shape.id, p.name, e.target.value); set({ name: e.target.value }) }} /></Field>
       <Field label="Kind">
         <select value={p.kind} onChange={(e) => set({ kind: e.target.value })}>{PIN_KINDS.map((k) => <option key={k}>{k}</option>)}</select>
       </Field>
@@ -363,7 +373,7 @@ function ImageInspector({ editor, shape }: Props<TLShape>) {
       {onMap ? (
         <>
           <p className="muted">Lock this image behind everything to use it as the map. Right-click → Unlock to move it again.</p>
-          <button className="primary" onClick={() => { editor.sendToBack([shape.id]); editor.updateShape({ id: shape.id, type: shape.type, isLocked: true }); editor.selectNone() }}>Use as map background</button>
+          <button className="primary" onClick={() => { editor.markHistoryStoppingPoint('map background'); editor.sendToBack([shape.id]); editor.updateShape({ id: shape.id, type: shape.type, isLocked: true }); editor.selectNone() }}>Use as map background</button>
         </>
       ) : <p className="muted">Reference image. Keep it next to the card it inspires.</p>}
     </>
