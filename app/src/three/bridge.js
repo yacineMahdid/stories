@@ -29,8 +29,8 @@ export function effectiveSpec(look) { return buildSpec(look); }
 export const weathers = Object.entries(WEATHERS).map(([id, w]) => ({ id, label: w.label }));
 
 /** A first 3D look for a character card, from its name, role and appearance text. */
-export function guessLook(card) {
-  const { guessed, ...look } = guessSpec(card);
+export function guessLook(card, species) {
+  const { guessed, ...look } = guessSpec(card, species);
   void guessed;
   return look;
 }

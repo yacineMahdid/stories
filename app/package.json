@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b",
+    "test": "node server/json-edit.test.ts"
   },
   "dependencies": {
     "react": "^19.3.1",

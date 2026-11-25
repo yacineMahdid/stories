@@ -16,7 +16,7 @@ export async function uploadFile(file: File): Promise<string> {
 export async function loadWorld(): Promise<any | null> {
   const res = await fetch('/api/world')
   if (res.status === 204 || res.status === 404) return null // no world yet
-  if (!res.ok) throw new Error(`Could not load data/world.json (${res.status})`)
+  if (!res.ok) throw new Error(`Could not load ${__STORY_DATA__}/world.json (${res.status})`)
   return res.json()
 }
 

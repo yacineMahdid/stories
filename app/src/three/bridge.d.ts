@@ -18,7 +18,8 @@ export const lookOptions: {
 export const placePresets: string[]
 export const weathers: Option[]
 
-export function guessLook(card: { id: string; name: string; role?: string; appearance?: string; color?: string }): Look
+/** A first look from the card's text; `species` forces one (a person's skin and hair, an animal's fur). */
+export function guessLook(card: { id: string; name: string; role?: string; appearance?: string; color?: string }, species?: string): Look
 export function effectiveSpec(look: Look): Look
 export function directionKey(direction: Direction, section: 'characters' | 'places', id: string, name?: string): string | null
 

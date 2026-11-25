@@ -39,11 +39,13 @@ function deepMerge(a, b) {
  * The key of a canvas shape's entry in a direction section ('characters' or 'places'), the way
  * World finds it: by shape id, by id without "shape:", or by name (any case). Null when none.
  */
+const isEntryMap = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+
 export function directionKey(direction, section, id, name) {
-  const entries = direction?.[section] ?? {};
-  if (id in entries) return id;
+  const entries = isEntryMap(direction?.[section]) ? direction[section] : {};
+  if (Object.hasOwn(entries, id)) return id;
   const bare = String(id).replace(/^shape:/, '');
-  if (bare in entries) return bare;
+  if (Object.hasOwn(entries, bare)) return bare;
   const low = (name ?? '').toLowerCase();
   if (low) for (const k of Object.keys(entries)) if (k.toLowerCase() === low) return k;
   return null;
@@ -62,8 +64,9 @@ export class World {
    */
   constructor(canvas, direction = {}) {
     this.canvas = canvas;
-    this.direction = direction;
     this.warnings = [];
+    direction = this.checked(direction);
+    this.direction = direction;
     this.scale = direction.map?.scale ?? 0.05;
     const firstPin = canvas.pins.values().next().value;
     this.origin = direction.map?.origin ?? firstPin?.at ?? [0, 0];
@@ -128,6 +131,35 @@ export class World {
   }
 
   warn(text) { if (!this.warnings.includes(text)) this.warnings.push(text); }
+
+  /**
+   * The direction with anything of the wrong shape left out (a hand edit can put a string where
+   * a section belongs): each is named in a staging note instead of breaking the stage.
+   */
+  checked(direction) {
+    if (!isEntryMap(direction)) {
+      if (direction != null) this.warn('The direction file should hold an object ({ … }); it is ignored.');
+      return {};
+    }
+    const out = { ...direction };
+    for (const section of ['places', 'characters', 'scenes', 'map', 'defaults', 'edge']) {
+      if (out[section] == null || isEntryMap(out[section])) continue;
+      this.warn(`"${section}" in the direction should be an object ({ … }); it is ignored.`);
+      delete out[section];
+    }
+    if (out.terrain != null && !Array.isArray(out.terrain)) {
+      this.warn('"terrain" in the direction should be a list ([ … ]); it is ignored.');
+      delete out.terrain;
+    }
+    for (const section of ['places', 'characters', 'scenes']) {
+      if (!out[section]) continue;
+      const bad = Object.keys(out[section]).filter((k) => !isEntryMap(out[section][k]));
+      if (!bad.length) continue;
+      out[section] = Object.fromEntries(Object.entries(out[section]).filter(([k]) => !bad.includes(k)));
+      for (const k of bad) this.warn(`"${section}" › "${k}" in the direction should be an object ({ … }); it is ignored.`);
+    }
+    return out;
+  }
 
   sceneDirectionByTitle(title) {
     const low = (title ?? '').toLowerCase();
@@ -593,11 +625,11 @@ function speciesIn(text) {
   return best?.species ?? 'human';
 }
 
-export function guessSpec(c) {
+export function guessSpec(c, forceSpecies = null) {
   // What the character looks like comes from the appearance and the role; the name only
   // seeds the choices the text leaves open (a "Catherine" isn't a cat, a "Bobby" has no bob).
   const text = `${c.appearance ?? ''} ${c.role ?? ''}`.toLowerCase();
-  const species = speciesIn(text);
+  const species = forceSpecies ?? speciesIn(text);
   const h = hashString(c.id ?? c.name ?? 'x');
   const colorWord = (words, nouns) => new RegExp(`\\b(${Object.keys(words).join('|')})(?:[- ](?:and[- ])?[a-z]+)?[- ](?:${nouns})\\b`).exec(text)?.[1];
   let hairWord = /\bredhead\b/.test(text) ? 'red' : colorWord(HAIR_COLORS, 'hair|haired|locks|curls|braids|pigtails|ponytail|bob|bun');

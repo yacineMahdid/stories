@@ -218,3 +218,5 @@ button.link { border: 0; background: none; color: var(--muted); font-size: 12px;
 .three-warnings ul { margin: 4px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }
 .stage-card .three-warnings { margin-top: 8px; }
 .stage-overlay:focus { outline: none; }
+fieldset.three-grid { border: 0; margin: 0; padding: 0; min-width: 0; }
+fieldset.three-grid:disabled { opacity: 0.55; }

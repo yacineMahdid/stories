@@ -1,8 +1,8 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Component, createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { getSnapshot, type Editor } from 'tldraw'
 import type { CharacterShape, PinShape, SceneShape } from '../shapes/types'
 import { coverPreviews, directionKey, effectiveSpec, getStudio, getPreview, guessLook, lookOptions, placePresets, weathers, WorldView, type Look, type StageState } from '../three/bridge.js'
-import { deleteIn, setIn, useStaging, useStagingStatus } from '../lib/staging'
+import { deleteIn, edit, setIn, STAGING_FILE, useStaging, useStagingStatus, type Op } from '../lib/staging'
 import { uploadFile } from '../lib/persistence'
 import { fitAncestors } from '../lib/structure'
 
@@ -48,6 +48,22 @@ function Busy({ on, children }: { on: boolean; children: ReactNode }) {
 
 const clean = (o: Record<string, any>) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== ''))
 
+/** A 3D panel that fails shows what went wrong instead of taking the whole app down. */
+export class ThreeBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
+  state = { error: null as string | null }
+  static getDerivedStateFromError(e: unknown) { return { error: e instanceof Error ? e.message : String(e) } }
+  componentDidCatch(e: unknown) { console.error('[3d panel]', e) }
+  render() {
+    if (!this.state.error) return this.props.children
+    return (
+      <div className="three-panel">
+        <small className="three-error">The 3D view hit a problem: {this.state.error}</small>
+        <div className="ins-row"><button onClick={() => this.setState({ error: null })}>Try again</button></div>
+      </div>
+    )
+  }
+}
+
 /** How long the selection must rest before a 3D preview is (re)built. */
 const SETTLE_MS = 180
 
@@ -63,39 +79,74 @@ function Warnings({ list }: { list: string[] }) {
 }
 
 /** A select's options, plus the current value when the file holds one the list doesn't have. */
-function Options({ value, list }: { value: string; list: [string, string][] }) {
+function Options({ value, list, note = 'from the file' }: { value: string; list: [string, string][]; note?: string }) {
   return (
     <>
-      {value && !list.some(([v]) => v === value) && <option value={value}>{value} (from the file)</option>}
+      {value && !list.some(([v]) => v === value) && <option value={value}>{value} ({note})</option>}
       {list.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
     </>
   )
 }
 
 /** The character's 3D look: a live model, a few controls, and a button to add it as a portrait. */
+const isPlain = (v: unknown): v is Record<string, any> => !!v && typeof v === 'object' && !Array.isArray(v)
+const sameJSON = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
+
+/** The edits that turn one look into another, field by field (inside outfit, face and hair too). */
+function lookOps(base: string[], from: Record<string, any>, to: Record<string, any>): Op[] {
+  const ops: Op[] = []
+  const gone = (v: unknown) => v === undefined || v === ''
+  for (const k of new Set([...Object.keys(from), ...Object.keys(to)])) {
+    const a = from[k], b = to[k]
+    if (sameJSON(a, b)) continue
+    if (gone(b)) ops.push({ op: 'delete', path: [...base, k] })
+    else if (isPlain(a) && isPlain(b)) ops.push(...lookOps([...base, k], a, b))
+    else ops.push({ op: 'set', path: [...base, k], value: b })
+  }
+  return ops
+}
+
 export function CharacterLook({ shape, onPortrait }: { editor: Editor; shape: CharacterShape; onPortrait: (url: string) => void }) {
   const p = shape.props
   const direction = useStaging()
-  const { status, error } = useStagingStatus()
+  const { status, error, editable } = useStagingStatus()
   // The look may be keyed by id or by name (hand-written); edits go back under the same key.
   const entryKey = directionKey(direction, 'characters', shape.id, p.name) ?? shape.id
   const stored: Look | undefined = direction.characters?.[entryKey]
-  const look: Look = useMemo(() => stored ?? guessLook({ id: shape.id, name: p.name, role: p.role, appearance: p.appearance, color: p.color }), [stored, shape.id, p.name, p.role, p.appearance, p.color])
+  const card = { id: shape.id, name: p.name, role: p.role, appearance: p.appearance, color: p.color }
+  const guessFor = (species?: string) => guessLook(card, species)
+  const look: Look = useMemo(() => stored ?? guessLook(card), [stored, shape.id, p.name, p.role, p.appearance, p.color])
   const spec = useMemo(() => effectiveSpec(look), [look]) // species defaults filled in, for the controls
   const studio = useMemo(getStudio, [])
   const [busy, setBusy] = useState(false)
+  const [problem, setProblem] = useState('')
   const key = JSON.stringify(look)
   useEffect(() => { studio.show(look) }, [key])
 
-  const save = (next: Look) => setIn(['characters', entryKey], clean(next))
-  // Animals start without hair, like the guessed looks; going back to a person brings it back.
-  const lastHair = useRef<{ id: string; hair?: Look['hair'] }>({ id: shape.id })
-  if (lastHair.current.id !== shape.id) lastHair.current = { id: shape.id }
-  if (look.hair) lastHair.current.hair = look.hair
-  const changeSpecies = (next: string) => save({
-    ...look, species: next, skin: undefined, fur: undefined,
-    hair: next === 'human' ? look.hair ?? lastHair.current.hair ?? { style: 'bob', color: '#4a2f22' } : undefined,
-  })
+  // The first change keeps the whole guessed look; after that, only the fields that change are
+  // written, so hand edits to the other fields survive.
+  const save = (next: Look) => {
+    const base = ['characters', entryKey]
+    if (!stored) edit([{ op: 'set', path: base, value: clean(next) }])
+    else edit(lookOps(base, stored, clean(next)))
+  }
+  // Animals start without hair, like the guessed looks; going back to a person brings back
+  // their skin and hair (or the card's guess).
+  const lastHuman = useRef<{ id: string; skin?: string; hair?: Look['hair'] }>({ id: shape.id })
+  if (lastHuman.current.id !== shape.id) lastHuman.current = { id: shape.id }
+  if ((look.species ?? 'human') === 'human') {
+    if (look.hair) lastHuman.current.hair = look.hair
+    if (look.skin) lastHuman.current.skin = look.skin
+  }
+  const changeSpecies = (next: string) => {
+    const human = next === 'human'
+    const guess = guessFor(next)
+    save({
+      ...look, species: next, fur: undefined,
+      skin: human ? lastHuman.current.skin ?? guess.skin : guess.skin,
+      hair: human ? look.hair ?? lastHuman.current.hair ?? guess.hair : undefined,
+    })
+  }
   const set = (patch: Look) => save({ ...look, ...patch })
   const setGroup = (group: 'outfit' | 'face' | 'hair', patch: Record<string, any>) => save({ ...look, [group]: clean({ ...(look[group] ?? {}), ...patch }) })
   const species = look.species ?? 'human'
@@ -103,19 +154,23 @@ export function CharacterLook({ shape, onPortrait }: { editor: Editor; shape: Ch
 
   const addPortrait = async () => {
     setBusy(true)
+    setProblem('')
     try {
       const blob = await studio.portrait(p.color)
       if (blob) onPortrait(await uploadFile(fileFrom(blob, `${p.name || 'character'}-3d`)))
+    } catch (e) {
+      setProblem(`The portrait could not be saved: ${e instanceof Error ? e.message : e}`)
     } finally { setBusy(false) }
   }
+  const note = stored ? 'from the file' : 'guessed'
 
   return (
     <div className="three-panel">
       <Slot view={studio} className="three-slot tall" />
-      <div className="three-grid">
+      <fieldset className="three-grid" disabled={!editable}>
         <label>Species
           <select value={species} onChange={(e) => changeSpecies(e.target.value)}>
-            <Options value={species} list={lookOptions.species.map((s) => [s.id, s.label])} />
+            <Options value={species} note={note} list={lookOptions.species.map((s) => [s.id, s.label])} />
           </select>
         </label>
         <label>{species === 'human' ? 'Skin' : 'Fur'}
@@ -123,22 +178,22 @@ export function CharacterLook({ shape, onPortrait }: { editor: Editor; shape: Ch
         </label>
         <label>Hair
           <select value={look.hair?.style ?? ''} onChange={(e) => save({ ...look, hair: e.target.value ? { color: look.hair?.color ?? '#4a2f22', style: e.target.value } : undefined })}>
-            <Options value={look.hair?.style ?? ''} list={lookOptions.hair.map((h) => [h.id, h.label])} />
+            <Options value={look.hair?.style ?? ''} note={note} list={lookOptions.hair.map((h) => [h.id, h.label])} />
           </select>
         </label>
         <label>Hair colour
           <select value={look.hair?.color ?? ''} disabled={!look.hair?.style} onChange={(e) => setGroup('hair', { color: e.target.value })}>
-            <Options value={look.hair?.color ?? ''} list={lookOptions.hairColors.map((h) => [h.value, h.label])} />
+            <Options value={look.hair?.color ?? ''} note={note} list={lookOptions.hairColors.map((h) => [h.value, h.label])} />
           </select>
         </label>
         <label>Eyes
           <select value={spec.face?.eyes ?? 'classic'} onChange={(e) => setGroup('face', { eyes: e.target.value })}>
-            <Options value={spec.face?.eyes ?? 'classic'} list={lookOptions.eyes.map((h) => [h.id, h.label])} />
+            <Options value={spec.face?.eyes ?? 'classic'} note={note} list={lookOptions.eyes.map((h) => [h.id, h.label])} />
           </select>
         </label>
         <label>Body
           <select value={spec.body ?? 'standard'} onChange={(e) => set({ body: e.target.value })}>
-            <Options value={spec.body ?? 'standard'} list={lookOptions.bodies.map((h) => [h.id, h.label])} />
+            <Options value={spec.body ?? 'standard'} note={note} list={lookOptions.bodies.map((h) => [h.id, h.label])} />
           </select>
         </label>
         <label>Top
@@ -146,7 +201,7 @@ export function CharacterLook({ shape, onPortrait }: { editor: Editor; shape: Ch
         </label>
         <label>Sleeves
           <select value={outfit.sleeves ?? 'short'} onChange={(e) => setGroup('outfit', { sleeves: e.target.value })}>
-            <Options value={outfit.sleeves ?? 'short'} list={lookOptions.sleeves.map((s) => [s, s])} />
+            <Options value={outfit.sleeves ?? 'short'} note={note} list={lookOptions.sleeves.map((s) => [s, s])} />
           </select>
         </label>
         <label>Bottom
@@ -154,21 +209,22 @@ export function CharacterLook({ shape, onPortrait }: { editor: Editor; shape: Ch
         </label>
         <label>Legs
           <select value={outfit.legs ?? 'shorts'} onChange={(e) => setGroup('outfit', { legs: e.target.value })}>
-            <Options value={outfit.legs ?? 'shorts'} list={lookOptions.legs.map((s) => [s, s])} />
+            <Options value={outfit.legs ?? 'shorts'} note={note} list={lookOptions.legs.map((s) => [s, s])} />
           </select>
         </label>
         <label>Shoes
           <input type="color" value={outfit.shoes ?? '#4a3a30'} onChange={(e) => setGroup('outfit', { shoes: e.target.value })} />
         </label>
-      </div>
+      </fieldset>
       <div className="ins-row">
         <button className="primary" disabled={busy} onClick={addPortrait}><Busy on={busy}>Add as portrait</Busy></button>
-        <button disabled={!stored} onClick={() => deleteIn(['characters', entryKey])} title="Forget the edits and guess the look from the card's text again">
+        <button disabled={!stored || !editable} onClick={() => deleteIn(['characters', entryKey])} title="Forget the edits and guess the look from the card's text again">
           Guess from text
         </button>
       </div>
+      {problem && <small className="three-error">{problem}</small>}
       <small className={status === 'error' ? 'three-error' : 'muted'}>
-        {status === 'error' ? error : stored ? (status === 'saving' ? 'Saving to data/staging.json…' : 'Saved in data/staging.json.') : 'Guessed from the card. Change anything to keep it.'} Drag the model to turn it.
+        {status === 'error' ? error : stored ? (status === 'saving' ? `Saving to ${STAGING_FILE}…` : `Saved in ${STAGING_FILE}.`) : 'Guessed from the card. Change anything to keep it.'} Drag the model to turn it.
       </small>
     </div>
   )
@@ -179,6 +235,7 @@ export function CharacterLook({ shape, onPortrait }: { editor: Editor; shape: Ch
 /** A map pin in 3D: its place on its own, with an automatic set unless the direction stages it. */
 export function PlacePreview({ editor, shape }: { editor: Editor; shape: PinShape }) {
   const direction = useStaging()
+  const { status, error, editable } = useStagingStatus()
   const doc = useCanvasDocument(editor)
   const view = useMemo(getPreview, [])
   const [busy, setBusy] = useState(true)
@@ -213,12 +270,12 @@ export function PlacePreview({ editor, shape }: { editor: Editor; shape: PinShap
       </div>
       <label className="ins-field">
         <span>3D set</span>
-        <select value={handStaged ? '__hand' : placeDir?.preset ?? ''} disabled={handStaged} onChange={(e) => setPreset(e.target.value)}>
+        <select value={handStaged ? '__hand' : placeDir?.preset ?? ''} disabled={handStaged || !editable} onChange={(e) => setPreset(e.target.value)}>
           {handStaged && <option value="__hand">Staged by hand</option>}
           <option value="">Automatic (from the name and description)</option>
           {placePresets.map((p) => <option key={p} value={p}>{p[0].toUpperCase() + p.slice(1)}</option>)}
         </select>
-        <small>{handStaged ? 'This place is staged in data/staging.json.' : 'Where the pin sits on the map is where the place is in 3D.'}</small>
+        <small className={status === 'error' ? 'three-error' : undefined}>{status === 'error' ? error : handStaged ? `This place is staged in ${STAGING_FILE}.` : 'Where the pin sits on the map is where the place is in 3D.'}</small>
       </label>
     </div>
   )

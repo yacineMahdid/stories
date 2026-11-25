@@ -22,6 +22,10 @@ export const HAIR_COLORS = [
   { id: 'pink', label: 'Pink', value: '#f29ab2' },
   { id: 'blue', label: 'Blue', value: '#4d7cc9' },
   { id: 'gray', label: 'Gray', value: '#c8c3ba' },
+  { id: 'white', label: 'White', value: '#ece7df' },
+  { id: 'auburn', label: 'Auburn', value: '#8a3b22' },
+  { id: 'green', label: 'Green', value: '#5aa56a' },
+  { id: 'purple', label: 'Purple', value: '#8a5cc2' },
 ];
 
 const cache = new Map();
