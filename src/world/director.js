@@ -1458,11 +1458,13 @@ export class Director {
    */
   thingMark(id) {
     const o = this.ownThing(id);
-    const index = this.state?.dressingIds?.indexOf(id) ?? -1;
-    if (!o || index < 0) return null;
-    // The entry as the direction has it now; moved or turned since it last changed, as it is now.
-    const live = this.liveState();
-    const written = (live?.page.id === this.state.page.id ? live.dir : this.state.dir).dressing?.[index] ?? this.state.dir.dressing[index];
+    if (!o) return null;
+    // The entry as the direction has it now (its place in the list too); moved or turned since the
+    // direction last changed, as it is now.
+    const live = this.liveState() ?? this.state;
+    const index = live.dressingIds?.indexOf(id) ?? -1;
+    const written = index >= 0 ? live.dir.dressing?.[index] : null;
+    if (!written) return null;
     const entry = { ...written };
     const edited = o.userData.editedIn === this.world;
     if (edited && o.userData.moved) entry.at = this.localXZ(o.position);
