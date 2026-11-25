@@ -67,8 +67,8 @@ function Header({ editor, save, onStage }: { editor: Editor; save: SaveState; on
       <span className="brand">Story Canvas</span>
       <nav>
         {PAGES.map((p) => (
-          <button key={p.id} className={p.id === pageId ? 'on' : ''} onClick={() => { editor.setCurrentPage(p.id); editor.selectNone() }}>
-            <span>{p.icon}</span>{p.name}<small>{counts[p.id]}</small>
+          <button key={p.id} className={p.id === pageId ? 'on' : ''} title={p.name} onClick={() => { editor.setCurrentPage(p.id); editor.selectNone() }}>
+            <span>{p.icon}</span><span className="tab-name">{p.name}</span><small>{counts[p.id]}</small>
           </button>
         ))}
       </nav>

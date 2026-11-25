@@ -42,7 +42,12 @@ export function checkStory(world) {
     }
     for (const shot of state.shots) {
       for (const ref of shot.on ? (Array.isArray(shot.on) ? shot.on : [shot.on]) : []) {
-        if (!state.cast.some((c) => c.who === ref || c.character.name === ref) && !state.things.has(ref)) problems.push(`A shot looks at "${ref}", who is not in this page.`);
+        if (state.cast.some((c) => c.who === ref || c.character.name === ref) || state.things.has(ref)) continue;
+        // Named like the cards are: a card id says little to the person reading this.
+        const who = world.character(ref);
+        problems.push(who ? `A shot looks at ${who.name}, who is not in this page.`
+          : String(ref).startsWith('shape:') ? 'A shot looks at a character whose card was deleted.'
+          : `A shot looks at "${ref}", who is not in this page.`);
       }
     }
     report.push({ page: `${scene.page.path} ${scene.page.title}`, place: state.place?.name, problems: [...new Set(problems)] });

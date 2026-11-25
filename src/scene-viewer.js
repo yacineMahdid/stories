@@ -5,7 +5,7 @@ import { Director } from './world/director.js';
 import { WEATHERS } from './world/sky.js';
 
 // The Scene Viewer: a Story Canvas world plus its 3D direction, staged page by page.
-// URL: ?story=<direction json> (default data/staging.json, else the sample),
+// URL: ?story=<direction json, or its folder> (default data/staging.json, else the sample),
 //      &page=N (1-based) &shot=N &hour=H &weather=W &season=S &ui=0 &still=1
 
 const q = new URLSearchParams(location.search);
@@ -21,7 +21,10 @@ async function fetchJSON(url) {
 
 // Your own story first (data/staging.json, or data/world.json staged automatically), else the sample.
 async function loadStory() {
-  const tries = q.get('story') ? [q.get('story')] : ['data/staging.json', 'data/world.json', 'samples/brindlewick/staging.json'];
+  // A folder ("samples/brindlewick") means its staging.json, else its world.json.
+  const story = q.get('story')?.replace(/\/+$/, '');
+  const tries = !story ? ['data/staging.json', 'data/world.json', 'samples/brindlewick/staging.json']
+    : /\.json$/i.test(story) ? [story] : [`${story}/staging.json`, `${story}/world.json`];
   let lastError;
   for (const url of tries) {
     try {

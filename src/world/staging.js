@@ -504,10 +504,10 @@ export class World {
       used.add(who.id);
       cast.push({ ...c, who: who.id, character: who, look: deepMerge(looks.get(who.id) ?? {}, c.look ?? {}) });
     }
-    const missing = (page.characterIds ?? []).filter((id) => !used.has(id));
+    // Listed but not staged (a deleted card has its note above and no place in the arc).
+    const missing = [...new Set(page.characterIds ?? [])].filter((id) => !used.has(id) && this.character(id));
     missing.forEach((id, i) => {
       const who = this.character(id);
-      if (!who) return; // a deleted card: noted with the cast above
       // A shallow arc that opens to the south, where the camera looks from: everyone faces its
       // middle, so they talk to each other and their faces read (no backs to the camera).
       const n = missing.length;

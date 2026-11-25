@@ -23,7 +23,7 @@ shown as an error and never overwritten.
 `samples/brindlewick/` is a small invented world (five places, six characters, eight pages from
 spring to winter) made to exercise all of this. The Story Stage opens `data/staging.json` when it
 exists, then `data/world.json` staged automatically, otherwise the sample;
-`scene.html?story=path/to/staging.json` opens any other. Each page has its own link: `scene.html#page-3`.
+`scene.html?story=path/to/staging.json` (or just its folder) opens any other. Each page has its own link: `scene.html#page-3`.
 
 ## The world is the map
 
