@@ -73,25 +73,39 @@ export class World {
 
     // Places: every pin, with its direction (or an automatic set when there is none).
     this.places = new Map();
-    for (const pin of canvas.pins.values()) {
+    const pins = [...canvas.pins.values()].map((pin) => ({ pin, pos: this.mapToWorld(pin.at) }));
+    for (const { pin, pos } of pins) {
       const placeKey = directionKey(direction, 'places', pin.id, pin.name);
-      let dir = placeKey != null ? direction.places[placeKey] : null;
-      // { "preset": "forest" } picks an automatic set instead of guessing it from the pin's text.
-      if (dir?.preset && !dir.things) dir = { ...autoPlace(pin, dir.preset), ...dir };
+      const hand = placeKey != null ? direction.places[placeKey] : null;
+      // A place staged by hand ("things") is used as written. Otherwise the automatic set (or the
+      // "preset" one) is built, and whatever else the entry says (rotate, radius…) goes on top.
+      const auto = !hand?.things;
+      const rotate = hand?.rotate ?? 0;
+      const dir = auto ? { ...autoPlace(pin, hand?.preset, roomAround(pos, pins, pin, rotate)), ...(hand ?? {}) } : hand;
       const place = {
         id: pin.id, pin, name: pin.name, kind: pin.kind, description: pin.description,
-        pos: this.mapToWorld(pin.at),
-        rotate: dir?.rotate ?? 0,
-        radius: dir?.radius ?? 10,
-        ground: dir?.ground ?? null,
-        wild: { grass: 0.55, flowers: 0.05, ...(dir?.wild ?? {}) },
-        staged: !!dir,
-        dir: dir ?? autoPlace(pin),
+        pos,
+        rotate,
+        radius: dir.radius ?? 10,
+        ground: dir.ground ?? null,
+        wild: { grass: 0.55, flowers: 0.05, ...(dir.wild ?? {}) },
+        staged: !!hand,
+        auto,
+        room: auto ? roomAround(pos, pins, pin, rotate).near : Infinity,
+        dir,
       };
       this.places.set(pin.id, place);
+      // The same place under two keys: say which one is used.
+      const other = placeKey === pin.id ? Object.keys(direction.places ?? {}).find((k) => k !== pin.id && k.toLowerCase() === pin.name.toLowerCase()) : null;
+      if (other) this.warn(`${pin.name} is staged twice in the direction: "${placeKey}" is used, "${other}" is ignored.`);
     }
-    for (const key of Object.keys(direction.places ?? {})) {
-      if (!this.places.has(key) && !this.placeByName(key)) this.warn(`The direction has a place "${key}" but no pin on the map has that id or name.`);
+    // A place of a deleted pin ("shape:…", it comes back with Undo) is ignored quietly; a place
+    // written under a name that matches no pin is worth a note.
+    this.orphanThings = new Set();
+    for (const [key, entry] of Object.entries(direction.places ?? {})) {
+      if (this.places.has(key) || this.placeByName(key)) continue;
+      if (key.startsWith('shape:')) { for (const t of expandGroups(entry.things ?? [], key)) if (t.id) this.orphanThings.add(t.id); continue; }
+      this.warn(`The direction has a place "${key}" but no pin on the map has that id or name.`);
     }
 
     // Base things of every place, in world coordinates.
@@ -104,12 +118,17 @@ export class World {
     this.terrain = [];
     for (const f of direction.terrain ?? []) this.terrain.push(this.featureToWorld(f, null));
     for (const place of this.places.values()) {
-      this.terrain.push({ type: 'flat', at: place.pos, r: place.radius, blend: 5, height: place.dir.height ?? 'auto', place: place.id });
+      this.terrain.push({ type: 'flat', at: place.pos, r: place.radius, blend: 5, height: place.dir.height ?? 'auto', place: place.id, dry: place.auto });
       if (place.ground && place.ground !== 'grass') {
         const g = typeof place.ground === 'string' ? { surface: place.ground } : place.ground;
         this.terrain.push({ type: 'plaza', at: place.pos, r: g.r ?? place.radius * 0.8, size: g.size, rotate: (g.rotate ?? 0) + place.rotate, surface: g.surface ?? 'stone', flatten: false, place: place.id });
       }
-      for (const f of place.dir.terrain ?? []) this.terrain.push(this.featureToWorld(f, place));
+      for (const f of place.dir.terrain ?? []) {
+        const w = this.featureToWorld(f, place);
+        // An automatic place's sea, lake or river stays out of the places around it.
+        if (place.auto && WATER_TYPES.has(w.type) && Number.isFinite(place.room)) w.clip = { at: place.pos, r: place.room };
+        this.terrain.push(w);
+      }
     }
 
     // Characters: canvas cards + 3D looks from the direction.
@@ -117,6 +136,8 @@ export class World {
     for (const c of canvas.characters.values()) {
       const key = directionKey(direction, 'characters', c.id, c.name);
       this.characters.set(c.id, { ...c, spec: key != null ? direction.characters[key] : null });
+      const other = key === c.id && c.name ? Object.keys(direction.characters ?? {}).find((k) => k !== c.id && k.toLowerCase() === c.name.toLowerCase()) : null;
+      if (other) this.warn(`${c.name} has two looks in the direction: "${key}" is used, "${other}" is ignored.`);
     }
     // Looks for characters that aren't on the canvas: a deleted card's look ("shape:..." key)
     // is ignored; a look keyed by a plain name stands in as a character of its own.
@@ -194,18 +215,18 @@ export class World {
   }
 
   /** Resolve an `at`: [x, z] local, { map }, { pin, offset }, { near, offset }. Returns world [x, z]. */
-  resolveAt(at, place, things = this.things, seen = new Set()) {
+  resolveAt(at, place, things = this.things, seen = new Set(), warn = this.sink ? (t) => { if (!this.sink.includes(t)) this.sink.push(t); } : (t) => this.warn(t)) {
     if (Array.isArray(at)) return this.localToWorld(at, place);
     if (at && typeof at === 'object') {
       if (at.map) return this.mapToWorld(at.map);
       if (at.pin) {
         const p = this.placeByName(at.pin);
-        if (!p) { this.warn(`Unknown pin "${at.pin}".`); return place?.pos ?? [0, 0]; }
+        if (!p) { warn(`Unknown pin "${at.pin}".`); return place?.pos ?? [0, 0]; }
         return this.localToWorld(at.offset ?? [0, 0], p);
       }
       if (at.near) {
         const t = things.get(at.near);
-        if (!t || seen.has(at.near)) { this.warn(`"near" refers to an unknown thing "${at.near}".`); return place?.pos ?? [0, 0]; }
+        if (!t || seen.has(at.near)) { warn(`"near" refers to an unknown thing "${at.near}".`); return place?.pos ?? [0, 0]; }
         const [ox, oz] = rotate(at.offset ?? [0, 0], t.facing ?? 0);
         return [t.pos[0] + ox, t.pos[1] + oz];
       }
@@ -247,12 +268,43 @@ export class World {
    * every lasting change from earlier pages of the same story), its dressing, cast and camera,
    * plus continuity notes saying where each inherited change came from.
    */
+  /**
+   * Where a page happens: its direction's place, else its first place still on the map, else the
+   * place of the page it continues (and so on). `lost` lists the references that matched nothing.
+   */
+  placeOf(scene, seen = new Set()) {
+    this.placeCache ??= new Map();
+    if (this.placeCache.has(scene)) return this.placeCache.get(scene);
+    let place = null;
+    const lost = [];
+    for (const ref of [scene.dir.place, ...(scene.page.locationIds ?? [])].filter(Boolean)) {
+      place = this.placeByName(ref);
+      if (place) break;
+      lost.push(ref);
+    }
+    if (!place && scene.dir.continues && !seen.has(scene.page.id)) {
+      seen.add(scene.page.id);
+      const i = this.resolveSceneIndex(scene.dir.continues);
+      if (i != null) { const r = this.placeOf(this.scenes[i], seen); place = r.place; lost.push(...r.lost); }
+    }
+    const result = { place, lost };
+    this.placeCache.set(scene, result);
+    return result;
+  }
+
   sceneState(index) {
     const scene = this.scenes[index];
     if (!scene) return null;
     const { page } = scene;
     const notes = [];
     const warnings = [];
+    // Notes found while staging this page belong to it, not to the whole world.
+    const outerSink = this.sink;
+    this.sink = warnings;
+    try { return this.stateOf(index, scene, page, notes, warnings); } finally { this.sink = outerSink; }
+  }
+
+  stateOf(index, scene, page, notes, warnings) {
 
     // The chain of scenes this one continues (newest first), for dressing and defaults.
     const chain = [];
@@ -271,26 +323,18 @@ export class World {
 
     // Place: the direction's, else the page's first place still on the map (also through the
     // pages it continues).
-    let place = null;
-    const lost = [];
-    for (const s of [scene, ...chain]) {
-      for (const ref of [s.dir.place, ...(s.page.locationIds ?? [])].filter(Boolean)) {
-        place = this.placeByName(ref);
-        if (place) break;
-        lost.push(ref);
-      }
-      if (place) break;
-    }
+    const found = this.placeOf(scene);
+    let place = found.place;
+    const lost = found.lost;
     const misnamed = lost.find((ref) => !String(ref).startsWith('shape:')); // a direction "place" that isn't a pin
     if (misnamed) warnings.push(`The direction puts this page at "${misnamed}", which is not on the map.`);
-    if (!place) {
-      place = this.places.values().next().value ?? null;
-      if (lost.some((ref) => String(ref).startsWith('shape:'))) warnings.push(`This page's map pin was deleted; showing ${place?.name ?? 'an empty meadow'} instead.`);
-      else if (!page.locationIds?.length) warnings.push('This page has no place on the map yet; showing the first place.');
-    }
-    if (!place) {
+    if (!this.places.size) {
       place = this.nowhere();
       warnings.push('There are no pins on the map yet: add one and put this page there.');
+    } else if (!place) {
+      place = this.places.values().next().value;
+      if (lost.some((ref) => String(ref).startsWith('shape:'))) warnings.push(`This page's map pin was deleted; showing ${place.name} instead.`);
+      else if (!page.locationIds?.length) warnings.push('This page has no place on the map yet; showing the first place.');
     }
 
     // Moment.
@@ -314,25 +358,26 @@ export class World {
     const here = []; // lasting changes this page makes
     const applyChanges = (s, isEarlier) => {
       for (const ch of s.dir.changes ?? []) {
-        const chPlace = this.placeByName(ch.place ?? s.dir.place ?? s.page.locationIds?.[0]) ?? place;
+        const chPlace = (ch.place ? this.placeByName(ch.place) : null) ?? this.placeOf(s).place ?? place;
+        const gone = (id) => this.orphanThings.has(id); // a thing of a deleted pin's place
         const label = ch.note ?? describeChange(ch);
         let touched = null;
         if (ch.add) {
           for (const t of expandGroups([ch.add], chPlace?.id)) touched = this.addThing(t, chPlace, 'change', things).id;
         } else if (ch.remove) {
           touched = ch.remove;
-          if (!things.delete(ch.remove)) warnings.push(`A change removes "${ch.remove}", which is not there.`);
+          if (!things.delete(ch.remove) && !gone(ch.remove)) warnings.push(`A change removes "${ch.remove}", which is not there.`);
         } else if (ch.set) {
           const t = things.get(ch.set);
           if (t) Object.assign(t, ch.to ?? {});
-          else warnings.push(`A change sets "${ch.set}", which is not there.`);
+          else if (!gone(ch.set)) warnings.push(`A change sets "${ch.set}", which is not there.`);
           touched = ch.set;
         } else if (ch.move) {
           const t = things.get(ch.move);
           if (t) {
             if (ch.to) t.pos = this.resolveAt(ch.to, chPlace, things);
             if (typeof ch.facing === 'number') t.facing = ch.facing + (chPlace?.rotate ?? 0);
-          } else warnings.push(`A change moves "${ch.move}", which is not there.`);
+          } else if (!gone(ch.move)) warnings.push(`A change moves "${ch.move}", which is not there.`);
           touched = ch.move;
         } else if (ch.look) {
           const c = this.character(ch.look);
@@ -355,7 +400,7 @@ export class World {
 
     // Dressing: this page's own, plus what the pages it continues left standing.
     for (const s of [...chain].reverse()) {
-      const sPlace = this.placeByName(s.dir.place ?? s.page.locationIds?.[0]) ?? place;
+      const sPlace = this.placeOf(s).place ?? place;
       for (const t of expandGroups(s.dir.dressing ?? [], sPlace?.id)) {
         const th = this.addThing({ ...t, id: t.id ?? `${s.page.id}/dress-${things.size}` }, sPlace, 'dressing', things);
         notes.push({ text: `${t.note ?? t.kind} (left from the page it continues)`, since: s.page.path, title: s.page.title, id: th.id });
@@ -378,7 +423,10 @@ export class World {
     const used = new Set();
     for (const c of castDir) {
       const who = this.character(c.who);
-      if (!who) { warnings.push(`The cast has "${c.who}", who is not a character on the canvas.`); continue; }
+      if (!who) {
+        warnings.push(String(c.who).startsWith('shape:') ? 'The cast has a character whose card was deleted.' : `The cast has "${c.who}", who is not a character on the canvas.`);
+        continue;
+      }
       if (page.characterIds?.length && !page.characterIds.includes(who.id)) warnings.push(`${who.name} is staged here but not listed on this page.`);
       used.add(who.id);
       cast.push({ ...c, who: who.id, character: who, look: deepMerge(looks.get(who.id) ?? {}, c.look ?? {}) });
@@ -386,11 +434,17 @@ export class World {
     const missing = (page.characterIds ?? []).filter((id) => !used.has(id));
     missing.forEach((id, i) => {
       const who = this.character(id);
-      if (!who) { warnings.push(`This page lists a character (${id}) that no longer exists.`); return; }
+      if (!who) { warnings.push('This page lists a character whose card was deleted.'); return; }
+      // A shallow arc that opens to the south, where the camera looks from: everyone faces its
+      // middle, so they talk to each other and their faces read (no backs to the camera).
       const n = missing.length;
-      const a = (i / Math.max(n, 1)) * Math.PI * 2 + 0.6;
-      const r = n > 1 ? 0.9 + n * 0.18 : 0;
-      cast.push({ who: who.id, character: who, at: [Math.sin(a) * r, Math.cos(a) * r + 1.2], facing: n > 1 ? 'group' : 0, do: n > 1 ? 'Talk' : 'Idle', auto: true, look: looks.get(who.id) ?? {} });
+      const spread = n > 1 ? Math.min(70, 25 + n * 12) * D2R : 0;
+      const t = n > 1 ? -spread + (2 * spread * i) / (n - 1) : 0;
+      const r = n > 1 ? 1 + n * 0.22 : 0;
+      const view = place.dir?.view ?? 0; // the side the camera looks from
+      const at = rotate([Math.sin(t) * r, 1.2 - Math.cos(t) * r * 0.75], view);
+      const facing = n > 1 ? yawTo(at, rotate([0, 1.2 + r * 0.35], view)) : view;
+      cast.push({ who: who.id, character: who, at, facing, do: n > 1 ? 'Talk' : 'Idle', auto: true, look: looks.get(who.id) ?? {} });
     });
 
     // Camera: its own shots, the continued page's, or `{ "same": "<page>" }` to reuse another page's framing.
@@ -505,70 +559,135 @@ export function expandGroups(list, placeId) {
   return out;
 }
 
-/** A modest automatic set for a pin nobody has staged yet, from its kind, name and description. */
-export const PLACE_PRESETS = ['town', 'forest', 'beach', 'river', 'lake', 'ruin', 'wild', 'hill', 'meadow'];
+const WATER_TYPES = new Set(['sea', 'lake', 'pond', 'river']);
 
-export function autoPlace(pin, preset = null) {
-  const SETS = [
-    ['beach', ['beach', 'shore', 'coast', 'harbor', 'harbour', 'dock', 'pier', 'port', 'bay', 'sea']],
-    ['river', ['river', 'mill', 'bridge', 'stream', 'brook', 'ford']],
-    ['lake', ['lake', 'pond', 'pool', 'spring']],
-    ['forest', ['forest', 'wood', 'grove', 'clearing', 'glade', 'thicket']],
-    ['ruin', ['ruin', 'temple', 'ancient', 'tomb', 'shrine']],
-    ['wild', ['cave', 'wasteland', 'graveyard', 'swamp', 'dead']],
-    ['hill', ['hill', 'peak', 'lookout', 'mountain', 'cliff']],
-    ['town', ['town', 'village', 'square', 'market', 'city', 'street', 'plaza']],
-  ];
-  // The name says what the place is; the description only helps when the name doesn't.
-  const pick = (text) => SETS.find(([, words]) => words.some((w) => new RegExp(`\\b${w}`).test(text)))?.[0];
+/**
+ * How much room an automatic place has: `near` is how far its water and scatter may reach before
+ * they'd spill into the next pin's place (about half the way there), and `open` is the most open
+ * direction (local degrees, 0 = south), where a beach turns its sea.
+ */
+function roomAround(pos, pins, self, rotate = 0) {
+  const others = pins.filter((p) => p.pin !== self).map((p) => [p.pos[0] - pos[0], p.pos[1] - pos[1]]).filter(([x, z]) => Math.hypot(x, z) > 0.01);
+  if (!others.length) return { near: Infinity, open: 0 };
+  const nearest = Math.min(...others.map(([x, z]) => Math.hypot(x, z)));
+  let open = 0, best = -Infinity;
+  for (let k = 0; k < 16; k++) {
+    const a = k * 22.5;
+    const dx = Math.sin(a * D2R), dz = Math.cos(a * D2R);
+    let clear = 1000; // how far this way is free of pins (only pins within 50° of it count)
+    for (const [x, z] of others) {
+      const d = Math.hypot(x, z);
+      if ((x * dx + z * dz) / d > Math.cos(50 * D2R)) clear = Math.min(clear, d);
+    }
+    const score = clear - Math.abs(((a + 180) % 360) - 180) * 0.01; // ties: closest to south
+    if (score > best) { best = score; open = a; }
+  }
+  return { near: Math.max(9, nearest * 0.55), open: open - rotate };
+}
+
+/** A modest automatic set for a pin nobody has staged yet, from its kind, name and description. */
+export const PLACE_PRESETS = ['town', 'forest', 'beach', 'river', 'lake', 'marsh', 'ruin', 'wild', 'hill', 'meadow'];
+
+const PLACE_WORDS = [
+  ['beach', ['beach', 'shore', 'coast', 'harbor', 'harbour', 'dock', 'pier', 'port', 'bay', 'sea', 'seaside', 'cove', 'lagoon']],
+  ['river', ['river', 'mill', 'bridge', 'stream', 'brook', 'ford', 'creek', 'riverbank', 'waterfall']],
+  ['lake', ['lake', 'pond', 'pool', 'loch', 'tarn', 'spring']],
+  ['marsh', ['marsh', 'swamp', 'bog', 'fen', 'mire', 'wetland', 'bayou']],
+  ['forest', ['forest', 'wood', 'woods', 'grove', 'clearing', 'glade', 'thicket', 'jungle', 'orchard']],
+  ['ruin', ['ruin', 'temple', 'ancient', 'tomb', 'shrine', 'castle', 'tower', 'monument']],
+  ['wild', ['cave', 'wasteland', 'graveyard', 'cemetery', 'dead', 'badlands', 'desert']],
+  ['hill', ['hill', 'peak', 'lookout', 'mountain', 'cliff', 'summit', 'ridge', 'highland']],
+  ['town', ['town', 'village', 'square', 'market', 'city', 'street', 'plaza', 'bakery', 'shop', 'store', 'inn', 'tavern', 'cafe', 'café', 'school', 'library', 'museum', 'station', 'hamlet']],
+];
+
+/** The set named by the text, matching whole words (plurals too); in a name, the last one wins ("Dead Marsh"). */
+function placeSetIn(text, isName) {
+  let best = null;
+  for (const [set, words] of PLACE_WORDS) {
+    // "spring" is a lake only in a name; in a description it is the season.
+    const list = isName ? words : words.filter((w) => w !== 'spring');
+    for (const m of text.matchAll(new RegExp(`\\b(?:${list.join('|')})(?:e?s)?\\b`, 'g'))) {
+      if (!best || (isName ? m.index > best.index : m.index < best.index)) best = { set, index: m.index };
+    }
+  }
+  return best?.set ?? null;
+}
+
+export function autoPlace(pin, preset = null, room = { near: Infinity, open: 0 }) {
+  const name = pin.name.toLowerCase();
+  const desc = (pin.description ?? '').toLowerCase();
   const kindHint = { town: 'town', danger: 'wild', secret: 'ruin', landmark: null, region: 'forest', place: null }[pin.kind];
-  const set = (PLACE_PRESETS.includes(preset) ? preset : null) ?? pick(pin.name.toLowerCase()) ?? (pin.kind === 'town' ? 'town' : null) ?? pick(pin.description.toLowerCase()) ?? kindHint ?? 'meadow';
+  const set = (PLACE_PRESETS.includes(preset) ? preset : null) ?? placeSetIn(name, true) ?? (pin.kind === 'town' ? 'town' : null) ?? placeSetIn(desc, false) ?? kindHint ?? 'meadow';
+  const R = Number.isFinite(room.near) ? room.near : 60; // how far this place may spread
+  const turn = (p) => rotate(p, room.open ?? 0); // toward the open side
   const things = [];
   const terrain = [];
   let ground = null;
+  let wild;
   switch (set) {
     case 'town':
       ground = { surface: 'stone', r: 7 };
-      things.push({ id: `${pin.id}/centre`, kind: /fountain/.test(pin.description.toLowerCase()) ? 'fountain' : 'well', at: [0, 0] });
-      things.push({ kind: 'ring', of: 'house', r: 11, count: 5, start: 160, facing: 'in' });
+      things.push({ id: `${pin.id}/centre`, kind: /fountain/.test(desc + name) ? 'fountain' : 'well', at: [0, 0] });
+      // The gap in the ring of houses faces the establishing camera (it looks from 20°).
+      things.push({ kind: 'ring', of: 'house', r: 11, count: 5, start: 200, facing: 'in' });
       things.push({ kind: 'ring', of: 'lamp', r: 6.5, count: 4, start: 45 });
       break;
     case 'forest':
-      things.push({ kind: 'scatter', of: 'tree', area: { r: 22 }, avoid: { r: 6 }, count: 40, params: { variant: ['round', 'pine', 'oak'] } });
+      things.push({ kind: 'scatter', of: 'tree', area: { r: Math.min(22, R) }, avoid: { r: 6 }, count: Math.round(40 * Math.min(1, (R / 22) ** 2)) || 8, params: { variant: ['round', 'pine', 'oak'] } });
       things.push({ kind: 'scatter', of: 'mushroom', area: { r: 8 }, count: 5 });
       break;
-    case 'beach':
-      terrain.push({ type: 'sea', points: [[-60, 6], [60, 6], [60, 80], [-60, 80]], beach: 8 });
-      things.push({ kind: 'dock', at: [3, 3] });
-      things.push({ kind: 'scatter', of: 'tree', area: { r: 18 }, avoid: { r: 7 }, count: 8, params: { variant: 'palm' } });
+    case 'beach': {
+      // The sea lies on the open side, so it doesn't drown the places around; with little room
+      // its waterline comes closer.
+      const shore = Math.min(6, R * 0.35);
+      terrain.push({ type: 'sea', points: [[-60, shore], [60, shore], [60, 80], [-60, 80]].map(turn), beach: Math.min(8, shore + 2) });
+      things.push({ kind: 'dock', at: turn([3, shore - 3]), facing: room.open ?? 0 });
+      // Palms between the cast and the sea, leaving the camera's side (the land) open.
+      things.push({ kind: 'scatter', of: 'tree', area: { at: turn([0, shore + 2]), r: Math.min(5, R * 0.4) }, avoid: { r: 4 }, count: 5, params: { variant: 'palm' } });
       break;
+    }
     case 'river':
       terrain.push({ type: 'river', points: [[-40, 4], [-10, 5], [10, 3], [40, 5]], width: 4 });
       things.push({ kind: 'bridge', at: [0, 4.2], facing: 90 });
       // The watermill's wheel is on its +X side: turned 270°, +X points south, into the river.
-      if (/mill/.test(pin.name.toLowerCase())) things.push({ kind: 'watermill', at: [-6, 0.2], facing: 270 });
+      if (/\bmill/.test(name)) things.push({ kind: 'watermill', at: [-6, 0.2], facing: 270 });
       break;
     case 'lake':
       terrain.push({ type: 'pond', at: [0, 6], r: 6 });
       things.push({ kind: 'scatter', of: 'reeds', area: { at: [0, 6], r: 7 }, count: 6, onWater: true });
+      if (/\b(lily|lilies|lotus|pads?)\b/.test(name + ' ' + desc)) things.push({ kind: 'scatter', of: 'lilypads', area: { at: [0, 6], r: 4.5 }, count: 6, onWater: true });
+      break;
+    case 'marsh':
+      // Shallow pools among reeds and bare trees; little that flowers.
+      terrain.push({ type: 'pond', at: [-4, 5], r: 3.2, depth: 0.45 }, { type: 'pond', at: [5, 3], r: 2.4, depth: 0.4 }, { type: 'pond', at: [1, -6], r: 2.8, depth: 0.45 });
+      things.push({ kind: 'scatter', of: 'reeds', area: { r: Math.min(12, R) }, avoid: { r: 2.5 }, count: 14 });
+      things.push({ kind: 'scatter', of: 'tree', area: { r: Math.min(18, R) }, avoid: { r: 6 }, count: 7, params: { variant: 'dead' } });
+      wild = { grass: 0.8, flowers: 0 };
       break;
     case 'ruin':
       things.push({ kind: 'ruin', at: [0, -2] });
-      things.push({ kind: 'scatter', of: 'tree', area: { r: 20 }, avoid: { r: 7 }, count: 16 });
+      things.push({ kind: 'scatter', of: 'tree', area: { r: Math.min(20, R) }, avoid: { r: 7 }, count: 16 });
       break;
     case 'wild':
-      things.push({ kind: 'scatter', of: 'tree', area: { r: 20 }, avoid: { r: 5 }, count: 25, params: { variant: 'dead' } });
+      things.push({ kind: 'scatter', of: 'tree', area: { r: Math.min(20, R) }, avoid: { r: 5 }, count: 25, params: { variant: 'dead' } });
       things.push({ kind: 'scatter', of: 'rock', area: { r: 10 }, count: 8 });
+      wild = { grass: 0.45, flowers: 0 };
       break;
     case 'hill':
       terrain.push({ type: 'hill', at: [0, 0], r: 14, height: 3 });
-      things.push({ kind: 'scatter', of: 'flowers', area: { r: 8 }, count: 8 });
+      // Something on top to look at, and somewhere to sit.
+      things.push({ kind: 'tree', at: [-1.2, -1.6], variant: 'round' });
+      things.push({ kind: 'bench', at: [1.4, 0.4], facing: 200 });
+      things.push({ kind: 'scatter', of: 'flowers', area: { r: 8 }, count: 10 });
       break;
     default:
-      things.push({ kind: 'scatter', of: 'tree', area: { r: 20 }, avoid: { r: 7 }, count: 14 });
+      things.push({ kind: 'scatter', of: 'tree', area: { r: Math.min(20, R) }, avoid: { r: 7 }, count: 14 });
       things.push({ kind: 'scatter', of: 'flowers', area: { r: 8 }, count: 6 });
   }
-  return { things, terrain, ground, auto: set };
+  // Where the camera looks from (local degrees, 0 = south): on a beach, from the land, so the sea
+  // is behind the cast.
+  const view = set === 'beach' ? ((room.open ?? 0) + 180) % 360 : 0;
+  return { things, terrain, ground, ...(wild ? { wild } : {}), ...(view ? { view } : {}), auto: set };
 }
 
 /** Guess a 3D look from a canvas character card (species, hair and colors from the text). */

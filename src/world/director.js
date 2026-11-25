@@ -10,7 +10,9 @@ import { SPECIES } from '../engine/species.js';
 import { EMOTIONS } from '../engine/emotions.js';
 
 // Ground cover a character can stand in or next to without looking wrong.
-const SOFT_KINDS = new Set(['flowers', 'grass', 'mushroom', 'reeds', 'lilypads', 'leafpile', 'shells', 'steppingstones']);
+const SOFT_KINDS = new Set(['flowers', 'grass', 'mushroom', 'reeds', 'lilypads', 'leafpile', 'shells', 'steppingstones', 'dock', 'bridge']);
+// Things you stand on: a free mark over one stands on its deck, not in the water below.
+const WALKABLE = new Set(['dock', 'bridge', 'steppingstones']);
 
 /**
  * The director stages one scene at a time on a WorldStage: it builds the set (terrain and
@@ -319,7 +321,7 @@ export class Director {
 
   setKeyFor(state) {
     const things = [...state.things.values()].map((t) => JSON.stringify(t)).sort().join('|');
-    const ground = JSON.stringify(this.world.terrain) + JSON.stringify(this.world.direction.colors ?? {});
+    const ground = JSON.stringify(this.world.terrain) + JSON.stringify(this.world.direction.colors ?? {}) + JSON.stringify(state.place?.wild ?? null) + JSON.stringify(this.world.direction.edge ?? null);
     return `${state.place?.id}|${state.season}|${hashString(things)}|${hashString(ground)}`;
   }
 
@@ -341,6 +343,7 @@ export class Director {
 
   async showState(state, overrides = {}, { keepShot = false } = {}) {
     if (!state || this.disposed) return null;
+    const gen = this.gen = (this.gen ?? 0) + 1; // a show started later wins
     const sceneOf = (s) => (s?.page ? `page:${s.page.id}` : `place:${s?.place?.id}`);
     const sameScene = keepShot && this.state && sceneOf(this.state) === sceneOf(state);
     const previousShot = this.shotIndex;
@@ -355,8 +358,8 @@ export class Director {
       this.setKey = key;
     }
     this.stage.setMoment({ hour: state.hour, weather: state.weather, season: state.season, day: state.day, ambient: state.ambient });
-    await this.stageCast(state);
-    if (this.disposed) return null;
+    await this.stageCast(state, gen);
+    if (this.disposed || gen !== this.gen) return null;
     this.shots = state.shots;
     // Re-staging the same page (the canvas changed) keeps the shot, and leaves alone a camera
     // the viewer has moved.
@@ -406,7 +409,7 @@ export class Director {
     return character;
   }
 
-  async stageCast(state) {
+  async stageCast(state, gen = this.gen) {
     const keep = new Set(state.cast.map((e) => e.who));
     for (const [id, member] of this.cast) {
       if (!keep.has(id)) { member.character.root.removeFromParent(); }
@@ -418,7 +421,7 @@ export class Director {
     }
     this.cast.clear();
     const members = (await Promise.all(state.cast.map(async (entry) => ({ entry, character: await this.characterFor(entry) })))).filter((m) => m.character);
-    if (this.disposed) return;
+    if (this.disposed || gen !== this.gen) return; // a newer show is staging its own cast
     // Positions first (facing can point at other cast members).
     for (const m of members) {
       m.mark = this.markFor(m.entry, state);
@@ -427,7 +430,7 @@ export class Director {
     this.settleAutoMarks(members, state);
     for (const m of members) {
       const p = m.mark.position;
-      if (m.mark.free && !m.entry.auto && this.set.terrain.isWater(p.x, p.z)) state.warnings.push(`${m.entry.character.name} stands in the water.`);
+      if (m.mark.free && !m.mark.onDeck && !m.entry.auto && this.set.terrain.isWater(p.x, p.z)) state.warnings.push(`${m.entry.character.name} stands in the water.`);
     }
     const centroid = members.length ? members.reduce((a, m) => [a[0] + m.mark.position.x / members.length, a[1] + m.mark.position.z / members.length], [0, 0]) : [0, 0];
     for (const m of members) {
@@ -477,9 +480,32 @@ export class Director {
   /** Somewhere a character can stand: dry with a little margin, not steep, clear of solid props. */
   standable(x, z) {
     const t = this.set.terrain;
-    if (t.heightAt(x, z) < WATER_LEVEL + 0.12 || t.slopeAt(x, z) > 0.4) return false;
-    for (const [dx, dz] of [[0.4, 0], [-0.4, 0], [0, 0.4], [0, -0.4]]) if (t.heightAt(x + dx, z + dz) < WATER_LEVEL + 0.05) return false;
-    return !(this.set.footprints ?? []).some((f) => f.solid && Math.hypot(x - f.x, z - f.z) < f.r);
+    const blocked = (this.set.footprints ?? []).some((f) => f.solid && Math.hypot(x - f.x, z - f.z) < f.r);
+    if (blocked) return false;
+    if (this.deckHeight(x, z) > -Infinity) return true; // a pier or a bridge
+    if (t.heightAt(x, z) < WATER_LEVEL + 0.06 || t.slopeAt(x, z) > 0.4) return false;
+    for (const [dx, dz] of [[0.4, 0], [-0.4, 0], [0, 0.4], [0, -0.4]]) if (t.heightAt(x + dx, z + dz) < WATER_LEVEL + 0.02) return false;
+    return true;
+  }
+
+  /** The deck of a pier, dock or bridge under (x, z): its lowest upward face above the water. */
+  deckHeight(x, z) {
+    let top = -Infinity;
+    const ray = new THREE.Raycaster(new THREE.Vector3(x, 40, z), new THREE.Vector3(0, -1, 0), 0, 80);
+    const up = new THREE.Vector3();
+    for (const o of this.set?.objects.values() ?? []) {
+      if (!WALKABLE.has(o.userData.kind)) continue;
+      const b = boundsOf(o);
+      if (x < b.min.x || x > b.max.x || z < b.min.z || z > b.max.z) continue;
+      let lowest = Infinity;
+      for (const hit of ray.intersectObject(o, true)) {
+        if (!hit.face || hit.point.y < WATER_LEVEL - 0.05) continue;
+        up.copy(hit.face.normal).transformDirection(hit.object.matrixWorld);
+        if (up.y > 0.7) lowest = Math.min(lowest, hit.point.y);
+      }
+      if (lowest < Infinity) top = Math.max(top, lowest);
+    }
+    return top;
   }
 
   /**
@@ -523,9 +549,11 @@ export class Director {
       }
       state.warnings.push(`${entry.character.name} stands at "${at}", which is not in the scene.`);
     }
-    const [x, z] = typeof at === 'string' ? place.pos : this.world.resolveAt(at, place, state.things);
-    const y = this.set.terrain.heightAt(x, z);
-    return { position: new THREE.Vector3(x, Math.max(y, WATER_LEVEL), z), yaw: (place?.rotate ?? 0) * D2R, pose: entry.pose ?? 'stand', free: true };
+    const [x, z] = typeof at === 'string' ? place.pos : this.world.resolveAt(at, place, state.things, undefined, (t) => state.warnings.push(t));
+    const ground = Math.max(this.set.terrain.heightAt(x, z), WATER_LEVEL);
+    const deck = this.deckHeight(x, z);
+    const onDeck = deck > ground - 0.05;
+    return { position: new THREE.Vector3(x, onDeck ? deck : ground, z), yaw: (place?.rotate ?? 0) * D2R, pose: entry.pose ?? 'stand', free: true, onDeck };
   }
 
   positionOf(ref, members, state) {
@@ -578,8 +606,14 @@ export class Director {
       pos = new THREE.Vector3(px, shot.pos[1], pz);
       target = new THREE.Vector3(tx, shot.target[1], tz);
     } else {
-      const subs = this.subjects(shot);
-      const kind = shot.shot ?? (subs.length ? 'medium' : 'wide');
+      let subs = this.subjects(shot);
+      let kind = shot.shot ?? (subs.length ? 'medium' : 'wide');
+      if (shot.on && !subs.length) {
+        // Its subjects are gone (a deleted character): frame whoever is left, or the place.
+        subs = this.subjects({});
+        if (!subs.length) kind = 'wide';
+        else if (kind === 'close' || kind === 'over') kind = 'medium';
+      }
       const box = new THREE.Box3();
       for (const s of subs) box.expandByPoint(s.center.clone().addScalar(s.radius)).expandByPoint(s.center.clone().addScalar(-s.radius));
       const placeCenter = new THREE.Vector3(place.pos[0], this.set.terrain.heightAt(place.pos[0], place.pos[1]), place.pos[1]);
@@ -599,8 +633,8 @@ export class Director {
             let px = ab.z, pz = -ab.x;
             if (pz < 0) { px = -px; pz = -pz; }
             from = Math.atan2(px, pz) + (shot.turn ?? 12) * D2R;
-          } else from = ((place.rotate ?? 0) + 20) * D2R;
-        } else from = ((place.rotate ?? 0) + 20) * D2R;
+          } else from = ((place.rotate ?? 0) + (place.dir?.view ?? 0) + 20) * D2R;
+        } else from = ((place.rotate ?? 0) + (place.dir?.view ?? 0) + 20) * D2R;
       }
       const dir = new THREE.Vector3(Math.sin(from), 0, Math.cos(from));
       const half = Math.tan((fov * D2R) / 2);
@@ -736,18 +770,36 @@ export class Director {
     // a cluttered view of their faces in a wide shot, but a close-up is about the face.
     const faceWeight = { close: 2.5, medium: 1.2, two: 1.2, over: 0.6, low: 1.2 }[kind] ?? 0.45;
     const faces = subs.filter((s) => s.character);
+    // Half the average and half the worst: one back in the middle of the frame is enough to avoid.
     const backs = (p) => {
       if (!faces.length) return 0;
-      let b = 0;
+      let b = 0, worst = 0;
       for (const s of faces) {
         const dx = p.x - s.center.x, dz = p.z - s.center.z;
         const d = Math.hypot(dx, dz) || 1;
-        b += (1 - (Math.sin(s.yaw) * dx + Math.cos(s.yaw) * dz) / d) / 2;
+        const v = (1 - (Math.sin(s.yaw) * dx + Math.cos(s.yaw) * dz) / d) / 2;
+        b += v;
+        worst = Math.max(worst, v);
       }
-      return (b / faces.length) * faceWeight;
+      return ((b / faces.length) * 0.5 + worst * 0.5) * faceWeight;
+    };
+    // The cast hides each other too: a face behind someone else's body.
+    const bodies = [...this.cast.values()].map((m) => boundsOf(m.character.root));
+    const ray = new THREE.Ray(), hit = new THREE.Vector3();
+    const hidden = (p) => {
+      if (faces.length < 2 && bodies.length < 2) return 0;
+      let n = 0;
+      for (const s of faces) {
+        ray.origin.copy(p);
+        ray.direction.copy(s.head).sub(p);
+        const dist = ray.direction.length();
+        ray.direction.normalize();
+        if (bodies.some((b) => !b.containsPoint(s.head) && ray.intersectBox(b, hit) && hit.distanceTo(p) < dist - 0.2)) n++;
+      }
+      return faces.length ? (n / faces.length) * faceWeight * 1.5 : 0;
     };
     const off = pos.clone().sub(target);
-    let best = pos, bestScore = occlusion(pos) + backs(pos);
+    let best = pos, bestScore = occlusion(pos) + hidden(pos) + backs(pos);
     if (bestScore - backs(pos) < 0.02) return pos;
     // Try swinging around the subjects, coming closer or backing off, and rising; small
     // departures from the intended framing cost a little, so they only win when they help.
@@ -761,7 +813,7 @@ export class Director {
         if (!step && k === 1 && !up) continue;
         const o = flat.clone().multiplyScalar(k).applyAxisAngle(new THREE.Vector3(0, 1, 0), step * D2R).setY(rise * k + up);
         const p = target.clone().add(o);
-        const score = occlusion(p) + backs(p) + Math.abs(step) * 0.0015 + Math.abs(1 - k) * 0.12 + up * 0.06;
+        const score = occlusion(p) + hidden(p) + backs(p) + Math.abs(step) * 0.0015 + Math.abs(1 - k) * 0.12 + up * 0.06;
         if (window.DEBUG_FRAMING) console.log('framing', step, k, up, score.toFixed(2));
         if (score < bestScore - 0.03) { best = p; bestScore = score; }
       }

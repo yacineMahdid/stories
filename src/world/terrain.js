@@ -203,6 +203,8 @@ export function resolveFlatHeights(features, { seed = 7, roll = 0.35 } = {}) {
   for (const f of features) {
     if (!['flat', 'plaza', 'field'].includes(f.type) || (f.height != null && f.height !== 'auto') || !f.at) continue;
     f.height = Terrain.prototype.rawHeight.call(base, f.at[0], f.at[1]);
+    // An automatic place stands on dry ground even where the land around it lies low.
+    if (f.dry) f.height = Math.max(f.height, WATER_LEVEL + 0.25);
   }
   return features;
 }
@@ -285,6 +287,14 @@ export class Terrain {
     // beaches down to the sea. Land near water levels out, then the bank drops to the bed.
     water.sort((a, b) => (a.type === 'sea' ? 0 : a.type === 'river' ? 2 : 1) - (b.type === 'sea' ? 0 : b.type === 'river' ? 2 : 1));
     for (const f of water) {
+      // Water kept to a place's own room fades out toward the edge of it.
+      let keep = 1;
+      if (f.clip) {
+        const dc = Math.hypot(x - f.clip.at[0], z - f.clip.at[1]);
+        if (dc >= f.clip.r) continue;
+        keep = smooth(f.clip.r, f.clip.r - Math.min(6, f.clip.r * 0.3), dc);
+      }
+      const before = h;
       let d;
       if (f.type === 'river') d = distToPolyline(x, z, f.points) - (f.width ?? 4) / 2;
       else d = signedDistance(f, x, z);
@@ -305,6 +315,7 @@ export class Terrain {
           h = Math.min(h, -depth * t + (1 - t) * h);
         }
       }
+      if (keep < 1) h = before + (h - before) * keep;
     }
     return h;
   }
@@ -379,6 +390,12 @@ export class Terrain {
     for (const f of this.features) {
       if (f.type === 'sea') {
         ga.save();
+        if (f.clip) { // a sea kept to its place's room has its sand there too
+          const [cx, cz] = toPx(f.clip.at);
+          ga.beginPath();
+          ga.arc(cx, cz, Math.max(0, f.clip.r - 1) * k, 0, Math.PI * 2);
+          ga.clip();
+        }
         ga.lineWidth = (f.beach ?? 7) * 2 * k;
         ga.strokeStyle = CH.sand[1];
         ga.lineJoin = 'round';
