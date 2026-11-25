@@ -51,6 +51,8 @@ export class WorldView {
   setWorld(document: unknown, direction: Direction): unknown
   pages(): { index: number; id: string; title: string; path: string }[]
   showPage(pageId: string, overrides?: { hour?: number; weather?: string; season?: string }, options?: { keepShot?: boolean }): Promise<StageState | null>
+  /** Already showing this page or place of the current world, unchanged? */
+  showing(kind: 'page' | 'place', id: string, overrides?: Record<string, unknown>): boolean
   showPlace(pinId: string, moment?: { hour?: number; weather?: string; season?: string }): Promise<StageState | null>
   shot(i: number): Shot | undefined
   readonly shots: Shot[]

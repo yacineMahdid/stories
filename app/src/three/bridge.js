@@ -153,12 +153,28 @@ export class WorldView {
   suspend() { this.stage.paused = true; }
   resume() { if (this.el.isConnected) this.stage.paused = false; }
 
-  /** snapshot: tldraw getSnapshot(store).document; direction: data/staging.json contents. */
+  /**
+   * snapshot: tldraw getSnapshot(store).document; direction: data/staging.json contents.
+   * When nothing the 3D world reads has changed (a still put on a card, a card resized), the
+   * world is kept, and showing the same page or place again costs nothing.
+   */
   setWorld(document, direction) {
-    this.world = new World(readCanvas({ document }), direction ?? {});
+    const canvas = readCanvas({ document });
+    const sig = JSON.stringify([[...canvas.pins.values()], [...canvas.characters.values()], canvas.pages, canvas.stories]);
+    if (this.world && sig === this.worldSig && direction === this.worldDirection) return this.world;
+    this.worldSig = sig;
+    this.worldDirection = direction;
+    this.worldVersion = (this.worldVersion ?? 0) + 1;
+    this.world = new World(canvas, direction ?? {});
     if (!this.director) this.director = new Director(this.stage, this.world);
     else this.director.setWorld(this.world);
     return this.world;
+  }
+
+  /** Already showing this page or place of this very world (and nothing asked to change it)? */
+  showing(kind, id, overrides) {
+    const s = this.shown;
+    return !!s && s.kind === kind && s.id === id && s.version === this.worldVersion && !Object.values(overrides ?? {}).some((v) => v != null);
   }
 
   pages() {
@@ -178,17 +194,28 @@ export class WorldView {
    */
   showPage(pageId, overrides = {}, { keepShot = false } = {}) {
     const ticket = this.ticket = (this.ticket ?? 0) + 1;
-    return this.queue(() => {
+    return this.queue(async () => {
       if (ticket !== this.ticket) return null;
+      if (keepShot && this.showing('page', pageId, overrides)) return this.director.state;
       const i = this.world?.sceneIndex.get(pageId);
       if (i == null) return null;
-      return this.director.showState(this.world.sceneState(i), overrides, { keepShot });
+      const version = this.worldVersion;
+      const state = await this.director.showState(this.world.sceneState(i), overrides, { keepShot });
+      this.shown = state ? { kind: 'page', id: pageId, version } : null;
+      return state;
     });
   }
 
   showPlace(pinId, moment = {}) {
     const ticket = this.ticket = (this.ticket ?? 0) + 1;
-    return this.queue(() => (ticket !== this.ticket ? null : this.director.showPlace(pinId, moment)));
+    return this.queue(async () => {
+      if (ticket !== this.ticket) return null;
+      if (this.showing('place', pinId, moment)) return this.director.state;
+      const version = this.worldVersion;
+      const state = await this.director.showPlace(pinId, moment);
+      this.shown = state ? { kind: 'place', id: pinId, version } : null;
+      return state;
+    });
   }
 
   shot(i) { return this.director?.shot(i); }

@@ -237,15 +237,24 @@ export class World {
     }
     const inherit = (key) => { for (const s of [scene, ...chain]) if (s.dir[key] != null) return s.dir[key]; return null; };
 
-    // Place.
+    // Place: the direction's, else the page's first place still on the map (also through the
+    // pages it continues).
     let place = null;
+    const lost = [];
     for (const s of [scene, ...chain]) {
-      const ref = s.dir.place ?? s.page.locationIds?.[0];
-      if (ref) { place = this.placeByName(ref); if (place) break; }
+      for (const ref of [s.dir.place, ...(s.page.locationIds ?? [])].filter(Boolean)) {
+        place = this.placeByName(ref);
+        if (place) break;
+        lost.push(ref);
+      }
+      if (place) break;
     }
+    const misnamed = lost.find((ref) => !String(ref).startsWith('shape:')); // a direction "place" that isn't a pin
+    if (misnamed) warnings.push(`The direction puts this page at "${misnamed}", which is not on the map.`);
     if (!place) {
       place = this.places.values().next().value ?? null;
-      if (!page.locationIds?.length) warnings.push('This page has no place on the map yet; showing the first place.');
+      if (lost.some((ref) => String(ref).startsWith('shape:'))) warnings.push(`This page's map pin was deleted; showing ${place?.name ?? 'an empty meadow'} instead.`);
+      else if (!page.locationIds?.length) warnings.push('This page has no place on the map yet; showing the first place.');
     }
     if (!place) {
       place = this.nowhere();
@@ -531,21 +540,81 @@ export function autoPlace(pin, preset = null) {
 }
 
 /** Guess a 3D look from a canvas character card (species, hair and colors from the text). */
+const SPECIES_WORDS = {
+  cat: ['cat', 'kitten', 'kitty', 'tomcat', 'feline'],
+  dog: ['dog', 'puppy', 'pup', 'hound', 'pooch', 'canine'],
+  horse: ['horse', 'pony', 'stallion', 'mare', 'colt', 'filly'],
+  cow: ['cow', 'bull', 'calf', 'ox'],
+  frog: ['frog', 'toad'],
+  monkey: ['monkey', 'chimp', 'chimpanzee'],
+  baboon: ['baboon'],
+  gorilla: ['gorilla', 'ape'],
+};
+const HAIR_COLORS = {
+  blonde: '#e0b45c', blond: '#e0b45c', golden: '#e0b45c', red: '#d4692e', ginger: '#d4692e', auburn: '#8a3b22',
+  black: '#1f1b1a', dark: '#1f1b1a', brown: '#4a2f22', gray: '#c8c3ba', grey: '#c8c3ba', silver: '#c8c3ba',
+  white: '#ece7df', pink: '#f29ab2', blue: '#4d7cc9', green: '#5aa56a', purple: '#8a5cc2',
+};
+const HAIR_STYLES = [
+  ['pigtails', /\b(pigtails?|braids|plaits|twin ?tails)\b/],
+  ['ponytail', /\bpony ?tail\b/],
+  ['bun', /\b(bun|top ?knot|chignon)\b/],
+  ['bob', /\b(bob|bobbed)\b/],
+  ['spiky', /\b(spiky|spiked)\b/],
+  ['swept', /\b(swept|side-swept|slicked)\b/],
+  ['long', /\blong[- ](?:[a-z]+[- ])?hair(?:ed)?\b|\b(?:flowing|long) locks\b/],
+];
+const CLOTH_COLORS = {
+  red: '#d9473c', orange: '#ee8a3a', yellow: '#f2c94c', green: '#5aa56a', blue: '#4f86c6', navy: '#2f3d57',
+  teal: '#2f9a94', purple: '#8a5cc2', pink: '#f29ab2', white: '#f4f1ea', cream: '#f2e6c8', beige: '#d9c3a0',
+  brown: '#7a5338', black: '#2b2b2e', gray: '#8c8f96', grey: '#8c8f96',
+};
+const TOPS = 'cardigan|sweater|sweatshirt|jumper|shirt|t-shirt|polo|blouse|jacket|coat|raincoat|overcoat|parka|poncho|hoodie|tunic|vest|top|dress|apron|overalls|smock';
+const BOTTOMS = 'pants|trousers|shorts|skirt|jeans|overalls|dungarees';
+const SKIN_TONES = [
+  [/\b(pale|fair|light)[- ]skin(?:ned)?\b/, '#f8d3b0'],
+  [/\b(?:olive|tan)[- ]skin(?:ned)?\b|\btanned\b/, '#e0a47c'],
+  [/\b(deep|dark brown)[- ]skin(?:ned)?\b/, '#6e4a33'],
+  [/\b(brown|dark)[- ]skin(?:ned)?\b/, '#9c6a48'],
+];
+
+/** The first species named in the text, as a whole word ("Catherine" and "dogged" don't count). */
+function speciesIn(text) {
+  let best = null;
+  for (const [species, words] of Object.entries(SPECIES_WORDS)) {
+    const m = new RegExp(`\\b(?:${words.join('|')})\\b(?!-like|-shaped)`).exec(text);
+    if (m && (!best || m.index < best.index)) best = { species, index: m.index };
+  }
+  return best?.species ?? 'human';
+}
+
 export function guessSpec(c) {
-  const text = `${c.appearance ?? ''} ${c.role ?? ''} ${c.name ?? ''}`.toLowerCase();
-  const species = ['monkey', 'baboon', 'gorilla', 'cow', 'dog', 'cat', 'horse', 'frog'].find((s) => text.includes(s)) ?? 'human';
+  // What the character looks like comes from the appearance and the role; the name only
+  // seeds the choices the text leaves open (a "Catherine" isn't a cat, a "Bobby" has no bob).
+  const text = `${c.appearance ?? ''} ${c.role ?? ''}`.toLowerCase();
+  const species = speciesIn(text);
   const h = hashString(c.id ?? c.name ?? 'x');
-  const hairColors = { blonde: '#e0b45c', blond: '#e0b45c', red: '#d4692e', ginger: '#d4692e', black: '#1f1b1a', brown: '#4a2f22', gray: '#c8c3ba', grey: '#c8c3ba', white: '#ece7df', pink: '#f29ab2', blue: '#4d7cc9' };
-  const hairWord = Object.keys(hairColors).find((w) => text.includes(`${w} hair`));
-  const styles = ['bob', 'spiky', 'swept', 'pigtails', 'ponytail', 'bun', 'long'];
-  const styleWord = styles.find((s) => text.includes(s));
+  const colorWord = (words, nouns) => new RegExp(`\\b(${Object.keys(words).join('|')})(?:[- ](?:and[- ])?[a-z]+)?[- ](?:${nouns})\\b`).exec(text)?.[1];
+  let hairWord = /\bredhead\b/.test(text) ? 'red' : colorWord(HAIR_COLORS, 'hair|haired|locks|curls|braids|pigtails|ponytail|bob|bun');
+  if (hairWord === 'dark' && /\bdark[- ]brown\b/.test(text)) hairWord = 'brown';
+  const styleWord = HAIR_STYLES.find(([, re]) => re.test(text))?.[0];
+  // Without a style in the text, boys and men get a short one.
+  const styles = /\b(boy|man|men|he|him|his|gentleman|father|dad|grandpa|grandfather|uncle|king|prince|lad)\b/.test(text)
+    ? ['spiky', 'swept', 'bob'] : ['bob', 'spiky', 'swept', 'pigtails', 'ponytail', 'bun', 'long'];
   const skins = ['#f8d3b0', '#f1c39c', '#e0a47c', '#c98e66', '#9c6a48', '#6e4a33'];
-  const top = c.color ?? ['#e2483c', '#4f86c6', '#5aa56a', '#f2c94c', '#9a72c9'][h % 5];
+  const topWord = colorWord(CLOTH_COLORS, TOPS);
+  const bottomWord = colorWord(CLOTH_COLORS, BOTTOMS);
   const spec = {
     species,
-    skin: skins[h % skins.length],
-    hair: { style: styleWord ?? styles[h % styles.length], color: hairWord ? hairColors[hairWord] : ['#4a2f22', '#1f1b1a', '#7a4a2c', '#e0b45c'][(h >> 3) % 4] },
-    outfit: { top, sleeves: ['short', 'long', 'elbow'][(h >> 5) % 3], bottom: ['#2f3640', '#5a4636', '#3f5f8a'][(h >> 7) % 3], legs: ['shorts', 'pants', 'knee'][(h >> 9) % 3], shoes: '#4a3a30' },
+    skin: SKIN_TONES.find(([re]) => re.test(text))?.[1] ?? skins[h % skins.length],
+    hair: { style: styleWord ?? styles[h % styles.length], color: hairWord ? HAIR_COLORS[hairWord] : ['#4a2f22', '#1f1b1a', '#7a4a2c', '#e0b45c'][(h >>> 3) % 4] },
+    outfit: {
+      top: topWord ? CLOTH_COLORS[topWord] : c.color ?? ['#e2483c', '#4f86c6', '#5aa56a', '#f2c94c', '#9a72c9'][h % 5],
+      sleeves: /\b(sleeveless|tank top)\b/.test(text) ? 'none' : /\b(cardigan|sweater|sweatshirt|jumper|jacket|coat|raincoat|overcoat|parka|hoodie|long[- ]sleeved?)\b/.test(text) ? 'long' : ['short', 'long', 'elbow'][(h >>> 5) % 3],
+      bottom: bottomWord ? CLOTH_COLORS[bottomWord] : ['#2f3640', '#5a4636', '#3f5f8a'][(h >>> 7) % 3],
+      legs: /\b(shorts)\b/.test(text) ? 'shorts' : /\b(pants|trousers|jeans|overalls|dungarees)\b/.test(text) ? 'pants' : /\b(skirt|dress)\b/.test(text) ? 'knee' : ['shorts', 'pants', 'knee'][(h >>> 9) % 3],
+      shoes: '#4a3a30',
+    },
     guessed: true,
   };
   if (species !== 'human') delete spec.skin, delete spec.hair;

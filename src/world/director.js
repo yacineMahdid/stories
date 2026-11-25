@@ -9,6 +9,9 @@ import { createCharacter } from '../engine/character.js';
 import { SPECIES } from '../engine/species.js';
 import { EMOTIONS } from '../engine/emotions.js';
 
+// Ground cover a character can stand in or next to without looking wrong.
+const SOFT_KINDS = new Set(['flowers', 'grass', 'mushroom', 'reeds', 'lilypads', 'leafpile', 'shells', 'steppingstones']);
+
 /**
  * The director stages one scene at a time on a WorldStage: it builds the set (terrain and
  * every thing around the scene's place), puts the cast on their marks, sets the moment
@@ -94,8 +97,10 @@ class SceneSet {
     // 4. Scatters, wild ground cover and the forest edge.
     const footprints = [...this.objects.values()].map((o) => {
       const fp = o.userData.footprint ?? { r: 0.5 };
-      return { x: o.position.x, z: o.position.z, r: (fp.r ?? Math.hypot(fp.w ?? 1, fp.d ?? 1) / 2) * o.scale.x + 0.3 };
+      return { x: o.position.x, z: o.position.z, r: (fp.r ?? Math.hypot(fp.w ?? 1, fp.d ?? 1) / 2) * o.scale.x + 0.3, solid: !SOFT_KINDS.has(o.userData.kind) };
     });
+    // Kept for the cast: automatic marks stay clear of anything solid.
+    this.footprints = footprints;
     for (const s of scatters) this.scatter(s, footprints, ctx);
     this.wild(state, footprints, ctx);
     this.forestEdge(state, ctx);
@@ -185,7 +190,7 @@ class SceneSet {
       const inst = instanced(proto, g.matrices);
       inst.name = `scatter:${s.id}:${g.kind}`;
       this.object.add(inst);
-      footprints.push(...g.matrices.map((m) => ({ x: m.elements[12], z: m.elements[14], r: 0.6 })));
+      footprints.push(...g.matrices.map((m) => ({ x: m.elements[12], z: m.elements[14], r: 0.6, solid: !SOFT_KINDS.has(g.kind) })));
     }
   }
 
@@ -410,6 +415,11 @@ export class Director {
       m.mark = this.markFor(m.entry, state);
       this.stage.scene.add(m.character.root);
     }
+    this.settleAutoMarks(members, state);
+    for (const m of members) {
+      const p = m.mark.position;
+      if (m.mark.free && !m.entry.auto && this.set.terrain.isWater(p.x, p.z)) state.warnings.push(`${m.entry.character.name} stands in the water.`);
+    }
     const centroid = members.length ? members.reduce((a, m) => [a[0] + m.mark.position.x / members.length, a[1] + m.mark.position.z / members.length], [0, 0]) : [0, 0];
     for (const m of members) {
       const { entry, character, mark } = m;
@@ -453,6 +463,40 @@ export class Director {
     this.set?.lights?.addFrom(object, { moving: true });
     if (object.userData.tick) this.set?.ticks.push(object);
     return object;
+  }
+
+  /** Somewhere a character can stand: dry with a little margin, not steep, clear of solid props. */
+  standable(x, z) {
+    const t = this.set.terrain;
+    if (t.heightAt(x, z) < WATER_LEVEL + 0.12 || t.slopeAt(x, z) > 0.4) return false;
+    for (const [dx, dz] of [[0.4, 0], [-0.4, 0], [0, 0.4], [0, -0.4]]) if (t.heightAt(x + dx, z + dz) < WATER_LEVEL + 0.05) return false;
+    return !(this.set.footprints ?? []).some((f) => f.solid && Math.hypot(x - f.x, z - f.z) < f.r);
+  }
+
+  /**
+   * Characters gathered automatically (a page lists them, the direction doesn't place them)
+   * stand in a little group by the pin. When any of them would be in water or inside a prop,
+   * the whole group moves, in formation, to the nearest place where everyone can stand.
+   */
+  settleAutoMarks(members, state) {
+    const auto = members.filter((m) => m.entry.auto && m.mark.free);
+    if (!auto.length || !this.set) return;
+    const ok = (dx, dz) => auto.every((m) => this.standable(m.mark.position.x + dx, m.mark.position.z + dz));
+    if (ok(0, 0)) return;
+    for (let r = 0.5; r <= 20; r += 0.5) {
+      const steps = Math.max(8, Math.round(r * 6));
+      for (let k = 0; k < steps; k++) {
+        const a = (k / steps) * Math.PI * 2;
+        const dx = Math.sin(a) * r, dz = Math.cos(a) * r;
+        if (!ok(dx, dz)) continue;
+        for (const m of auto) {
+          const p = m.mark.position;
+          p.set(p.x + dx, this.set.terrain.heightAt(p.x + dx, p.z + dz), p.z + dz);
+        }
+        return;
+      }
+    }
+    state.warnings.push('There is no dry, open ground near this place for the cast.');
   }
 
   /** Where a cast entry stands: { position, yaw, pose }. */

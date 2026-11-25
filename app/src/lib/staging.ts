@@ -41,7 +41,7 @@ export async function loadStaging(): Promise<void> {
   try {
     const res = await fetch('/api/staging')
     let fresh: Direction
-    if (res.status === 404) fresh = {}
+    if (res.status === 204 || res.status === 404) fresh = {} // no direction yet: everything is automatic
     else if (!res.ok) {
       const why = (await res.text().catch(() => '')).replace(/^\w*Error: /, '').slice(0, 160)
       throw new Error(`data/staging.json could not be read${why ? `: ${why}` : ` (${res.status})`}. Fix it; it is read again when you come back to this tab.`)

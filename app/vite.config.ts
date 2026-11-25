@@ -99,8 +99,9 @@ function storyDataApi(): Plugin {
       server.middlewares.use(async (req, res, next) => {
         const url = new URL(req.url ?? '/', 'http://local')
         try {
+          // A missing file is "nothing yet" (204), not an error: a fresh start logs nothing.
           if (url.pathname === '/api/world' && req.method === 'GET') {
-            if (!fs.existsSync(WORLD_FILE)) { res.statusCode = 404; return res.end() }
+            if (!fs.existsSync(WORLD_FILE)) { res.statusCode = 204; return res.end() }
             res.setHeader('content-type', 'application/json')
             return res.end(fs.readFileSync(WORLD_FILE))
           }
@@ -115,7 +116,7 @@ function storyDataApi(): Plugin {
           // It is also written by hand, so the app sends small edits (set or delete one path)
           // that are applied to the file as it is on disk, never a stale copy of all of it.
           if (url.pathname === '/api/staging' && req.method === 'GET') {
-            if (!fs.existsSync(STAGING_FILE)) { res.statusCode = 404; return res.end() }
+            if (!fs.existsSync(STAGING_FILE)) { res.statusCode = 204; return res.end() }
             const text = fs.readFileSync(STAGING_FILE, 'utf8')
             JSON.parse(text) // a broken file is an error the app must show, not an empty direction
             res.setHeader('content-type', 'application/json')

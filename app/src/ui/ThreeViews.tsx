@@ -88,6 +88,14 @@ export function CharacterLook({ shape, onPortrait }: { editor: Editor; shape: Ch
   useEffect(() => { studio.show(look) }, [key])
 
   const save = (next: Look) => setIn(['characters', entryKey], clean(next))
+  // Animals start without hair, like the guessed looks; going back to a person brings it back.
+  const lastHair = useRef<{ id: string; hair?: Look['hair'] }>({ id: shape.id })
+  if (lastHair.current.id !== shape.id) lastHair.current = { id: shape.id }
+  if (look.hair) lastHair.current.hair = look.hair
+  const changeSpecies = (next: string) => save({
+    ...look, species: next, skin: undefined, fur: undefined,
+    hair: next === 'human' ? look.hair ?? lastHair.current.hair ?? { style: 'bob', color: '#4a2f22' } : undefined,
+  })
   const set = (patch: Look) => save({ ...look, ...patch })
   const setGroup = (group: 'outfit' | 'face' | 'hair', patch: Record<string, any>) => save({ ...look, [group]: clean({ ...(look[group] ?? {}), ...patch }) })
   const species = look.species ?? 'human'
@@ -106,7 +114,7 @@ export function CharacterLook({ shape, onPortrait }: { editor: Editor; shape: Ch
       <Slot view={studio} className="three-slot tall" />
       <div className="three-grid">
         <label>Species
-          <select value={species} onChange={(e) => save({ ...look, species: e.target.value, skin: undefined, fur: undefined })}>
+          <select value={species} onChange={(e) => changeSpecies(e.target.value)}>
             <Options value={species} list={lookOptions.species.map((s) => [s.id, s.label])} />
           </select>
         </label>
@@ -180,10 +188,11 @@ export function PlacePreview({ editor, shape }: { editor: Editor; shape: PinShap
 
   useEffect(() => {
     let live = true
-    setBusy(true)
     // A moment's wait first, so clicking through pins quickly builds only the one you stop on.
     const t = setTimeout(() => {
       view.setWorld(doc, direction)
+      if (view.showing('place', shape.id)) return setBusy(false) // nothing 3D changed
+      setBusy(true)
       view.showPlace(shape.id).catch((e) => console.error(e)).finally(() => { if (live) setBusy(false) })
     }, SETTLE_MS)
     return () => { live = false; clearTimeout(t) }
@@ -231,12 +240,14 @@ export function PagePreview({ editor, shape }: { editor: Editor; shape: SceneSha
   const shownRef = useRef<string | null>(null)
   useEffect(() => {
     let live = true
-    setBusy(true)
     const t = setTimeout(() => {
       view.setWorld(doc, direction)
-      // The same page again (the canvas changed): keep the shot and the camera.
+      // The same page again (the canvas changed): keep the shot and the camera, and when
+      // nothing 3D changed (a still put on the card), leave the stage as it is.
       const keepShot = shownRef.current === shape.id
+      if (keepShot && view.showing('page', shape.id)) return setBusy(false)
       shownRef.current = shape.id
+      setBusy(true)
       view.showPage(shape.id, {}, { keepShot }).then((s) => { if (live) { setState(s); if (!keepShot) setShot(0) } }).catch((e) => console.error(e)).finally(() => { if (live) setBusy(false) })
     }, SETTLE_MS)
     return () => { live = false; clearTimeout(t) }
@@ -294,10 +305,24 @@ export function StageOverlay({ editor, pageId, onClose }: { editor: Editor; page
   const direction = useStaging()
   const doc = useCanvasDocument(editor)
   const view = useMemo(() => new WorldView(), [])
+  const rootRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     coverPreviews(true)
+    // While the stage is open, the canvas underneath takes no keys (Backspace would delete the
+    // selected shape, letters would switch tools) and nothing behind the stage can be focused.
+    const wasFocused = editor.getIsFocused()
+    editor.blur()
+    const root = rootRef.current
+    const behind = [...(root?.parentElement?.children ?? [])].filter((el) => el !== root)
+    behind.forEach((el) => el.setAttribute('inert', ''))
+    root?.focus()
     if (import.meta.env.DEV) (window as any).stageView = view // handy for debugging in the console
-    return () => { view.dispose(); coverPreviews(false) }
+    return () => {
+      behind.forEach((el) => el.removeAttribute('inert'))
+      view.dispose()
+      coverPreviews(false)
+      if (wasFocused) editor.focus()
+    }
   }, [view])
   const [pages, setPages] = useState<{ id: string; title: string; path: string }[]>([])
   const [current, setCurrent] = useState<string | undefined>(pageId)
@@ -315,9 +340,10 @@ export function StageOverlay({ editor, pageId, onClose }: { editor: Editor; page
     if (!id) { setBusy(false); setState(null); return }
     if (id !== current) setCurrent(id)
     let live = true
+    const keepShot = shownRef.current === id
+    if (keepShot && view.showing('page', id)) { setBusy(false); return } // nothing 3D changed
     setBusy(true)
     const t = setTimeout(() => {
-      const keepShot = shownRef.current === id
       shownRef.current = id
       view.showPage(id, {}, { keepShot }).then((s) => { if (live) { setState(s); if (!keepShot) setShot(0) } }).catch((e) => console.error(e)).finally(() => { if (live) setBusy(false) })
     }, SETTLE_MS)
@@ -351,13 +377,19 @@ export function StageOverlay({ editor, pageId, onClose }: { editor: Editor; page
     return () => window.removeEventListener('keydown', key)
   }, [index, pages])
 
+  // A new season rebuilds the set: show "Staging…" first, then do the work.
+  const changeSeason = (season: string) => {
+    setBusy(true)
+    setTimeout(() => view.retime({ season }).then(() => setState({ ...(view.state as StageState) })).finally(() => setBusy(false)), 50)
+  }
+
   const retime = (m: { hour?: number; weather?: string; season?: string }) => {
     if (m.hour != null || m.weather) setState((s) => (s ? { ...s, ...m } as StageState : s))
     view.retime(m).then(() => setState({ ...(view.state as StageState) }))
   }
 
   return (
-    <div className="stage-overlay" role="dialog" aria-label="3D stage">
+    <div className="stage-overlay" role="dialog" aria-modal="true" aria-label="3D stage" tabIndex={-1} ref={rootRef}>
       <Slot view={view} className="stage-view" />
       <header className="stage-bar">
         <button onClick={onClose} aria-label="Close the 3D stage">✕</button>
@@ -393,7 +425,7 @@ export function StageOverlay({ editor, pageId, onClose }: { editor: Editor; page
             <select value={state.weather} onChange={(e) => retime({ weather: e.target.value })} aria-label="Weather">
               {weathers.map((w) => <option key={w.id} value={w.id}>{w.label}</option>)}
             </select>
-            <select value={state.season} onChange={(e) => { setBusy(true); view.retime({ season: e.target.value }).then(() => setState({ ...(view.state as StageState) })).finally(() => setBusy(false)) }} aria-label="Season">
+            <select value={state.season} onChange={(e) => changeSeason(e.target.value)} aria-label="Season">
               {SEASONS.map((s) => <option key={s} value={s}>{s[0].toUpperCase() + s.slice(1)}</option>)}
             </select>
           </div>
