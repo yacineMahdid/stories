@@ -569,6 +569,11 @@ const CLOTH_COLORS = {
   teal: '#2f9a94', purple: '#8a5cc2', pink: '#f29ab2', white: '#f4f1ea', cream: '#f2e6c8', beige: '#d9c3a0',
   brown: '#7a5338', black: '#2b2b2e', gray: '#8c8f96', grey: '#8c8f96',
 };
+const FUR_COLORS = {
+  golden: '#e0a84c', ginger: '#e8913c', orange: '#e8913c', black: '#3a3433', white: '#f2eee6', brown: '#8a5a3c',
+  chocolate: '#6b4430', gray: '#a3a3a8', grey: '#a3a3a8', silver: '#bfc3c9', cream: '#f2e6c8', tan: '#d9b48c',
+  green: '#7cc36a', yellow: '#f2c94c', pink: '#f2a7b8', blue: '#7fa7d9',
+};
 const TOPS = 'cardigan|sweater|sweatshirt|jumper|shirt|t-shirt|polo|blouse|jacket|coat|raincoat|overcoat|parka|poncho|hoodie|tunic|vest|top|dress|apron|overalls|smock';
 const BOTTOMS = 'pants|trousers|shorts|skirt|jeans|overalls|dungarees';
 const SKIN_TONES = [
@@ -617,6 +622,14 @@ export function guessSpec(c) {
     },
     guessed: true,
   };
-  if (species !== 'human') delete spec.skin, delete spec.hair;
+  if (species !== 'human') {
+    // An animal's fur takes the color the text gives it ("a golden dog", "a black cat").
+    const colors = Object.keys(FUR_COLORS).join('|');
+    const fur = new RegExp(`\\b(${colors})(?:[- ](?:and[- ])?[a-z]+)?[- ](?:${SPECIES_WORDS[species].join('|')})\\b`).exec(text)?.[1]
+      ?? new RegExp(`\\b(${colors})[- ](?:fur|pelt)\\b`).exec(text)?.[1];
+    if (fur) spec.skin = FUR_COLORS[fur];
+    else delete spec.skin;
+    delete spec.hair;
+  }
   return spec;
 }
