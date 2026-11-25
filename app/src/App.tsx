@@ -80,13 +80,15 @@ function Header({ editor, save, onStage }: { editor: Editor; save: SaveState; on
           </div>
         )}
         <button onClick={onStage} title="See the story's pages staged in 3D">3D stage</button>
-        {/* A short "done" over the label, the full path in the tooltip: the header never reflows. */}
+        {/* A short "done" over the label, the full path in the tooltip: the header never reflows.
+            Narrow windows drop the words in .more. */}
         <button className="swap" title={exportTip} onClick={async () => { setExported(await exportStoryBible(editor)); setTimeout(() => setExported(null), 4000) }}>
-          <span className={exported == null ? '' : 'off'}>Export story bible</span>
-          {exported != null && <span>{exported ? 'Saved in exports' : 'Downloaded'}</span>}
+          <span className={exported == null ? '' : 'off'}>Export<span className="more"> story bible</span></span>
+          {exported != null && <span>{exported ? <>Saved<span className="more"> in exports</span></> : 'Downloaded'}</span>}
         </button>
-        <SaveStatus save={save} />
       </div>
+      {/* Outside the buttons' scroller, so a failed save is always in view. */}
+      <SaveStatus save={save} />
     </header>
   )
 }
