@@ -162,6 +162,7 @@ export class WorldView {
     this.director = null;
     this.world = null;
     this.busy = Promise.resolve();
+    this.directing = false;
   }
 
   mount(parent) { parent.appendChild(this.el); this.stage.resize(); this.resume(); }
@@ -183,8 +184,10 @@ export class WorldView {
     this.worldDirection = direction;
     this.worldVersion = (this.worldVersion ?? 0) + 1;
     this.world = new World(canvas, direction ?? {});
-    if (!this.director) this.director = new Director(this.stage, this.world);
-    else this.director.setWorld(this.world);
+    if (!this.director) {
+      this.director = new Director(this.stage, this.world);
+      this.director.setDirecting(this.directing);
+    } else this.director.setWorld(this.world);
     return this.world;
   }
 
@@ -205,24 +208,29 @@ export class WorldView {
 
   /** Run staging work one job at a time; a failed job never blocks the ones after it. */
   queue(job) {
+    this.jobs = (this.jobs ?? 0) + 1;
     const run = this.busy.then(() => (this.disposed ? null : job()));
-    this.busy = run.catch((e) => console.error('[3d]', e));
+    this.busy = run.catch((e) => console.error('[3d]', e)).finally(() => { this.jobs--; });
     return run;
   }
+  /** Staging work waiting or under way (a re-stage in flight: leave the models alone until it is done). */
+  get pending() { return (this.jobs ?? 0) > 0; }
 
   /**
-   * Stage a page. `keepShot` re-stages the same page without resetting the camera.
+   * Stage a page. `keepShot` re-stages the same page on the shot it was on (framed again unless
+   * the camera was moved by hand); `keepCamera` re-stages it and leaves the camera exactly where it
+   * is. Another page starts on its first shot either way.
    * Only the latest show matters: one still waiting when a newer one comes is skipped (null).
    */
-  showPage(pageId, overrides = {}, { keepShot = false } = {}) {
+  showPage(pageId, overrides = {}, { keepShot = false, keepCamera = false } = {}) {
     const ticket = this.ticket = (this.ticket ?? 0) + 1;
     return this.queue(async () => {
       if (ticket !== this.ticket) return null;
-      if (keepShot && this.shown && this.matches(this.shown, 'page', pageId, overrides)) { this.shown.ticket = ticket; return this.director.state; }
+      if ((keepShot || keepCamera) && this.shown && this.matches(this.shown, 'page', pageId, overrides)) { this.shown.ticket = ticket; return this.director.state; }
       const i = this.world?.sceneIndex.get(pageId);
       if (i == null) return null;
       const version = this.worldVersion;
-      const state = await this.director.showState(this.world.sceneState(i), overrides, { keepShot });
+      const state = await this.director.showState(this.world.sceneState(i), overrides, { keepShot, keepCamera });
       this.shown = state ? { kind: 'page', id: pageId, version, ticket } : null;
       return state;
     });
@@ -247,11 +255,54 @@ export class WorldView {
   get warnings() { return [...new Set([...(this.director?.state?.warnings ?? []), ...(this.world?.warnings ?? [])])]; }
   retime(moment) { return this.queue(() => this.director?.retime(moment)); }
 
-  /** A 16:9 still of what the camera sees now. */
-  async still(width = 1280, height = 720) {
+  /* ── directing (the Direct mode of the full stage; see Director in src/world/director.js) ── */
+
+  /** Direct mode on or off: while on, the camera stays where it is and shot moves hold still. */
+  setDirecting(on) {
+    this.directing = !!on;
+    this.director?.setDirecting(this.directing);
+  }
+  /** The orbit controls: turn them off (`enabled = false`) while a pointer drags something. */
+  get controls() { return this.stage.controls; }
+  /** Moved by hand since the last shot framed it (orbit, or setCameraView). */
+  get userCamera() { return !!this.director?.userCamera; }
+
+  pick(clientX, clientY) { return this.director?.pick(clientX, clientY) ?? null; }
+  groundPoint(clientX, clientY) { return this.director?.groundPoint(clientX, clientY) ?? null; }
+  moveCast(id, x, z) { return !!this.director?.moveCast(id, x, z); }
+  turnCast(id, yaw) { return !!this.director?.turnCast(id, yaw); }
+  moveThing(id, x, z) { return !!this.director?.moveThing(id, x, z); }
+  turnThing(id, yaw) { return !!this.director?.turnThing(id, yaw); }
+  nudge(kind, id, right, away) { return !!this.director?.nudge(kind, id, right, away); }
+  turn(kind, id, deg) { return !!this.director?.turn(kind, id, deg); }
+  select(kind, id = null) { return !!this.director?.select(kind, id); }
+  get selected() { return this.director?.selected ?? null; }
+  cameraView() { return this.director?.cameraView() ?? null; }
+  setCameraView(view) { return !!this.director?.setCameraView(view); }
+  shotView(i) { return this.director?.shotView(i) ?? null; }
+  castMarks() { return this.director?.castMarks() ?? []; }
+  castInfo() { return this.director?.castInfo() ?? []; }
+  thingMark(id) { return this.director?.thingMark(id) ?? null; }
+  centerMark() { return this.director?.centerMark() ?? null; }
+  freeMark(clear) { return this.director?.freeMark(clear) ?? null; }
+  spotsNear(x, z, r) { return this.director?.spotsNear(x, z, r) ?? []; }
+  toLocal(p) { return this.director?.toLocal(p) ?? [...p]; }
+  fromLocal(p) { return this.director?.fromLocal(p) ?? [...p]; }
+  localFacing(yaw) { return this.director?.localFacing(yaw) ?? 0; }
+  worldYaw(deg) { return this.director?.worldYaw(deg) ?? 0; }
+  facingToCamera(at) { return this.director?.facingToCamera(at) ?? 0; }
+
+  /**
+   * A still of what the camera sees now, or with `shot` of that shot (framed for the still, then
+   * the camera goes back). The selection marker is never in it.
+   */
+  async still(width = 1280, height = 720, { shot = null } = {}) {
     await this.busy;
     this.stage.applyMoment();
-    return capture(this.stage.renderer, this.stage.scene, this.stage.camera, width, height, null);
+    const restore = this.director?.stillOf(shot);
+    try {
+      return capture(this.stage.renderer, this.stage.scene, this.stage.camera, width, height, null);
+    } finally { restore?.(); }
   }
 
   /** Close for good, once whatever is staging has finished. */
