@@ -15,8 +15,11 @@ const statusEl = $('status');
 
 async function fetchJSON(url) {
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`${url}: ${res.status}`);
-  return res.json();
+  // Say which file is missing or broken, as this page links to it ("data/staging.json").
+  const file = url.replace(new URL('.', location.href).href, '');
+  if (!res.ok) throw Object.assign(new Error(res.status === 404 ? `${file} not found` : `${file}: ${res.status}`), { status: res.status });
+  const text = await res.text();
+  try { return JSON.parse(text); } catch (e) { throw new Error(`${file}: ${e.message}`); }
 }
 
 // Your own story first (data/staging.json, or data/world.json staged automatically), else the sample.
@@ -25,18 +28,15 @@ async function loadStory() {
   const story = q.get('story')?.replace(/\/+$/, '');
   const tries = !story ? ['data/staging.json', 'data/world.json', 'samples/brindlewick/staging.json']
     : /\.json$/i.test(story) ? [story] : [`${story}/staging.json`, `${story}/world.json`];
-  let lastError;
   for (const url of tries) {
-    try {
-      const json = await fetchJSON(url);
-      if (json.document || json.store) return { direction: {}, snapshot: json, url };
-      const direction = json;
-      const worldUrl = new URL(direction.world ?? 'world.json', new URL(url, location.href)).href;
-      const snapshot = await fetchJSON(worldUrl);
-      return { direction, snapshot, url };
-    } catch (e) { lastError = e; }
+    let json;
+    // Only a missing file moves on to the next one; a broken one is shown, never skipped.
+    try { json = await fetchJSON(url); } catch (e) { if (e.status !== 404) throw e; continue; }
+    if (json?.document || json?.store) return { direction: {}, snapshot: json, url };
+    const worldUrl = new URL(json?.world ?? 'world.json', new URL(url, location.href)).href;
+    return { direction: json, snapshot: await fetchJSON(worldUrl), url };
   }
-  throw lastError;
+  throw new Error(`${tries.join(' or ')} not found`);
 }
 
 const stage = new WorldStage($('stage'), { preserveDrawingBuffer: q.get('still') === '1' });

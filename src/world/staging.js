@@ -13,7 +13,10 @@ const D2R = Math.PI / 180;
 
 /* ───────────── helpers ───────────── */
 
-/** The hour, season and weather a page's "When" text names (null for what it doesn't say). */
+/**
+ * The hour, season and weather a page's "When" text names (null for what it doesn't say), and
+ * whether it speaks of snow at all (snow that is over still lies on the ground).
+ */
 export function momentIn(when) {
   const t = String(when ?? '').toLowerCase();
   const has = (re) => re.test(t);
@@ -31,14 +34,14 @@ export function momentIn(when) {
     : null;
   const season = has(/\b(spring|springtime)\b/) ? 'spring'
     : has(/\b(summer|summertime|midsummer)\b/) ? 'summer'
-    : has(/\b(autumn|fall|harvest)\b/) ? 'autumn'
+    : has(/\b(autumn|harvest)\b|(?<!\bto\s+)\bfall\b/) ? 'autumn' // not "began to fall"
     : has(/\b(winter|wintertime|midwinter|snowy|first snow)\b/) ? 'winter'
     : null;
   // Weather that is over or still to come isn't the weather of the moment: "the morning after the
   // storm", "before the rain", "once the snow had stopped" (their hour and season words still count).
   const now = t.replace(WEATHER_GONE, ' ');
   const weather = WEATHER_WORDS.find(([, words]) => new RegExp(`\\b(?:${words})\\b`).test(now))?.[0] ?? null;
-  return { hour, season, weather };
+  return { hour, season, weather, snow: SNOW.test(t) };
 }
 const WEATHER_WORDS = [
   ['storm', 'storm|stormy|thunder|thunderstorm|gale|tempest'],
@@ -49,8 +52,18 @@ const WEATHER_WORDS = [
   ['cloudy', 'cloud|cloudy|clouds'],
 ];
 const ANY_WEATHER = WEATHER_WORDS.map(([, words]) => words).join('|');
-const WEATHER_GONE = new RegExp(`\\b(?:after|before|since|until|till|once)\\s+(?:(?:the|a|an|all|this|that|its|last)\\s+)?(?:[a-z'-]+\\s+)?(?:${ANY_WEATHER})\\b`
-  + `|\\b(?:${ANY_WEATHER})\\s+(?:(?:(?:had|has|have)\\s+)?(?:stopped|cleared|passed|eased|ended|lifted)|(?:is|was)\\s+over)\\b`, 'g');
+const SNOW = new RegExp(`\\b(?:${WEATHER_WORDS.find(([w]) => w === 'snow')[1]})\\b`);
+// Weather that has just started is the weather of the moment ("just after the rain started",
+// "since the snow began"), and so is weather lasting until it ends ("until the storm passes").
+const STARTED = '(?:(?:had|has|have|just)\\s+)?(?:started|starts|began|begins|begun|broke|came|comes|set\\s+in|sets\\s+in|rolled\\s+in|hit)';
+const ENDS = '(?:(?:had|has|have)\\s+)?(?:stops|stopped|clears|cleared|passes|passed|eases|eased|ends|ended|lifts|lifted|blows\\s+over|blew\\s+over|is\\s+over|was\\s+over)';
+// What can stand between "after" and the weather: "the", "the big", "heavy"; not a time ("since
+// dawn rain has fallen", "after midnight snow began").
+const TIMES = 'midnight|dawn|daybreak|sunrise|noon|midday|lunch|lunchtime|morning|breakfast|afternoon|tea|teatime|dusk|sunset|twilight|sundown|nightfall|evening|supper|dinner|night|nighttime|dark';
+const WEATHER_LEAD = `(?:(?:the|a|an|all|this|that|its|last)\\s+(?:[a-z'-]+\\s+)?|(?!(?:${TIMES})\\s)[a-z'-]+\\s+)?`;
+const WEATHER_GONE = new RegExp(`\\b(?:after|since|once)\\s+${WEATHER_LEAD}(?:${ANY_WEATHER})\\b(?!\\s+${STARTED}\\b)`
+  + `|\\b(?:before|until|till)\\s+${WEATHER_LEAD}(?:${ANY_WEATHER})\\b(?!\\s+${ENDS}\\b)`
+  + `|(?<!\\b(?:before|until|till)\\s+${WEATHER_LEAD})\\b(?:${ANY_WEATHER})\\s+(?:(?:(?:had|has|have)\\s+)?(?:stopped|cleared|passed|eased|ended|lifted)|(?:is|was)\\s+over)\\b`, 'g');
 
 function rotate([x, z], deg) {
   const t = deg * D2R, c = Math.cos(t), s = Math.sin(t);
@@ -331,6 +344,13 @@ export class World {
     return result;
   }
 
+  /** The "name" a character's look in the direction gives, '' when none (a deleted card's look keeps it). */
+  lookName(id) {
+    const key = directionKey(this.direction, 'characters', id);
+    const name = key != null ? this.direction.characters[key].name : null;
+    return typeof name === 'string' ? name.trim() : '';
+  }
+
   /**
    * One note for each character whose card was deleted but whom the page still lists (its Who) or
    * casts in 3D: named when their look still has a "name", with what to remove where.
@@ -344,8 +364,7 @@ export class World {
     const groups = new Map();
     for (const id of new Set([...listed, ...castIds.filter((ref) => String(ref).startsWith('shape:'))])) {
       if (this.character(id)) continue;
-      const key = directionKey(this.direction, 'characters', id);
-      const name = key != null && typeof this.direction.characters[key].name === 'string' ? this.direction.characters[key].name.trim() : '';
+      const name = this.lookName(id);
       const inList = listed.includes(id), inCast = castIds.includes(id);
       const group = `${name}|${inList}|${inCast}`;
       groups.set(group, { name, inList, inCast, n: (groups.get(group)?.n ?? 0) + 1 });
@@ -379,7 +398,14 @@ export class World {
     const guard = new Set([page.id]);
     while (cur.dir.continues) {
       const i = this.resolveSceneIndex(cur.dir.continues);
-      if (i == null) { warnings.push(`"continues" points to an unknown page "${cur.dir.continues}".`); break; }
+      if (i == null) {
+        // A deleted page ("shape:…", its id means nothing to the writer) is named for what happened.
+        const who = cur === scene ? 'This page' : `"${cur.page.title || cur.page.path}"`;
+        warnings.push(String(cur.dir.continues).startsWith('shape:')
+          ? `${who} continues a page that was deleted: remove "continues" from its direction in staging.json.`
+          : `"continues" points to an unknown page "${cur.dir.continues}".`);
+        break;
+      }
       const prev = this.scenes[i];
       if (guard.has(prev.page.id)) break;
       guard.add(prev.page.id);
@@ -418,7 +444,8 @@ export class World {
     if (hour == null) hour = told.hour;
     if (hour == null) for (const s of chain) { hour = hourOf(s); if (hour != null) break; }
     hour = ((hour ?? 12) % 24 + 24) % 24;
-    const season = scene.dir.season ?? SEASON_OF_MONTH(page.at?.month) ?? told.season ?? (told.weather === 'snow' ? 'winter' : null) ?? inherit('season') ?? this.direction.defaults?.season ?? 'summer';
+    // Snow means winter, also snow that is over ("the morning after the snow").
+    const season = scene.dir.season ?? SEASON_OF_MONTH(page.at?.month) ?? told.season ?? (told.snow ? 'winter' : null) ?? inherit('season') ?? this.direction.defaults?.season ?? 'summer';
     const weather = scene.dir.weather ?? told.weather ?? inherit('weather') ?? this.direction.defaults?.weather ?? 'clear';
     const ambient = inherit('ambient') ?? null;
     const day = page.at?.day ?? 15;
@@ -500,7 +527,7 @@ export class World {
         if (!String(c.who).startsWith('shape:')) warnings.push(`The cast has "${c.who}", who is not a character on the canvas.`);
         continue;
       }
-      if (page.characterIds?.length && !page.characterIds.includes(who.id)) warnings.push(`${who.name} is staged here but not listed on this page.`);
+      if (page.characterIds?.length && !page.characterIds.includes(who.id)) warnings.push(`${who.name || 'A character with no name'} is staged here but not listed on this page.`);
       used.add(who.id);
       cast.push({ ...c, who: who.id, character: who, look: deepMerge(looks.get(who.id) ?? {}, c.look ?? {}) });
     }
@@ -524,8 +551,15 @@ export class World {
     let camera = scene.dir.camera ?? inherit('camera') ?? null;
     if (camera && !Array.isArray(camera) && camera.same) {
       const j = this.resolveSceneIndex(camera.same);
-      if (j == null) { warnings.push(`The camera copies an unknown page "${camera.same}".`); camera = null; }
-      else camera = this.scenes[j].dir.camera ?? null;
+      if (j == null) {
+        // The page whose "camera" it is: this one, or the one it continues.
+        const from = [scene, ...chain].find((s) => s.dir.camera != null);
+        const where = from === scene ? 'this page\'s "camera"' : `the "camera" of "${from.page.title || from.page.path}"`;
+        warnings.push(String(camera.same).startsWith('shape:')
+          ? `The camera copies a page that was deleted: remove "same" from ${where} in staging.json.`
+          : `The camera copies an unknown page "${camera.same}".`);
+        camera = null;
+      } else camera = this.scenes[j].dir.camera ?? null;
     }
     const shots = Array.isArray(camera) ? camera : camera ? [camera] : [{ shot: cast.length ? 'medium' : 'wide' }];
 
@@ -678,15 +712,19 @@ const PLACE_SUFFIX = 'side|view|shore|front|land|top|bank|bend|crest';
 
 /**
  * The set named by the text, matching whole words, their plurals and compounds like "Lakeside"
- * or "Hilltop" (not "Pierre" or "Springfield"); in a name, the last one wins ("Dead Marsh").
+ * or "Hilltop" (not "Pierre" or "Springfield"); in a name, the last one wins ("Dead Marsh"). In a
+ * description the first one wins, but a compound only says where the place is, so any plain set
+ * word comes first ("a hillside village" is a town).
  */
 function placeSetIn(text, isName) {
   let best = null;
   for (const [set, words] of PLACE_WORDS) {
-    // "spring" is a lake only in a name; in a description it is the season.
-    const list = isName ? words : words.filter((w) => w !== 'spring');
-    for (const m of text.matchAll(new RegExp(`\\b(?:${list.join('|')})(?:e?s|(?:${PLACE_SUFFIX})s?)?\\b`, 'g'))) {
-      if (!best || (isName ? m.index > best.index : m.index < best.index)) best = { set, index: m.index };
+    // "spring" is a lake only in a name; in a description it is the season. Longer words are
+    // tried first, so a listed one ("seaside", "riverbank") is a plain word, not "sea" + "side".
+    const list = words.filter((w) => isName || w !== 'spring').sort((a, b) => b.length - a.length);
+    for (const m of text.matchAll(new RegExp(`\\b(?:${list.join('|')})(?:e?s|(${PLACE_SUFFIX})s?)?\\b`, 'g'))) {
+      const rank = !isName && m[1] ? 1 : 0; // 1: a compound in a description
+      if (!best || rank < best.rank || (rank === best.rank && (isName ? m.index > best.index : m.index < best.index))) best = { set, index: m.index, rank };
     }
   }
   return best?.set ?? null;
@@ -823,17 +861,32 @@ const NOT_THE_ANIMAL = `walkers?|trainers?|sitters?|riders?|herders?|herds?|catc
 // preposition or conjunction, a verb ("walks", "rides") or a person ("walks her dog", "a man with
 // a dog", "carrying her little boy"). Adjectives and a possessive name can ("Ada's loyal dog").
 const NOT_A_MODIFIER = `an?|the|this|that|these|those|my|your|his|her|its|our|their|whose|who|which|with|without|of|in|on|at|by|for|to|from|into|about|after|before|near|like|as|than|and|or|but|nor|is|are|was|were|be|been|has|have|had|do|does|did|can|could|will|would|${PEOPLE}`;
-// One word that can: none of those, and no verb ending in -s ("walks"; "nervous", "fearless",
-// "Ada's" and "Mrs" are fine).
-const MODIFIER = `(?:mr?s|(?!(?:${NOT_A_MODIFIER})[\\s,])(?![a-z]*[^siu'\\s]s[\\s,])[a-z'-]+)`;
+// One word that can: none of those, in any letters ("José", "Søren") or a title ("Mr.", "Dr."),
+// and no verb ending in -s ("walks"; "nervous", "fearless", "Ada's" and "Mrs" are fine).
+const MODIFIER = `(?:(?:mrs?|ms|dr|st)\\.|mr?s|(?!(?:${NOT_A_MODIFIER})[\\s,])(?!\\p{L}*[^siu'\\s]s[\\s,])[\\p{L}'-]+)`;
+const MODIFIERS = `(?:${MODIFIER}\\s+){0,2}${MODIFIER}`;
+// A name, which may end in -s ("James", "Agnes"), unlike the words around it.
+const NAME = `(?!(?:${NOT_A_MODIFIER})[\\s,])[\\p{L}'-]+`;
+// How a text can lead up to the phrase it is about. A few adjectives first: "Scruffy and loyal,
+// …", "Kind but elderly, …".
+const ADJECTIVES = `(?:${MODIFIER}(?:,\\s+|\\s+(?:and|but)\\s+(?!(?:an?|the)\\s))){0,3}`;
+// Then "<name> is a": "Biscuit is a dog", "James is a tall man", "Old Moses is a cat" (not "what
+// she wants is a dog").
+const IS = `(?:(?:${MODIFIER}\\s+)?${NAME}|${MODIFIERS})\\s+(?:is|was)\\s+`;
+// Or "<name>, a": "Charles, a tall man", "Mrs Jones, a tall woman", "Biscuit, who is a dog" (not
+// "owns Biscuit, a dog" or "she knits, a cat on her lap").
+const COMMA = `(?:(?:(?:mrs?|ms|dr|st)\\.?\\s+)?${NAME}|${MODIFIERS}),\\s+(?:who\\s+(?:is|was)\\s+)?(?=(?:an?|the)\\s)`;
+// Or "<name> the": "Biscuit the dog", "Old Tom the cat", with no verb, preposition or adverb before
+// "the" ("walks the dog", "walking the dog", "walked the dog", "unlike the cat", "usually the dog").
+const NOT_A_VERB = '(?!\\p{L}{3,}(?:ed|ing)\\s|(?:above|across|against|along|among|around|behind|below|beneath|beside|besides|between|beyond|despite|down|except|inside|off|onto|outside|over|past|since|through|toward|towards|under|unlike|until|up|upon|within|never|not|often|once|only|rarely|seldom|sometimes|still|usually)\\s)';
+const THE = `(?:${NOT_A_VERB}${MODIFIER}\\s+){1,2}(?=the\\s)`;
 /**
  * The phrase a text is about, ending in `noun`: the one it starts with ("A golden dog in a blue
- * shirt", "Ada's little brother", "Old Pell"), or the one after "<name> is a" ("Biscuit is a dog")
- * or "<name>, a" ("Mira, a tall girl"); not a noun further on ("walks her dog", "a mother
- * carrying her little boy", "strong as an ox").
+ * shirt", "Ada's little brother", "Old Pell"), or the one after one of those leads; not a noun
+ * further on ("walks her dog", "a mother carrying her little boy", "strong as an ox").
  */
-const aboutThe = (noun, commas = false) => new RegExp(`^\\s*(?:(?:${MODIFIER}\\s+){1,3}?(?:is|was)\\s+|(?:${MODIFIER}\\s+){0,2}${MODIFIER},\\s+(?=(?:an?|the)\\s))?`
-  + `(?:(?:an?|the|one|this|that)\\s+)?(?:${MODIFIER}${commas ? ',?' : ''}\\s+){0,3}?(?:${noun})`);
+const aboutThe = (noun, commas = false) => new RegExp(`^\\s*${ADJECTIVES}(?:${IS}|${COMMA}|${THE})?`
+  + `(?:(?:an?|the|one|this|that)\\s+)?(?:${MODIFIER}${commas ? ',?' : ''}\\s+){0,3}?(?:${noun})`, 'u');
 
 /**
  * The species of the character the text describes: an animal named as the subject ("A golden
@@ -863,12 +916,14 @@ const BUILD = [
   ['muscular', 'muscular|brawny|strong|athletic'],
   ['slim', 'slim|thin|skinny|slender|wiry'],
 ];
-// Children: "a little girl", "Ada's little brother", "a six-year-old boy", "Tom is a child".
-const KID = aboutThe('(?:child|kid|toddler|little (?:boy|girl|brother|sister|son|daughter|one)|(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|\\d|1[0-2])-year-old)\\b');
+// Children: "a little girl", "Ada's little brother", "a six-year-old boy", "small for a
+// six-year-old", "Tom is a child".
+const KID = aboutThe('(?:child|kid|toddler|little (?:boy|girl|brother|sister|son|daughter|one)|(?:(?:small|tiny|little|short|tall|big)\\s+for\\s+an?\\s+)?(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|\\d|1[0-2])-year-old)\\b');
 function bodyIn(texts) {
   if (texts.some((t) => KID.test(t))) return 'kid';
   const subjects = `${PEOPLE}|${Object.values(SPECIES_WORDS).flat().join('|')}`;
-  const build = aboutThe(`(${BUILD.map(([, words]) => words).join('|')})\\b(?=(?:,?\\s+[a-z'-]+){0,2}?,?\\s+(?:${subjects})\\b)`, true);
+  // The build word can end a list of adjectives too: "Freckled and tall, a girl…".
+  const build = aboutThe(`(${BUILD.map(([, words]) => words).join('|')})\\b(?=(?:,?\\s+[\\p{L}'-]+){0,2}?,?\\s+(?:${subjects})\\b)`, true);
   for (const text of texts) {
     const m = build.exec(text);
     if (m) return BUILD.find(([, words]) => words.split('|').includes(m[1]))[0];
@@ -878,15 +933,16 @@ function bodyIn(texts) {
 // "-man" words are male ("fisherman", "postman"); "-woman" ones and "human" are not.
 const MALE = /\b(boy|man|men|he|him|his|gentleman|father|dad|papa|grandpa|grandfather|granddad|grandad|uncle|king|prince|lad|son|grandson|brother|nephew|husband|sir|mr|mister|lord|duke|monk|priest|groom|schoolboy)\b|\b[a-z]+(?<!wo|hu)m[ae]n\b/;
 // Age, also only from the character the text is about: "an old fisherman", "Old Pell", "an aged
-// captain", "a fisherman, old and grumpy", "a grandmother who…", "Granny Pell", "a man aged 70";
-// not "her old coat", "aged twelve", "middle-aged" or "her grandmother's".
+// captain", "a fisherman, old and grumpy", "a grandmother who…", "Granny Pell", "a man aged 70",
+// "a woman aged about seventy"; not "her old coat", "aged twelve", "middle-aged" or "her
+// grandmother's".
 const AN_AGE = '\\d|(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|a|about|around|nearly|almost|over|under|just)\\b';
 const SIXTY_PLUS = '(?:sixty|seventy|eighty|ninety|(?:a\\s+)?hundred|[6-9]\\d|1\\d\\d)';
 const OLD = [
   aboutThe(`(?:old|elderly|aged(?!\\s+(?:${AN_AGE})))\\b(?![-'])`),
-  aboutThe(`[a-z'-]+,\\s+(?:very\\s+)?(?:old|elderly)\\b(?![-'])`),
+  aboutThe(`[\\p{L}'-]+,\\s+(?:very\\s+)?(?:old|elderly)\\b(?![-'])`),
   aboutThe('(?:great-)*(?:grandmother|grandfather|granny|grandma|grandpa|gran|grandad|granddad)\\b'),
-  aboutThe(`(?:[a-z'-]+,?\\s+)?(?:aged\\s+${SIXTY_PLUS}|${SIXTY_PLUS}(?:-[a-z]+)?[- ]years?[- ]old)\\b`),
+  aboutThe(`(?:[\\p{L}'-]+,?\\s+)?(?:aged\\s+(?:(?:about|around|nearly|almost|over|well\\s+over)\\s+)?${SIXTY_PLUS}|${SIXTY_PLUS}(?:-[a-z]+)?[- ]years?[- ]old)\\b`),
 ];
 const ONE_PIECE = new Set(['dress', 'gown', 'robe', 'frock', 'overalls', 'jumpsuit', 'dungarees', 'smock', 'apron']);
 
