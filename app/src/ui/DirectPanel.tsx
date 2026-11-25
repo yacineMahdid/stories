@@ -66,17 +66,23 @@ export function createDirectEdits(editor: Editor, view: WorldView, ctx: DirectCo
     if (pending) clearTimeout(pending.timer)
     pending = { key, fn, timer: setTimeout(flush, ms) }
   }
-  /** Run an edit: after any slider write waiting, and after a re-stage in flight. */
-  const now = (fn: () => void) => { flush(); run(fn) }
-
-  /** Where the page on stage is written: its entry key and its entry, as the file has them now. */
-  const target = () => {
+  /** Where the page is written: its entry key and its entry, as the file has them now. */
+  type Target = { page: { id: string; title: string }; key: string; entry: Record<string, any> }
+  /**
+   * Run an edit of the page on stage: after any slider write waiting, and after a re-stage in
+   * flight. It belongs to that page: when the stage has gone on to another page by then, it is
+   * dropped (it would read the other page's cast).
+   */
+  const now = (fn: (t: Target) => void) => {
+    flush()
     const page = ctx.page()
-    if (!page) return null
-    const d = getStaging()
-    return { page, key: sceneKey(d, page.id, page.title), entry: sceneEntry(d, page.id, page.title) }
+    if (!page) return
+    run(() => {
+      if (ctx.page()?.id !== page.id) return
+      const d = getStaging()
+      fn({ page, key: sceneKey(d, page.id, page.title), entry: sceneEntry(d, page.id, page.title) })
+    })
   }
-  type Target = NonNullable<ReturnType<typeof target>>
   const sceneShape = (id: string) => editor.getShape(id as SceneShape['id']) as SceneShape | undefined
   const nameOf = (who: string) => getCharacters(editor).find((c) => c.id === who)?.props.name ?? view.castInfo().find((c) => c.who === who)?.name ?? ''
   /** The characters the page lists on the canvas (that still exist). */
@@ -103,17 +109,12 @@ export function createDirectEdits(editor: Editor, view: WorldView, ctx: DirectCo
 
     /** Change fields of a cast member's entry (undefined deletes one); `field` names the undo step. */
     member(who: string, patch: Partial<CastEntry>, field: string) {
-      now(() => {
-        const t = target()
-        if (t) writeCast(t, withMember(castBase(t), who, nameOf(who), patch), who, field)
-      })
+      now((t) => { writeCast(t, withMember(castBase(t), who, nameOf(who), patch), who, field) })
     },
 
     /** Write where a cast member stands or faces on stage now (after a drag, a nudge, Q or E). */
     moved(who: string, what: 'at' | 'facing') {
-      now(() => {
-        const t = target()
-        if (!t) return
+      now((t) => {
         const name = nameOf(who)
         const base = castBase(t)
         const mark = view.castMarks().find((m) => refersTo(m.who, who, name))
@@ -145,10 +146,9 @@ export function createDirectEdits(editor: Editor, view: WorldView, ctx: DirectCo
 
     /** Put a canvas character on stage near the middle of the view, facing the camera, and on the page's Who: one undo step. */
     putIn(who: string, then?: () => void) {
-      now(() => {
-        const t = target()
+      now((t) => {
         const spot = view.freeMark()
-        if (!t || !spot) return
+        if (!spot) return
         if (!writeCast(t, withMember(castBase(t), who, nameOf(who), newMember(who, spot.at, spot.facing)), who, 'put in')) return
         // The same undo step: no stopping point between the two.
         const ids = sceneShape(t.page.id)?.props.characterIds ?? []
@@ -160,9 +160,8 @@ export function createDirectEdits(editor: Editor, view: WorldView, ctx: DirectCo
 
     /** Take a cast member out of the page and off its Who (their page modifier stays): one undo step. */
     takeOut(who: string, then?: () => void) {
-      now(() => {
-        const t = target()
-        if (!t || !writeCast(t, withoutMember(castBase(t), who, nameOf(who)), who, 'take out')) return
+      now((t) => {
+        if (!writeCast(t, withoutMember(castBase(t), who, nameOf(who)), who, 'take out')) return
         const ids = sceneShape(t.page.id)?.props.characterIds ?? []
         if (ids.includes(who)) setWho(t.page.id, ids.filter((x) => x !== who))
         ctx.canvasChanged()
@@ -172,10 +171,9 @@ export function createDirectEdits(editor: Editor, view: WorldView, ctx: DirectCo
 
     /** Add a prop to the page's dressing at the middle of the view, facing the camera. `then` gets its id. */
     addProp(kind: string, then?: (id: string) => void) {
-      now(() => {
-        const t = target()
+      now((t) => {
         const c = view.centerMark()
-        if (!t || !c) return
+        if (!c) return
         const id = newThingId(slugOf(t.page.title, t.page.id), kind, view.thingIds())
         if (edit3d(editor, dressingOps(t.key, [...ownDressing(t.entry), newThing(id, kind, c.at, c.facing)]), stepKey(t.page.id, 'dressing', id, 'add'))) then?.(id)
       })
@@ -183,10 +181,9 @@ export function createDirectEdits(editor: Editor, view: WorldView, ctx: DirectCo
 
     /** Write where one of the page's props stands or faces on stage now. */
     propMoved(id: string, what: 'at' | 'facing') {
-      now(() => {
-        const t = target()
+      now((t) => {
         const mark = view.thingMark(id)
-        if (!t || !mark) return
+        if (!mark) return
         const list = ownDressing(t.entry)
         if (!list[mark.index]) return
         list[mark.index] = mark.entry
@@ -196,10 +193,9 @@ export function createDirectEdits(editor: Editor, view: WorldView, ctx: DirectCo
 
     /** Remove one of the page's props. */
     removeProp(id: string, then?: () => void) {
-      now(() => {
-        const t = target()
+      now((t) => {
         const mark = view.thingMark(id)
-        if (!t || !mark) return
+        if (!mark) return
         const list = ownDressing(t.entry)
         if (!list[mark.index]) return
         list.splice(mark.index, 1)
@@ -209,10 +205,7 @@ export function createDirectEdits(editor: Editor, view: WorldView, ctx: DirectCo
 
     /** Save the hour (`time`), weather or season on the page; undefined resets it (deletes the key). */
     moment(field: MomentField, value: number | string | undefined) {
-      now(() => {
-        const t = target()
-        if (t) edit3d(editor, momentOps(t.key, field, value), stepKey(t.page.id, field))
-      })
+      now((t) => { edit3d(editor, momentOps(t.key, field, value), stepKey(t.page.id, field)) })
     },
   }
   return api

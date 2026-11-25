@@ -566,7 +566,8 @@ export function StageOverlay({ editor, pageId, direct: directAtOpen = false, onC
   }, [direct])
   // The selection shows on stage (a ring, a box) while directing, kept by id through re-stages.
   useEffect(() => { view.select(direct ? selected?.kind ?? null : null, selected?.id ?? null) }, [direct, selected])
-  useEffect(() => setSelected(null), [current]) // another page: nothing selected
+  // Another page: a slider's write still waiting goes to the page it was made on, and nothing is selected.
+  useEffect(() => { edits.flush(); setSelected(null) }, [current])
 
   // "Staging…" while directing: only when a re-stage takes a while.
   const [slow, setSlow] = useState(false)
