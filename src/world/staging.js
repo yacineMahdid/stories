@@ -13,6 +13,37 @@ const D2R = Math.PI / 180;
 
 /* ───────────── helpers ───────────── */
 
+/** The hour, season and weather a page's "When" text names (null for what it doesn't say). */
+export function momentIn(when) {
+  const t = String(when ?? '').toLowerCase();
+  const has = (re) => re.test(t);
+  const hour = has(/\bmidnight\b/) ? 0
+    : has(/\b(late at night|late night|small hours|dead of night)\b/) ? 23
+    : has(/\b(dawn|daybreak|sunrise|first light)\b/) ? 6
+    : has(/\bearly morning\b/) ? 7
+    : has(/\b(noon|midday|lunch(?:time)?)\b/) ? 12
+    : has(/\b(morning|breakfast)\b/) ? 9.5
+    : has(/\blate afternoon\b/) ? 17
+    : has(/\b(afternoon|teatime|tea time)\b/) ? 15
+    : has(/\b(dusk|sunset|twilight|sundown|nightfall)\b/) ? 19
+    : has(/\b(evening|supper|dinner)\b/) ? 19.5
+    : has(/\b(night|nighttime|night-time|starlit|moonlit)\b/) ? 22
+    : null;
+  const season = has(/\b(spring|springtime)\b/) ? 'spring'
+    : has(/\b(summer|summertime|midsummer)\b/) ? 'summer'
+    : has(/\b(autumn|fall|harvest)\b/) ? 'autumn'
+    : has(/\b(winter|wintertime|midwinter|snowy|first snow)\b/) ? 'winter'
+    : null;
+  const weather = has(/\b(storm|stormy|thunder|thunderstorm|gale|tempest)\b/) ? 'storm'
+    : has(/\b(rain|rainy|raining|drizzle|showers?)\b/) ? 'rain'
+    : has(/\b(snow|snowy|snowing|blizzard|snowfall)\b/) ? 'snow'
+    : has(/\b(fog|foggy|mist|misty|haze|hazy)\b/) ? 'fog'
+    : has(/\b(overcast|grey sky|gray sky|gloomy)\b/) ? 'overcast'
+    : has(/\b(cloud|cloudy|clouds)\b/) ? 'cloudy'
+    : null;
+  return { hour, season, weather };
+}
+
 function rotate([x, z], deg) {
   const t = deg * D2R, c = Math.cos(t), s = Math.sin(t);
   return [x * c + z * s, -x * s + z * c];
@@ -343,12 +374,16 @@ export class World {
       if (typeof t === 'number') return t;
       return s.page.at?.hour ?? null;
     };
+    // What the page's "When" text says ("late at night, in the snow") fills what the canvas's
+    // exact time and the direction leave open.
+    const told = momentIn(page.when);
     let hour = hourOf(scene);
     if (typeof scene.dir.time === 'string' && /^[+-]/.test(scene.dir.time) && chain[0]) hour = (hourOf(chain[0]) ?? 12) + Number(scene.dir.time);
+    if (hour == null) hour = told.hour;
     if (hour == null) for (const s of chain) { hour = hourOf(s); if (hour != null) break; }
     hour = ((hour ?? 12) % 24 + 24) % 24;
-    const season = scene.dir.season ?? SEASON_OF_MONTH(page.at?.month) ?? inherit('season') ?? this.direction.defaults?.season ?? 'summer';
-    const weather = inherit('weather') ?? this.direction.defaults?.weather ?? 'clear';
+    const season = scene.dir.season ?? SEASON_OF_MONTH(page.at?.month) ?? told.season ?? (told.weather === 'snow' ? 'winter' : null) ?? inherit('season') ?? this.direction.defaults?.season ?? 'summer';
+    const weather = scene.dir.weather ?? told.weather ?? inherit('weather') ?? this.direction.defaults?.weather ?? 'clear';
     const ambient = inherit('ambient') ?? null;
     const day = page.at?.day ?? 15;
 
@@ -725,7 +760,7 @@ const FUR_COLORS = {
   chocolate: '#6b4430', gray: '#a3a3a8', grey: '#a3a3a8', silver: '#bfc3c9', cream: '#f2e6c8', tan: '#d9b48c',
   green: '#7cc36a', yellow: '#f2c94c', pink: '#f2a7b8', blue: '#7fa7d9',
 };
-const TOPS = 'cardigan|sweater|sweatshirt|jumper|shirt|t-shirt|polo|blouse|jacket|coat|raincoat|overcoat|parka|poncho|hoodie|tunic|vest|top|dress|apron|overalls|smock';
+const TOPS = 'cardigan|sweater|sweatshirt|jumper|shirt|t-shirt|polo|blouse|jacket|coat|raincoat|overcoat|parka|poncho|hoodie|tunic|vest|top(?!\\s+hat)|dress|gown|robe|frock|jumpsuit|apron|overalls|dungarees|smock';
 const BOTTOMS = 'pants|trousers|shorts|skirt|jeans|overalls|dungarees';
 const SKIN_TONES = [
   [/\b(pale|fair|light)[- ]skin(?:ned)?\b/, '#f8d3b0'],
@@ -734,41 +769,94 @@ const SKIN_TONES = [
   [/\b(brown|dark)[- ]skin(?:ned)?\b/, '#9c6a48'],
 ];
 
-/** The first species named in the text, as a whole word ("Catherine" and "dogged" don't count). */
-function speciesIn(text) {
-  let best = null;
-  for (const [species, words] of Object.entries(SPECIES_WORDS)) {
-    const m = new RegExp(`\\b(?:${words.join('|')})\\b(?!-like|-shaped)`).exec(text);
-    if (m && (!best || m.index < best.index)) best = { species, index: m.index };
+// Words that turn an animal into a job or a thing ("dog walker", "cat burglar", "pony tail").
+const NOT_THE_ANIMAL = 'walkers?|trainers?|sitters?|riders?|herders?|herds?|catchers?|lovers?|groomers?|whisperers?|keepers?|breeders?|owners?|handlers?|burglars?|fanciers?|shows?|tails?|treats?|food|bed|hair|print|ears?|eye|eyed|like|shaped';
+
+/**
+ * The species of the character the text describes: an animal named as the subject ("A golden
+ * dog in a blue shirt", "An old toad fisherman", "Biscuit is a dog"), not one mentioned in
+ * passing ("raises cows", "a cat burglar", "Catherine", "dogged").
+ */
+function speciesIn(appearance, role) {
+  const words = Object.values(SPECIES_WORDS).flat().join('|');
+  const animal = `(${words})\\b(?![-'])(?!\\s+(?:${NOT_THE_ANIMAL})\\b)`;
+  const subject = [
+    new RegExp(`^\\s*(?:(?:an?|the|one|this|that)\\s+)?(?:[a-z'-]+\\s+){0,3}?${animal}`),
+    new RegExp(`\\b(?:is|was|as|like)\\s+(?:an?|the)\\s+(?:[a-z'-]+\\s+){0,3}?${animal}`),
+  ];
+  for (const text of [appearance, role]) {
+    for (const re of subject) {
+      const m = re.exec(text);
+      if (m) return Object.entries(SPECIES_WORDS).find(([, list]) => list.includes(m[1]))[0];
+    }
   }
-  return best?.species ?? 'human';
+  return 'human';
 }
+
+// Words for build, taken only when they describe the character ("a tall woman", "a little dog",
+// "a short, round man"), not their things ("short hair", "a small hat").
+const PEOPLE = 'boy|girl|man|men|woman|women|kid|child|fellow|guy|lady|gentleman|person|one|folk';
+const BUILD = [
+  ['lanky', 'lanky|gangly'],
+  ['tall', 'tall'],
+  ['kid', 'child|kid|toddler'],
+  ['short', 'short|little|tiny|small|petite'],
+  ['round', 'round|rotund|portly'],
+  ['chubby', 'plump|chubby|stout|chunky'],
+  ['stocky', 'stocky|burly|broad|thickset'],
+  ['muscular', 'muscular|brawny|strong|athletic'],
+  ['slim', 'slim|thin|skinny|slender|wiry'],
+];
+function bodyIn(text) {
+  // Children: "a little girl", "Ada's little brother", "a six-year-old boy".
+  if (/\b(child|kid|toddler|little (?:boy|girl|brother|sister|son|daughter|one))\b|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|\d|1[0-2])-year-old\b/.test(text)) return 'kid';
+  const subjects = `${PEOPLE}|${Object.values(SPECIES_WORDS).flat().join('|')}`;
+  let best = null;
+  for (const [body, words] of BUILD) {
+    const m = new RegExp(`\\b(?:${words})\\b(?=(?:,?\\s+[a-z'-]+){0,2}?,?\\s+(?:${subjects})\\b)`).exec(text);
+    if (m && (!best || m.index < best.index)) best = { body, index: m.index };
+  }
+  return best?.body ?? null;
+}
+const MALE = /\b(boy|man|men|he|him|his|gentleman|father|dad|papa|grandpa|grandfather|granddad|grandad|uncle|king|prince|lad|son|grandson|brother|nephew|husband|sir|mr|mister|lord|duke|monk|priest|groom|schoolboy)\b|\b(?!wo|hu)[a-z]+m[ae]n\b/;
+const OLD = /(?<!-)\bold\b(?!-)|\b(elderly|aged|grandmother|grandfather|granny|grandma|grandpa|gran|grandad)\b/;
+const ONE_PIECE = new Set(['dress', 'gown', 'robe', 'frock', 'overalls', 'jumpsuit', 'dungarees', 'smock', 'apron']);
 
 export function guessSpec(c, forceSpecies = null) {
   // What the character looks like comes from the appearance and the role; the name only
   // seeds the choices the text leaves open (a "Catherine" isn't a cat, a "Bobby" has no bob).
-  const text = `${c.appearance ?? ''} ${c.role ?? ''}`.toLowerCase();
-  const species = forceSpecies ?? speciesIn(text);
+  const appearance = (c.appearance ?? '').toLowerCase();
+  const role = (c.role ?? '').toLowerCase();
+  const text = `${appearance} ${role}`;
+  const species = forceSpecies ?? speciesIn(appearance, role);
   const h = hashString(c.id ?? c.name ?? 'x');
-  const colorWord = (words, nouns) => new RegExp(`\\b(${Object.keys(words).join('|')})(?:[- ](?:and[- ])?[a-z]+)?[- ](?:${nouns})\\b`).exec(text)?.[1];
-  let hairWord = /\bredhead\b/.test(text) ? 'red' : colorWord(HAIR_COLORS, 'hair|haired|locks|curls|braids|pigtails|ponytail|bob|bun');
+  // "<colour> [and <colour>] <noun>": the colour and the noun it went with.
+  const colorWord = (words, nouns) => {
+    const m = new RegExp(`\\b(${Object.keys(words).join('|')})(?:[- ](?:and[- ])?[a-z]+)?[- ](${nouns})\\b`).exec(text);
+    return m ? { color: m[1], noun: m[2] } : null;
+  };
+  let hairWord = colorWord(HAIR_COLORS, 'hair|haired|locks|curls|braids|pigtails|ponytail|bob|bun')?.color
+    ?? { blonde: 'blonde', blond: 'blond', brunette: 'brown', redhead: 'red', redheaded: 'red' }[/\b(blonde?|brunette|redhead(?:ed)?)\b/.exec(text)?.[1]];
   if (hairWord === 'dark' && /\bdark[- ]brown\b/.test(text)) hairWord = 'brown';
+  if (!hairWord && OLD.test(text)) hairWord = (h >>> 11) % 2 ? 'gray' : 'white'; // old: grey or white
   const styleWord = HAIR_STYLES.find(([, re]) => re.test(text))?.[0];
-  // Without a style in the text, boys and men get a short one.
-  const styles = /\b(boy|man|men|he|him|his|gentleman|father|dad|grandpa|grandfather|uncle|king|prince|lad)\b/.test(text)
-    ? ['spiky', 'swept', 'bob'] : ['bob', 'spiky', 'swept', 'pigtails', 'ponytail', 'bun', 'long'];
+  // Without a style in the text, boys and men get a short one, older people a tidy one.
+  const styles = MALE.test(text) ? ['spiky', 'swept', 'bob'] : OLD.test(text) ? ['bun', 'bob', 'swept'] : ['bob', 'spiky', 'swept', 'pigtails', 'ponytail', 'bun', 'long'];
   const skins = ['#f8d3b0', '#f1c39c', '#e0a47c', '#c98e66', '#9c6a48', '#6e4a33'];
-  const topWord = colorWord(CLOTH_COLORS, TOPS);
-  const bottomWord = colorWord(CLOTH_COLORS, BOTTOMS);
+  const top = colorWord(CLOTH_COLORS, TOPS);
+  const bottom = colorWord(CLOTH_COLORS, BOTTOMS);
+  const body = bodyIn(text);
   const spec = {
     species,
     skin: SKIN_TONES.find(([re]) => re.test(text))?.[1] ?? skins[h % skins.length],
     hair: { style: styleWord ?? styles[h % styles.length], color: hairWord ? HAIR_COLORS[hairWord] : ['#4a2f22', '#1f1b1a', '#7a4a2c', '#e0b45c'][(h >>> 3) % 4] },
+    ...(body ? { body } : {}),
     outfit: {
-      top: topWord ? CLOTH_COLORS[topWord] : c.color ?? ['#e2483c', '#4f86c6', '#5aa56a', '#f2c94c', '#9a72c9'][h % 5],
+      top: top ? CLOTH_COLORS[top.color] : c.color ?? ['#e2483c', '#4f86c6', '#5aa56a', '#f2c94c', '#9a72c9'][h % 5],
       sleeves: /\b(sleeveless|tank top)\b/.test(text) ? 'none' : /\b(cardigan|sweater|sweatshirt|jumper|jacket|coat|raincoat|overcoat|parka|hoodie|long[- ]sleeved?)\b/.test(text) ? 'long' : ['short', 'long', 'elbow'][(h >>> 5) % 3],
-      bottom: bottomWord ? CLOTH_COLORS[bottomWord] : ['#2f3640', '#5a4636', '#3f5f8a'][(h >>> 7) % 3],
-      legs: /\b(shorts)\b/.test(text) ? 'shorts' : /\b(pants|trousers|jeans|overalls|dungarees)\b/.test(text) ? 'pants' : /\b(skirt|dress)\b/.test(text) ? 'knee' : ['shorts', 'pants', 'knee'][(h >>> 9) % 3],
+      // A dress or overalls is one piece: its colour goes all the way down.
+      bottom: bottom ? CLOTH_COLORS[bottom.color] : top && ONE_PIECE.has(top.noun) && top.noun !== 'apron' ? CLOTH_COLORS[top.color] : ['#2f3640', '#5a4636', '#3f5f8a'][(h >>> 7) % 3],
+      legs: /\b(shorts)\b/.test(text) ? 'shorts' : /\b(pants|trousers|jeans|overalls|dungarees|jumpsuit)\b/.test(text) ? 'pants' : /\b(skirt|dress|gown|frock)\b/.test(text) ? 'knee' : ['shorts', 'pants', 'knee'][(h >>> 9) % 3],
       shoes: '#4a3a30',
     },
     guessed: true,

@@ -93,11 +93,14 @@ class Studio {
   suspend() { this.stage.renderer.setAnimationLoop(null); }
   resume() { if (this.el.isConnected) this.stage.renderer.setAnimationLoop((t) => this.stage.tick(t)); }
 
-  show(look) {
+  /** Show a look; `card` names whose it is: another card starts from the front again. */
+  show(look, card = null) {
     this.busy = this.busy.then(async () => {
       const spec = buildSpec(look);
       const key = JSON.stringify(spec);
-      if (key === this.key) return;
+      const sameCard = card === this.card;
+      this.card = card;
+      if (key === this.key) { if (!sameCard) this.stage.frame(this.character.root); return; }
       this.key = key;
       if (!this.character) {
         this.character = await createCharacter(spec);
@@ -106,7 +109,7 @@ class Studio {
         this.stage.frame(this.character.root);
       } else {
         await this.character.apply(spec);
-        this.stage.frame(this.character.root, true);
+        this.stage.frame(this.character.root, sameCard); // the same card keeps the angle you turned it to
       }
     }).catch((e) => console.error('[3d] character', e));
     return this.busy;
@@ -125,14 +128,28 @@ class Studio {
       const mixc = (v) => Math.round(v + (255 - v) * k).toString(16).padStart(2, '0');
       return `#${mixc((n >> 16) & 255)}${mixc((n >> 8) & 255)}${mixc(n & 255)}`;
     };
-    const blob = capture(this.stage.renderer, this.stage.scene, this.stage.camera, 600, 800, [tint(color, 0.82), tint(color, 0.55)]);
+    // Always from the front three-quarter view, whatever angle the model was turned to.
+    const cam = this.stage.camera, controls = this.stage.controls;
+    const saved = { pos: cam.position.clone(), target: controls.target.clone() };
+    this.stage.frame(c.root);
+    controls.update();
+    const blob = capture(this.stage.renderer, this.stage.scene, cam, 600, 800, [tint(color, 0.82), tint(color, 0.55)]);
+    cam.position.copy(saved.pos);
+    controls.target.copy(saved.target);
+    controls.update();
     c.setEmotion('neutral');
     return blob;
   }
 }
 
 let studio = null;
-export function getStudio() { return (studio ??= new Studio()); }
+export function getStudio() {
+  if (!studio) {
+    studio = new Studio();
+    if (import.meta.env?.DEV) window.studioView = studio; // handy for debugging in the console
+  }
+  return studio;
+}
 
 /* ───────────── world views (pages and places) ───────────── */
 

@@ -26,7 +26,7 @@ export function directionKey(direction: Direction, section: 'characters' | 'plac
 export interface Studio {
   mount(parent: HTMLElement): void
   unmount(parent: HTMLElement): void
-  show(look: Look): Promise<void>
+  show(look: Look, card?: string | null): Promise<void>
   portrait(color?: string): Promise<Blob | null>
 }
 export function getStudio(): Studio

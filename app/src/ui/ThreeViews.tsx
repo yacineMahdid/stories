@@ -133,7 +133,7 @@ export function CharacterLook({ shape, onPortrait }: { editor: Editor; shape: Ch
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState('')
   const key = JSON.stringify(look)
-  useEffect(() => { studio.show(look) }, [key])
+  useEffect(() => { studio.show(look, shape.id) }, [key, shape.id])
 
   // The first change keeps the whole guessed look; after that, only the fields that change are
   // written, so hand edits to the other fields survive.

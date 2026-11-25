@@ -936,8 +936,30 @@ export function buildSpec(look = {}) {
   const merged = { ...base, ...rest };
   for (const k of ['face', 'fur', 'outfit']) if (base[k] || rest[k]) merged[k] = { ...(base[k] ?? {}), ...(rest[k] ?? {}) };
   if (base.parts && !rest.parts) merged.parts = base.parts;
+  // A new fur colour reaches whatever had the species' own fur colour (a tail, a frog's eye
+  // domes), darkens the stripes or spots to match, and re-tints a belly that was a fur tint.
+  if (rest.skin && base.skin && rest.skin.toLowerCase() !== base.skin.toLowerCase()) {
+    const same = (c) => typeof c === 'string' && c.toLowerCase() === base.skin.toLowerCase();
+    if (!rest.parts && base.parts) merged.parts = base.parts.map((p) => (same(p.color) ? { ...p, color: rest.skin } : p));
+    if (base.fur?.third && !rest.fur?.third) merged.fur.third = shade(rest.skin, -0.35);
+    if (base.fur?.second && !rest.fur?.second && isTintOf(base.fur.second, base.skin)) merged.fur.second = shade(rest.skin, 0.6);
+  }
   void guessed; void name;
   return merged;
+}
+
+/** A colour mixed toward white (amount > 0) or black (amount < 0). */
+function shade(hex, amount) {
+  const c = new THREE.Color(hex);
+  return '#' + c.lerp(new THREE.Color(amount > 0 ? '#ffffff' : '#000000'), Math.abs(amount)).getHexString();
+}
+/** Is `a` a light tint of `b` (the same hue, with colour of its own), not a neutral cream? */
+function isTintOf(a, b) {
+  const ca = new THREE.Color(a), cb = new THREE.Color(b);
+  const hsl = (c) => c.getHSL({});
+  const sat = Math.max(ca.r, ca.g, ca.b) - Math.min(ca.r, ca.g, ca.b);
+  const dh = Math.abs(hsl(ca).h - hsl(cb).h);
+  return sat > 0.15 && Math.min(dh, 1 - dh) < 0.12;
 }
 
 export { poseLift };
