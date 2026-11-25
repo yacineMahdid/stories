@@ -34,7 +34,7 @@ export function momentIn(when) {
     : null;
   const season = has(/\b(spring|springtime)\b/) ? 'spring'
     : has(/\b(summer|summertime|midsummer)\b/) ? 'summer'
-    : has(/\b(autumn|harvest)\b|(?<!\bto\s+)\bfall\b/) ? 'autumn' // not "began to fall"
+    : has(/\b(autumn|harvest)\b/) || has(FALL) ? 'autumn'
     : has(/\b(winter|wintertime|midwinter|snowy|first snow)\b/) ? 'winter'
     : null;
   // Weather that is over or still to come isn't the weather of the moment: "the morning after the
@@ -45,8 +45,8 @@ export function momentIn(when) {
 }
 const WEATHER_WORDS = [
   ['storm', 'storm|stormy|thunder|thunderstorm|gale|tempest'],
-  ['rain', 'rain|rainy|raining|drizzle|drizzling|showers?'],
-  ['snow', 'snow|snowy|snowing|blizzard|snowfall'],
+  ['rain', 'rain|rainy|raining|drizzle|drizzling|showers?|raindrops?'],
+  ['snow', 'snow|snowy|snowing|blizzard|snowfall|snowflakes?'],
   ['fog', 'fog|foggy|mist|misty|haze|hazy'],
   ['overcast', 'overcast|grey sky|gray sky|gloomy'],
   ['cloudy', 'cloud|cloudy|clouds'],
@@ -57,13 +57,21 @@ const SNOW = new RegExp(`\\b(?:${WEATHER_WORDS.find(([w]) => w === 'snow')[1]})\
 // "since the snow began"), and so is weather lasting until it ends ("until the storm passes").
 const STARTED = '(?:(?:had|has|have|just)\\s+)?(?:started|starts|began|begins|begun|broke|came|comes|set\\s+in|sets\\s+in|rolled\\s+in|hit)';
 const ENDS = '(?:(?:had|has|have)\\s+)?(?:stops|stopped|clears|cleared|passes|passed|eases|eased|ends|ended|lifts|lifted|blows\\s+over|blew\\s+over|is\\s+over|was\\s+over)';
-// What can stand between "after" and the weather: "the", "the big", "heavy"; not a time ("since
-// dawn rain has fallen", "after midnight snow began").
-const TIMES = 'midnight|dawn|daybreak|sunrise|noon|midday|lunch|lunchtime|morning|breakfast|afternoon|tea|teatime|dusk|sunset|twilight|sundown|nightfall|evening|supper|dinner|night|nighttime|dark';
-const WEATHER_LEAD = `(?:(?:the|a|an|all|this|that|its|last)\\s+(?:[a-z'-]+\\s+)?|(?!(?:${TIMES})\\s)[a-z'-]+\\s+)?`;
+// What can stand between "after" and the weather: "the", "the big", "heavy", a part of the day
+// ("after morning rain": that rain is over). Not a moment, which says when instead ("after midnight
+// snow", "since dawn rain has fallen"), nor a part of the day when the weather then starts a clause
+// ("since morning rain has fallen").
+const MOMENTS = 'midnight|dawn|daybreak|sunrise|noon|midday|lunch|lunchtime|breakfast|tea|teatime|dusk|sunset|twilight|sundown|nightfall|supper|dinner|dark';
+const DAY_PARTS = 'morning|afternoon|evening|night|nighttime|overnight';
+const CLAUSE = 'has|had|have|is|was|were|fell|falls|fallen|falling|began|begins|begun|started|starts|came|comes|set|sets';
+const WEATHER_LEAD = `(?:(?:the|a|an|all|this|that|its|last)\\s+(?:[a-z'-]+\\s+)?|(?!(?:${MOMENTS})\\s|(?:${DAY_PARTS})\\s+(?:${ANY_WEATHER})\\s+(?:${CLAUSE})\\b)[a-z'-]+\\s+)?`;
 const WEATHER_GONE = new RegExp(`\\b(?:after|since|once)\\s+${WEATHER_LEAD}(?:${ANY_WEATHER})\\b(?!\\s+${STARTED}\\b)`
   + `|\\b(?:before|until|till)\\s+${WEATHER_LEAD}(?:${ANY_WEATHER})\\b(?!\\s+${ENDS}\\b)`
   + `|(?<!\\b(?:before|until|till)\\s+${WEATHER_LEAD})\\b(?:${ANY_WEATHER})\\s+(?:(?:(?:had|has|have)\\s+)?(?:stopped|cleared|passed|eased|ended|lifted)|(?:is|was)\\s+over)\\b`, 'g');
+// "Fall" is autumn, also leaves falling ("as the leaves began to fall"), but weather or night
+// falling isn't ("once the snow began to fall", "before night could fall").
+const FALLS_ANY_TIME = 'rain|raindrops?|drizzle|showers?|snow|snowflakes?|sleet|hail|mist|fog|dew|night|darkness|dark|dusk|evening|twilight|shadows?';
+const FALL = new RegExp(`(?<!\\b(?:${FALLS_ANY_TIME})\\b(?:[\\s,]+[a-z'-]+){0,3}?[\\s,]+(?:to|will|would|may|might|could|can|should|must|shall)\\s+)\\bfall\\b`);
 
 function rotate([x, z], deg) {
   const t = deg * D2R, c = Math.cos(t), s = Math.sin(t);
@@ -527,7 +535,7 @@ export class World {
         if (!String(c.who).startsWith('shape:')) warnings.push(`The cast has "${c.who}", who is not a character on the canvas.`);
         continue;
       }
-      if (page.characterIds?.length && !page.characterIds.includes(who.id)) warnings.push(`${who.name || 'A character with no name'} is staged here but not listed on this page.`);
+      if (page.characterIds?.length && !page.characterIds.includes(who.id)) warnings.push(`${String(who.name ?? '').trim() || 'A character with no name'} is staged here but not listed on this page.`);
       used.add(who.id);
       cast.push({ ...c, who: who.id, character: who, look: deepMerge(looks.get(who.id) ?? {}, c.look ?? {}) });
     }
@@ -860,32 +868,53 @@ const NOT_THE_ANIMAL = `walkers?|trainers?|sitters?|riders?|herders?|herds?|catc
 // What can't stand between "a" and the noun the phrase is about: another article, a pronoun, a
 // preposition or conjunction, a verb ("walks", "rides") or a person ("walks her dog", "a man with
 // a dog", "carrying her little boy"). Adjectives and a possessive name can ("Ada's loyal dog").
-const NOT_A_MODIFIER = `an?|the|this|that|these|those|my|your|his|her|its|our|their|whose|who|which|with|without|of|in|on|at|by|for|to|from|into|about|after|before|near|like|as|than|and|or|but|nor|is|are|was|were|be|been|has|have|had|do|does|did|can|could|will|would|${PEOPLE}`;
-// One word that can: none of those, in any letters ("José", "Søren") or a title ("Mr.", "Dr."),
-// and no verb ending in -s ("walks"; "nervous", "fearless", "Ada's" and "Mrs" are fine).
-const MODIFIER = `(?:(?:mrs?|ms|dr|st)\\.|mr?s|(?!(?:${NOT_A_MODIFIER})[\\s,])(?!\\p{L}*[^siu'\\s]s[\\s,])[\\p{L}'-]+)`;
-const MODIFIERS = `(?:${MODIFIER}\\s+){0,2}${MODIFIER}`;
+const FUNCTION_WORDS = 'an?|the|this|that|these|those|my|your|his|her|its|our|their|whose|who|which|with|without|of|in|on|at|by|for|to|from|into|about|after|before|near|like|as|than|and|or|but|nor|is|are|was|were|be|been|has|have|had|do|does|did';
+const NOT_A_MODIFIER = `${FUNCTION_WORDS}|can|could|will|would|${PEOPLE}`;
+// The letters of a word, in any script ("José", "Søren", "O'Brien").
+const LETTERS = "[\\p{L}\\p{M}'-]";
+// One word that can: none of those, or a title ("Mr.", "Dr."), and no verb ending in -s ("walks";
+// "nervous", "fearless", "Ada's" and "Mrs" are fine, and so is a word with other letters than a-z,
+// as no English verb has them: "Anaïs").
+const MODIFIER = `(?:(?:mrs?|ms|dr|st)\\.|mr?s|(?!(?:${NOT_A_MODIFIER})[\\s,])(?![a-z]*[^siu'\\s\\u{80}-\\u{10ffff}]s[\\s,])${LETTERS}+)`;
 // A name, which may end in -s ("James", "Agnes"), unlike the words around it.
-const NAME = `(?!(?:${NOT_A_MODIFIER})[\\s,])[\\p{L}'-]+`;
+const NAME = `(?!(?:${NOT_A_MODIFIER})[\\s,])${LETTERS}+`;
 // How a text can lead up to the phrase it is about. A few adjectives first: "Scruffy and loyal,
 // …", "Kind but elderly, …".
 const ADJECTIVES = `(?:${MODIFIER}(?:,\\s+|\\s+(?:and|but)\\s+(?!(?:an?|the)\\s))){0,3}`;
-// Then "<name> is a": "Biscuit is a dog", "James is a tall man", "Old Moses is a cat" (not "what
-// she wants is a dog").
-const IS = `(?:(?:${MODIFIER}\\s+)?${NAME}|${MODIFIERS})\\s+(?:is|was)\\s+`;
-// Or "<name>, a": "Charles, a tall man", "Mrs Jones, a tall woman", "Biscuit, who is a dog" (not
-// "owns Biscuit, a dog" or "she knits, a cat on her lap").
-const COMMA = `(?:(?:(?:mrs?|ms|dr|st)\\.?\\s+)?${NAME}|${MODIFIERS}),\\s+(?:who\\s+(?:is|was)\\s+)?(?=(?:an?|the)\\s)`;
-// Or "<name> the": "Biscuit the dog", "Old Tom the cat", with no verb, preposition or adverb before
-// "the" ("walks the dog", "walking the dog", "walked the dog", "unlike the cat", "usually the dog").
-const NOT_A_VERB = '(?!\\p{L}{3,}(?:ed|ing)\\s|(?:above|across|against|along|among|around|behind|below|beneath|beside|besides|between|beyond|despite|down|except|inside|off|onto|outside|over|past|since|through|toward|towards|under|unlike|until|up|upon|within|never|not|often|once|only|rarely|seldom|sometimes|still|usually)\\s)';
-const THE = `(?:${NOT_A_VERB}${MODIFIER}\\s+){1,2}(?=the\\s)`;
+// What isn't a name before "the" ("Biscuit the dog"): a verb ("walks", "walked", "walking", "rode",
+// "fed", "feed the cat"), a pronoun ("she rode the old mare"), a modal or a negation, a preposition,
+// an adverb or a conjunction ("unlike the cat", "usually the dog", "even the cat").
+const NOT_A_NAME = `(?:\\p{L}{3,}(?:ed|ing)\\s|(?:${[
+  'above|across|against|along|among|around|behind|below|beneath|beside|besides|between|beyond|despite|down|except|inside|off|onto|outside|over|past|since|through|toward|towards|under|unlike|until|up|upon|within',
+  'never|not|often|once|only|rarely|seldom|sometimes|still|usually|also|even|just|then|now|here|there|so|yet|too|very|quite|rather|almost|nearly|perhaps|maybe|ever|again|soon|later|when|where|while|if|though|although|because|unless|whether|how|why|what',
+  'i|you|he|she|it|we|they|me|him|us|them|someone|somebody|everyone|everybody|nobody|anyone|anybody|something|everything|nothing|anything',
+  "may|might|must|shall|should|cannot|can't|won't|don't|doesn't|didn't|wouldn't|couldn't|shouldn't|mustn't|isn't|wasn't|aren't|weren't|hasn't|haven't|hadn't|ain't|let's",
+  'rode|fed|led|kept|caught|brought|taught|met|found|took|saw|sold|lost|bought|hid|drove|held|left|made|gave|got|fought|chose|wore|threw|knew|grew|ran|sat|stood|ate|bit|shot|heard|told|sent|built|thought|beat|became|broke|stole|swore|tore|woke|wrote|spoke|shook|rang|swam|fell|felt|let|put|set|hit|cut|hurt|lent|meant|paid|said|sought|spent|struck|understood|began|bent|bled|bred|crept|dealt|drank|dug|fled|flew|forgot|forgave|froze|hung|knelt|laid|lay|leapt|lit|sang|sank|slept|slid|spun|stuck|swept|swung|wept',
+  'walk|feed|ride|keep|take|find|bring|hold|lead|love|own|pet|carry|follow|watch|groom|brush|wash|fetch|help|meet|see|hear|tend|mind|hug|call|catch|teach|buy|sell|lose|hide|drive|wear|leave|give|get|throw|know|feel|need|want|hate|fear|adopt|rescue|raise|train|ignore|spoil|stroke|cuddle',
+].join('|')})\\s)`;
+/**
+ * The leads a text can take to the phrase it is about. `own` is the card's own name words
+ * ("charles|darby"), which can end in -s as a verb does. "<name> is a": "Biscuit is a dog", "James
+ * is a tall man", "Old Moses is a cat", "Agnes Moss is an old woman" on Agnes Moss's card (not "what
+ * she wants is a dog" or "says she is a cat"). "<name>, a": "Zoë, a tall girl", "Mrs. Pell, a little
+ * old woman", "Mr Jones, a tall man", "Charles, a tall man" on Charles's card, "Biscuit, who is a dog"
+ * (not "she knits, a cat on her lap" or "owns Biscuit, a dog"). "<name> the": "Biscuit the dog",
+ * "Old Tom the cat", "Moses the cat" on Moses's card (not "rode the horse" or "she fed the cat").
+ */
+function leads(own) {
+  const OWN = own ? `(?:${own})(?![\\p{L}\\p{M}'-])` : '(?!)';
+  const WORD = `(?:${MODIFIER}|${OWN})`;
+  const IS = `(?:(?:${WORD}\\s+)?(?:${NAME}|${OWN})|(?:${WORD}\\s+){2}${WORD})\\s+(?:is|was)\\s+`;
+  const COMMA = `(?:(?:mrs?|ms|dr|st)\\.?\\s+${NAME}|(?:${WORD}\\s+){0,2}${WORD}),\\s+(?:who\\s+(?:is|was)\\s+)?(?=(?:an?|the)\\s)`;
+  const THE = `(?:(?:${OWN}|(?!${NOT_A_NAME})${MODIFIER})\\s+){1,2}(?=the\\s)`;
+  return `${ADJECTIVES}(?:${IS}|${COMMA}|${THE})?`;
+}
 /**
  * The phrase a text is about, ending in `noun`: the one it starts with ("A golden dog in a blue
  * shirt", "Ada's little brother", "Old Pell"), or the one after one of those leads; not a noun
  * further on ("walks her dog", "a mother carrying her little boy", "strong as an ox").
  */
-const aboutThe = (noun, commas = false) => new RegExp(`^\\s*${ADJECTIVES}(?:${IS}|${COMMA}|${THE})?`
+const aboutThe = (noun, own, commas = false) => new RegExp(`^\\s*${leads(own)}`
   + `(?:(?:an?|the|one|this|that)\\s+)?(?:${MODIFIER}${commas ? ',?' : ''}\\s+){0,3}?(?:${noun})`, 'u');
 
 /**
@@ -893,11 +922,10 @@ const aboutThe = (noun, commas = false) => new RegExp(`^\\s*${ADJECTIVES}(?:${IS
  * dog in a blue shirt", "An old toad fisherman", "Biscuit is a dog"), not one mentioned in
  * passing ("raises cows", "a cat burglar", "walks her dog", "Catherine", "dogged").
  */
-function speciesIn(appearance, role) {
-  const words = Object.values(SPECIES_WORDS).flat().join('|');
-  const animal = aboutThe(`(${words})\\b(?![-'])(?!\\s+(?:${NOT_THE_ANIMAL})\\b)`);
-  for (const text of [appearance, role]) {
-    const m = animal.exec(text);
+const ANIMAL = `(${Object.values(SPECIES_WORDS).flat().join('|')})\\b(?![-'])(?!\\s+(?:${NOT_THE_ANIMAL})\\b)`;
+function speciesIn(texts, about) {
+  for (const text of texts) {
+    const m = about.animal.exec(text);
     if (m) return Object.entries(SPECIES_WORDS).find(([, list]) => list.includes(m[1]))[0];
   }
   return 'human';
@@ -918,14 +946,13 @@ const BUILD = [
 ];
 // Children: "a little girl", "Ada's little brother", "a six-year-old boy", "small for a
 // six-year-old", "Tom is a child".
-const KID = aboutThe('(?:child|kid|toddler|little (?:boy|girl|brother|sister|son|daughter|one)|(?:(?:small|tiny|little|short|tall|big)\\s+for\\s+an?\\s+)?(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|\\d|1[0-2])-year-old)\\b');
-function bodyIn(texts) {
-  if (texts.some((t) => KID.test(t))) return 'kid';
-  const subjects = `${PEOPLE}|${Object.values(SPECIES_WORDS).flat().join('|')}`;
-  // The build word can end a list of adjectives too: "Freckled and tall, a girl…".
-  const build = aboutThe(`(${BUILD.map(([, words]) => words).join('|')})\\b(?=(?:,?\\s+[\\p{L}'-]+){0,2}?,?\\s+(?:${subjects})\\b)`, true);
+const KID = '(?:child|kid|toddler|little (?:boy|girl|brother|sister|son|daughter|one)|(?:(?:small|tiny|little|short|tall|big)\\s+for\\s+an?\\s+)?(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|\\d|1[0-2])-year-old)\\b';
+// The build word can end a list of adjectives too: "Freckled and tall, a girl…".
+const BUILT = `(${BUILD.map(([, words]) => words).join('|')})\\b(?=(?:,?\\s+${LETTERS}+){0,2}?,?\\s+(?:${PEOPLE}|${Object.values(SPECIES_WORDS).flat().join('|')})\\b)`;
+function bodyIn(texts, about) {
+  if (texts.some((t) => about.kid.test(t))) return 'kid';
   for (const text of texts) {
-    const m = build.exec(text);
+    const m = about.build.exec(text);
     if (m) return BUILD.find(([, words]) => words.split('|').includes(m[1]))[0];
   }
   return null;
@@ -939,20 +966,41 @@ const MALE = /\b(boy|man|men|he|him|his|gentleman|father|dad|papa|grandpa|grandf
 const AN_AGE = '\\d|(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|a|about|around|nearly|almost|over|under|just)\\b';
 const SIXTY_PLUS = '(?:sixty|seventy|eighty|ninety|(?:a\\s+)?hundred|[6-9]\\d|1\\d\\d)';
 const OLD = [
-  aboutThe(`(?:old|elderly|aged(?!\\s+(?:${AN_AGE})))\\b(?![-'])`),
-  aboutThe(`[\\p{L}'-]+,\\s+(?:very\\s+)?(?:old|elderly)\\b(?![-'])`),
-  aboutThe('(?:great-)*(?:grandmother|grandfather|granny|grandma|grandpa|gran|grandad|granddad)\\b'),
-  aboutThe(`(?:[\\p{L}'-]+,?\\s+)?(?:aged\\s+(?:(?:about|around|nearly|almost|over|well\\s+over)\\s+)?${SIXTY_PLUS}|${SIXTY_PLUS}(?:-[a-z]+)?[- ]years?[- ]old)\\b`),
+  `(?:old|elderly|aged(?!\\s+(?:${AN_AGE})))\\b(?![-'])`,
+  `${LETTERS}+,\\s+(?:very\\s+)?(?:old|elderly)\\b(?![-'])`,
+  '(?:great-)*(?:grandmother|grandfather|granny|grandma|grandpa|gran|grandad|granddad)\\b',
+  `(?:${LETTERS}+,?\\s+)?(?:aged\\s+(?:(?:about|around|nearly|almost|over|well\\s+over)\\s+)?${SIXTY_PLUS}|${SIXTY_PLUS}(?:-[a-z]+)?[- ]years?[- ]old)\\b`,
 ];
+// The patterns above for one card, by its own name words (made once for each name).
+const ABOUT = new Map();
+function aboutCard(own) {
+  let about = ABOUT.get(own);
+  if (!about) {
+    if (ABOUT.size >= 256) ABOUT.clear();
+    about = { animal: aboutThe(ANIMAL, own), kid: aboutThe(KID, own), build: aboutThe(BUILT, own, true), old: OLD.map((noun) => aboutThe(noun, own)) };
+    ABOUT.set(own, about);
+  }
+  return about;
+}
+// A text as the patterns read it: accents composed ("é", not "e" and a combining mark), curly
+// apostrophes straight ("Ada’s"), lower case.
+const plain = (t) => String(t ?? '').normalize('NFC').replace(/[\u2018\u2019\u02bc]/g, "'").toLowerCase();
+// The words of a card's name that can stand for it in its text ("charles", "darby", also "will" or
+// "lady"); not "the" or "of" ("The Widow Pell", "Man of the Woods").
+const NOT_OWN = new RegExp(`^(?:${FUNCTION_WORDS})$`);
+const ownWords = (name) => [...new Set(plain(name).split(/[^\p{L}\p{M}'-]+/u).map((w) => w.replace(/^['-]+|['-]+$/g, ''))
+  .filter((w) => w.length > 1 && !NOT_OWN.test(w)))].join('|');
 const ONE_PIECE = new Set(['dress', 'gown', 'robe', 'frock', 'overalls', 'jumpsuit', 'dungarees', 'smock', 'apron']);
 
 export function guessSpec(c, forceSpecies = null) {
-  // What the character looks like comes from the appearance and the role; the name only
+  // What the character looks like comes from the appearance and the role; the name only says
+  // which words of the text stand for the character ("Charles, a tall man" on Charles's card) and
   // seeds the choices the text leaves open (a "Catherine" isn't a cat, a "Bobby" has no bob).
-  const appearance = (c.appearance ?? '').toLowerCase();
-  const role = (c.role ?? '').toLowerCase();
+  const appearance = plain(c.appearance);
+  const role = plain(c.role);
   const text = `${appearance} ${role}`;
-  const species = forceSpecies ?? speciesIn(appearance, role);
+  const about = aboutCard(ownWords(c.name));
+  const species = forceSpecies ?? speciesIn([appearance, role], about);
   const h = hashString(c.id ?? c.name ?? 'x');
   // "<colour> [and <colour>] <noun>": the colour and the noun it went with.
   const colorWord = (words, nouns) => {
@@ -962,7 +1010,7 @@ export function guessSpec(c, forceSpecies = null) {
   let hairWord = colorWord(HAIR_COLORS, 'hair|haired|locks|curls|braids|pigtails|ponytail|bob|bun')?.color
     ?? { blonde: 'blonde', blond: 'blond', brunette: 'brown', redhead: 'red', redheaded: 'red' }[/\b(blonde?|brunette|redhead(?:ed)?)\b/.exec(text)?.[1]];
   if (hairWord === 'dark' && /\bdark[- ]brown\b/.test(text)) hairWord = 'brown';
-  const old = [appearance, role].some((t) => OLD.some((re) => re.test(t)));
+  const old = [appearance, role].some((t) => about.old.some((re) => re.test(t)));
   if (!hairWord && old) hairWord = (h >>> 11) % 2 ? 'gray' : 'white'; // old: grey or white
   const styleWord = HAIR_STYLES.find(([, re]) => re.test(text))?.[0];
   // Without a style in the text, boys and men get a short one, older people a tidy one.
@@ -970,7 +1018,7 @@ export function guessSpec(c, forceSpecies = null) {
   const skins = ['#f8d3b0', '#f1c39c', '#e0a47c', '#c98e66', '#9c6a48', '#6e4a33'];
   const top = colorWord(CLOTH_COLORS, TOPS);
   const bottom = colorWord(CLOTH_COLORS, BOTTOMS);
-  const body = bodyIn([appearance, role]);
+  const body = bodyIn([appearance, role], about);
   const spec = {
     species,
     skin: SKIN_TONES.find(([re]) => re.test(text))?.[1] ?? skins[h % skins.length],
