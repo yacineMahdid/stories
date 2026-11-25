@@ -188,6 +188,8 @@ export class WorldView {
   shot(i) { return this.director?.shot(i); }
   get shots() { return this.director?.shots ?? []; }
   get state() { return this.director?.state ?? null; }
+  /** Staging notes for what is on screen: the page's and the direction file's. */
+  get warnings() { return [...new Set([...(this.director?.state?.warnings ?? []), ...(this.world?.warnings ?? [])])]; }
   retime(moment) { return this.queue(() => this.director?.retime(moment)); }
 
   /** A 16:9 still of what the camera sees now. */

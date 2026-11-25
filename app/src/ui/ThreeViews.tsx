@@ -48,6 +48,17 @@ function Busy({ on, children }: { on: boolean; children: ReactNode }) {
 
 const clean = (o: Record<string, any>) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== ''))
 
+/** Staging notes (an unknown prop, a cast member not on the page…), folded away. */
+function Warnings({ list }: { list: string[] }) {
+  if (!list.length) return null
+  return (
+    <details className="three-warnings">
+      <summary>{list.length} staging note{list.length === 1 ? '' : 's'}</summary>
+      <ul>{list.map((w) => <li key={w}>{w}</li>)}</ul>
+    </details>
+  )
+}
+
 /** A select's options, plus the current value when the file holds one the list doesn't have. */
 function Options({ value, list }: { value: string; list: [string, string][] }) {
   return (
@@ -255,6 +266,7 @@ export function PagePreview({ editor, shape }: { editor: Editor; shape: SceneSha
           {state.notes.map((n, i) => <li key={`n${i}`}>{n.text} <small>since {n.since}</small></li>)}
         </ul>
       )}
+      {state && <Warnings list={view.warnings} />}
       <div className="ins-row">
         <button className="primary" onClick={() => openStage(shape.id)}>Open 3D stage</button>
         <button disabled={saving || busy} onClick={addStill}><Busy on={saving}>{shape.props.still ? 'Replace the card’s still' : 'Put this shot on the card'}</Busy></button>
@@ -358,6 +370,7 @@ export function StageOverlay({ editor, pageId, onClose }: { editor: Editor; page
               {state.notes.map((n, i) => <li key={`n${i}`}>{n.text} <small>since {n.since}</small></li>)}
             </ul>
           )}
+          <Warnings list={view.warnings} />
         </aside>
       )}
       <footer className="stage-dock">

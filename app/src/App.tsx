@@ -9,7 +9,7 @@ import { assetStore, loadWorld, startAutosave, type SaveState } from './lib/pers
 import { centerOfView, ensurePages, getCharacters, getLore, getPins, getScenes, PAGES } from './lib/world'
 import { exportStoryBible } from './lib/exportBible'
 import { addStructural } from './lib/structure'
-import { loadStaging } from './lib/staging'
+import { loadStaging, useStagingStatus } from './lib/staging'
 import { StageContext, StageOverlay } from './ui/ThreeViews'
 
 // The four workspaces replace tldraw's own page menu.
@@ -37,6 +37,14 @@ function addShape(editor: Editor) {
   editor.createShape({ type: spec.type, x, y })
   const created = editor.getCurrentPageShapesSorted().at(-1)
   if (created) editor.select(created.id)
+}
+
+/** One indicator for both files: the canvas (data/world.json) and the 3D direction (data/staging.json). */
+function SaveStatus({ save }: { save: SaveState }) {
+  const staging = useStagingStatus()
+  if (staging.status === 'error') return <span className="save error" title={staging.error}>3D not saved</span>
+  const state = save === 'saved' && staging.status === 'saving' ? 'saving' : save
+  return <span className={`save ${state}`}>{state === 'saved' ? 'Saved' : state === 'saving' ? 'Saving…' : 'Save failed'}</span>
 }
 
 function Header({ editor, save, onStage }: { editor: Editor; save: SaveState; onStage: () => void }) {
@@ -69,7 +77,7 @@ function Header({ editor, save, onStage }: { editor: Editor; save: SaveState; on
         <button onClick={async () => { const where = await exportStoryBible(editor); setExported(where); setTimeout(() => setExported(''), 4000) }}>
           {exported ? `Saved → ${exported}` : 'Export story bible'}
         </button>
-        <span className={`save ${save}`}>{save === 'saved' ? 'Saved' : save === 'saving' ? 'Saving…' : 'Save failed'}</span>
+        <SaveStatus save={save} />
       </div>
     </header>
   )

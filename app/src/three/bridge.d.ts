@@ -55,6 +55,7 @@ export class WorldView {
   shot(i: number): Shot | undefined
   readonly shots: Shot[]
   readonly state: StageState | null
+  readonly warnings: string[]
   retime(moment: { hour?: number; weather?: string; season?: string }): Promise<unknown>
   still(width?: number, height?: number): Promise<Blob>
   dispose(): void

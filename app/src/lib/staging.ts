@@ -15,6 +15,7 @@ let status: StagingStatus = 'loading'
 let error = ''
 let readFailed = false // the file on disk could not be read: never save over it
 let pending: Op[] = []
+let inflight: Op[] = [] // sent, not yet answered
 let timer: ReturnType<typeof setTimeout> | undefined
 let flushing: Promise<void> | null = null
 const listeners = new Set<() => void>()
@@ -41,12 +42,15 @@ export async function loadStaging(): Promise<void> {
     const res = await fetch('/api/staging')
     let fresh: Direction
     if (res.status === 404) fresh = {}
-    else if (!res.ok) throw new Error(`data/staging.json could not be read (${res.status}). Fix the file, then reload.`)
+    else if (!res.ok) {
+      const why = (await res.text().catch(() => '')).replace(/^\w*Error: /, '').slice(0, 160)
+      throw new Error(`data/staging.json could not be read${why ? `: ${why}` : ` (${res.status})`}. Fix it; it is read again when you come back to this tab.`)
+    }
     else fresh = await res.json()
     // Keep the same object when nothing changed, so the 3D views don't restage for nothing.
     if (JSON.stringify(fresh) !== JSON.stringify(direction)) direction = fresh
-    // Edits made while loading are kept and saved on top.
-    for (const op of pending) direction = apply(direction, op)
+    // Edits made while loading (or still on their way to the file) are kept on top.
+    for (const op of [...inflight, ...pending]) direction = apply(direction, op)
     status = 'ready'
     readFailed = false
   } catch (e) {
@@ -62,6 +66,7 @@ async function flush(keepalive = false) {
   if (readFailed || status === 'loading' || !pending.length) return
   const ops = pending
   pending = []
+  inflight = ops
   status = 'saving'
   notify()
   try {
@@ -76,6 +81,7 @@ async function flush(keepalive = false) {
     status = 'error'
     error = e instanceof Error ? e.message : String(e)
   }
+  inflight = []
   notify()
 }
 
@@ -111,5 +117,9 @@ export function useStagingStatus(): { status: StagingStatus; error: string } {
 if (typeof window !== 'undefined') {
   // Don't lose the last change when the tab closes; pick up hand edits when coming back.
   window.addEventListener('pagehide', () => { clearTimeout(timer); flush(true) })
-  window.addEventListener('focus', () => { if (!pending.length && status !== 'loading' && status !== 'saving') void loadStaging() })
+  // (After a failed read, edits wait in `pending` and are saved on top once the file reads again.)
+  window.addEventListener('focus', () => {
+    if (status === 'loading' || status === 'saving') return
+    if (readFailed || !pending.length) void loadStaging()
+  })
 }
