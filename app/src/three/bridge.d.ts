@@ -17,6 +17,17 @@ export const lookOptions: {
 }
 export const placePresets: string[]
 export const weathers: Option[]
+/** What a cast entry and a page's props can be, for the Direct panel's selects. */
+export const directOptions: {
+  /** `do`: every animation name, by group (Basics first) */
+  animations: { group: string; names: string[] }[]
+  /** `feel`: every emotion, Neutral first */
+  emotions: Option[]
+  /** `hold`: every hand prop (held-*), by its label */
+  held: Option[]
+  /** a page's dressing: every set piece by family (no hand props, rows, rings or scatters) */
+  props: { family: string; label: string; kinds: Option[] }[]
+}
 
 /** A first look from the card's text; `species` forces one (a person's skin and hair, an animal's fur). */
 export function guessLook(card: { id: string; name: string; role?: string; appearance?: string; color?: string }, species?: string): Look
@@ -132,6 +143,8 @@ export interface StageState {
   entryKey: string | null
   castFrom: Source<'auto' | 'inherit' | 'own'>
   cameraFrom: Source<'auto' | 'inherit' | 'same' | 'own'>
+  /** Where the hour, season and weather come from: this page's direction ("own"), the page's time on the canvas ("canvas"), its When text ("when"), a page it continues ("inherit"), or the defaults. */
+  momentFrom: Record<'hour' | 'season' | 'weather', 'own' | 'canvas' | 'when' | 'inherit' | 'default'>
   /** The cast list in effect as written (this page's own, or the one it inherits), also entries that match no character. */
   castList: CastEntry[]
   /** Beside `cast`, one each: the entry as written (who, at, facing… as in the file); a gathered member's as it was made, with auto: true. */
@@ -177,6 +190,9 @@ export interface ThingMark {
   /** where it stands and faces now, local */
   at: Local
   facing: number
+  /** world position and yaw of the model now */
+  pos: [number, number, number]
+  yaw: number
   /** the entry to write back at `index` (moved or turned: at / facing as it is now; the rest as written) */
   entry: ThingEntry
 }
@@ -261,7 +277,13 @@ export class WorldView {
   setCameraView(view: CameraView): boolean
   /** The exact framing shot i gives (what the camera shows after shot(i)), without moving the camera. */
   shotView(i: number): CameraView | null
-  /** The cast on stage as entries to write as the page's "cast" (copy on write): who (card id), at (local [x, z] or the spot string), facing (degrees or the entry's reference), the rest as written. Gathered members are written where they stand; moved or turned ones where they are now. Writing it back stages the same picture. */
+  /**
+   * The page's cast as entries to write as its "cast" (copy on write): who (card id), at (local
+   * [x, z] or the spot string), facing (degrees or the entry's reference), the rest as written.
+   * The entries come from the direction as it is now (also while a re-stage is on its way);
+   * gathered members are written where they stand, moved or turned ones where they are now.
+   * Writing it back stages the same picture.
+   */
   castMarks(): CastEntry[]
   /** Everyone on stage, in staging order, with where they stand and face now. */
   castInfo(): CastInfo[]
@@ -281,6 +303,8 @@ export class WorldView {
   worldYaw(deg: number): number
   /** Place degrees from a local point toward the camera now (what "the camera" in the Facing select stores). */
   facingToCamera(at: Local): number
+  /** Every thing id in the world (places, every page's dressing and added things): a new prop's id must be none of these. */
+  thingIds(): string[]
 }
 export function getPreview(): WorldView
 export function coverPreviews(covered: boolean): void

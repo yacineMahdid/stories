@@ -132,7 +132,10 @@ A look is a character spec (see `docs/characters.md`) with a `species`:
   "changes": [ ... ],             // lasting changes, from this page on
   "dressing": [ ... ],            // things only in this page (and pages that continue it)
   "cast": [ ... ],
-  "camera": [ ... ]
+  "camera": [ ... ],
+  "locked": true,                 // the direction is final (see Directing a page)
+  "picture": 1,                   // the shot that is the page's picture: its index in "camera"
+  "feedback": [ ... ]             // notes for Claude (see Directing a page)
 }
 ```
 
@@ -193,10 +196,55 @@ page and every shot.
 - `from`: the compass direction the camera looks from. The default is the direction the subjects
   face, turned 22° for a three-quarter view.
 - `distance`, `height`, `fov` and `turn` override the framing.
-- `pos` + `target` (`[x, y, z]` in place units) place the camera exactly.
+- `pos` + `target` place the camera exactly: `[x, y, z]`, with x and z in place units (like `at`)
+  and y the height in the world. With `fov`, that is a shot's **exact framing**:
+  `{ "label": "Hello", "pos": [3.71, 1.16, 5.92], "target": [1.25, 0.55, 4.15], "fov": 35 }`.
 - `move`: `orbit`, `push`, `pull`, `pan` or `still`. `hold` is the seconds the shot lasts in Play.
 - `{ "same": "<page>" }` in place of the shots reuses another page's camera, to come back to a
   spot with the same framing.
+
+### Directing a page
+
+The full 3D stage in the Story Canvas app has a **Direct** mode, for directing a page by hand:
+select a character or a prop and drag it, turn it, set what they do, feel and hold, add and remove
+cast and props, set the moment, and frame the shots from where you put the camera. It writes the
+page's `cast`, `camera`, `dressing`, `time`, `weather` and `season`, and nothing else (the place's
+own things belong to the place). Each change is one Undo in the app, and Undo gives the file back
+exactly as it was.
+- Edits go into the page's own entry, under the key it already has (its id, or a title written by
+  hand), or its id when it has none.
+- A page that has no `cast` or `camera` of its own (automatic, inherited through `continues`, or
+  `{ "same": … }`) gets its own whole list at the first change, taken from what the stage shows:
+  moving one character that was placed automatically keeps everyone else where they stand.
+- Lists are written whole: `"cast"`, `"camera"`, `"dressing"` and `"feedback"` are replaced as one
+  value, and the rest of the file keeps its layout.
+- Units: `at` and shot positions to 0.01, facings in whole place degrees (0–359), `fov` to 0.1°.
+  A view straight down keeps the step from its target to its lens a little finer, so it keeps its
+  turn.
+
+**Lock.** `"locked": true` makes the page's direction final, with `"picture"` (the index of a shot
+in `camera`) as the page's picture: the app puts a still of that shot on the page card. Locking
+writes everything explicitly: each cast member's `at` and `facing`, each shot's exact framing
+(`pos`, `target`, `fov`; keeping `label`, `hold` and `move`). A locked page doesn't gather the
+characters it lists but doesn't cast; each gets a note: "Mira is listed on this page but not in
+its locked 3D cast." Unlocking deletes `locked` and keeps the rest.
+
+**Notes for Claude.** `"feedback"` is a list of notes the user writes to Claude about the page,
+also on a locked page. They change nothing in 3D.
+
+```jsonc
+"feedback": [
+  { "text": "Mira should stand closer to the fountain, facing Biscuit",
+    "view": { "pos": [3.71, 1.16, 5.92], "target": [1.25, 0.55, 4.15], "fov": 35 },  // the camera then, as exact framing
+    "shot": "Hello",                     // the shot on screen: its label, or its number
+    "about": "shape:mira",               // the character or prop selected (its id), if any
+    "added": "2026-11-25T14:02:00.000Z",
+    "done": true,                        // marked done in the app
+    "reply": "Moved her to [0.9, 2.4], facing Biscuit." }  // what Claude did about it
+]
+```
+
+`locked`, `picture` and `feedback` never cause a staging note or a story-check problem.
 
 ## Props
 

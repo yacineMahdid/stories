@@ -11,6 +11,9 @@ import { readCanvas } from '../../../src/world/canvas.js';
 import { World, guessSpec, PLACE_PRESETS, directionKey } from '../../../src/world/staging.js';
 import { Director, buildSpec } from '../../../src/world/director.js';
 import { WEATHERS } from '../../../src/world/sky.js';
+import { ANIMATION_GROUPS } from '../../../src/engine/animations.js';
+import { EMOTIONS } from '../../../src/engine/emotions.js';
+import { CATALOG } from '../../../src/world/props/index.js';
 
 export const lookOptions = {
   species: Object.entries(SPECIES).map(([id, s]) => ({ id, label: s.label })),
@@ -27,6 +30,27 @@ export { directionKey };
 /** The full character spec a look becomes (species defaults filled in), to show real values. */
 export function effectiveSpec(look) { return buildSpec(look); }
 export const weathers = Object.entries(WEATHERS).map(([id, w]) => ({ id, label: w.label }));
+
+/** What a cast entry and a page's props can be, for the Direct panel's selects. */
+const GROUP_KINDS = new Set(['row', 'ring', 'scatter']);
+const FAMILY_LABELS = { nature: 'Nature', buildings: 'Buildings', village: 'Village', waterside: 'Waterside' };
+export const directOptions = {
+  /** `do`: every animation, by group */
+  animations: Object.entries(ANIMATION_GROUPS).map(([group, names]) => ({ group, names: [...names] })),
+  /** `feel`: every emotion, Neutral first */
+  emotions: Object.entries(EMOTIONS).map(([id, e]) => ({ id, label: e.label ?? id })).sort((a, b) => (a.id === 'neutral' ? -1 : b.id === 'neutral' ? 1 : 0)),
+  /** `hold`: every hand prop (held-*) */
+  held: Object.entries(CATALOG).filter(([kind]) => kind.startsWith('held-')).map(([id, d]) => ({ id, label: d.label ?? id })),
+  /** a page's dressing: every set piece, by family (no hand props, no rows, rings or scatters) */
+  props: [],
+};
+for (const [id, d] of Object.entries(CATALOG)) {
+  if (id.startsWith('held-') || GROUP_KINDS.has(id)) continue;
+  const family = d.family ?? 'other';
+  let group = directOptions.props.find((g) => g.family === family);
+  if (!group) directOptions.props.push(group = { family, label: FAMILY_LABELS[family] ?? family, kinds: [] });
+  group.kinds.push({ id, label: d.label ?? id });
+}
 
 /** A first 3D look for a character card, from its name, role and appearance text. */
 export function guessLook(card, species) {
@@ -291,6 +315,8 @@ export class WorldView {
   localFacing(yaw) { return this.director?.localFacing(yaw) ?? 0; }
   worldYaw(deg) { return this.director?.worldYaw(deg) ?? 0; }
   facingToCamera(at) { return this.director?.facingToCamera(at) ?? 0; }
+  /** Every thing id in the world (places, every page's dressing and added things): a new prop's id must be none of these. */
+  thingIds() { return this.world?.thingIds() ?? []; }
 
   /**
    * A still of what the camera sees now, or with `shot` of that shot (framed for the still, then

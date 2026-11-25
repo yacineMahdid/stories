@@ -276,6 +276,17 @@ export class World {
 
   placeByName(ref) { return byIdOrName(this.places, ref); }
 
+  /** Every thing id in the world: the places' things, and every page's dressing and added things (rows and rings one by one). */
+  thingIds() {
+    const ids = new Set([...this.things.keys(), ...this.orphanThings]);
+    for (const s of this.scenes) {
+      const placeId = this.placeOf(s).place?.id;
+      for (const t of expandGroups(Array.isArray(s.dir.dressing) ? s.dir.dressing : [], placeId)) if (t?.id) ids.add(t.id);
+      for (const ch of Array.isArray(s.dir.changes) ? s.dir.changes : []) if (ch?.add) for (const t of expandGroups([ch.add], placeId)) if (t?.id) ids.add(t.id);
+    }
+    return [...ids];
+  }
+
   /** Where a page happens before the map has any pins: an empty meadow at the origin. */
   nowhere() {
     return {
@@ -485,6 +496,15 @@ export class World {
     // Snow means winter, also snow that is over ("the morning after the snow").
     const season = scene.dir.season ?? SEASON_OF_MONTH(page.at?.month) ?? told.season ?? (told.snow ? 'winter' : null) ?? inherit('season') ?? this.direction.defaults?.season ?? 'summer';
     const weather = scene.dir.weather ?? told.weather ?? inherit('weather') ?? this.direction.defaults?.weather ?? 'clear';
+    // Where each part of the moment comes from: this page's direction, the page on the canvas (its
+    // time, or its "When" text), a page it continues, or the defaults.
+    const momentFrom = {
+      hour: typeof scene.dir.time === 'number' || (typeof scene.dir.time === 'string' && /^[+-]/.test(scene.dir.time) && chain[0]) ? 'own'
+        : page.at?.hour != null ? 'canvas' : told.hour != null ? 'when' : chain.some((s) => hourOf(s) != null) ? 'inherit' : 'default',
+      season: scene.dir.season != null ? 'own' : SEASON_OF_MONTH(page.at?.month) != null ? 'canvas'
+        : told.season != null || told.snow ? 'when' : inherit('season') != null ? 'inherit' : 'default',
+      weather: scene.dir.weather != null ? 'own' : told.weather != null ? 'when' : inherit('weather') != null ? 'inherit' : 'default',
+    };
     const ambient = inherit('ambient') ?? null;
     const day = page.at?.day ?? 15;
 
@@ -651,7 +671,7 @@ export class World {
       // (null when it has none), where its cast and camera come from, the cast as written, which
       // dressing entries became which things, and the page's lock, picture and notes as read.
       entryKey: scene.key ?? null,
-      castFrom, cameraFrom, castList, castEntries, dressingIds,
+      castFrom, cameraFrom, momentFrom, castList, castEntries, dressingIds,
       locked, picture: typeof scene.dir.picture === 'number' ? scene.dir.picture : null,
       feedback: Array.isArray(scene.dir.feedback) ? scene.dir.feedback : [],
     };
@@ -676,7 +696,7 @@ export class World {
       index: -1, page: { id: `place:${place.id}`, title: place.name, when: '', at: {}, summary: place.description, path: '', characterIds: [], locationIds: [place.id] },
       dir: {}, place, chain: [], hour, season, weather, ambient: null, day,
       things, cast: [], shots: [{ shot: 'establishing', label: place.name }, { shot: 'wide', label: 'Closer' }], notes: [], allNotes: [], changes: [], warnings: [], looks: new Map(),
-      entryKey: null, castFrom: { kind: 'auto' }, cameraFrom: { kind: 'auto' }, castList: [], castEntries: [], dressingIds: [],
+      entryKey: null, castFrom: { kind: 'auto' }, cameraFrom: { kind: 'auto' }, momentFrom: { hour: 'default', season: 'default', weather: 'default' }, castList: [], castEntries: [], dressingIds: [],
       locked: false, picture: null, feedback: [],
     };
   }
