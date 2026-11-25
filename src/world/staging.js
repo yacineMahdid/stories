@@ -34,15 +34,23 @@ export function momentIn(when) {
     : has(/\b(autumn|fall|harvest)\b/) ? 'autumn'
     : has(/\b(winter|wintertime|midwinter|snowy|first snow)\b/) ? 'winter'
     : null;
-  const weather = has(/\b(storm|stormy|thunder|thunderstorm|gale|tempest)\b/) ? 'storm'
-    : has(/\b(rain|rainy|raining|drizzle|showers?)\b/) ? 'rain'
-    : has(/\b(snow|snowy|snowing|blizzard|snowfall)\b/) ? 'snow'
-    : has(/\b(fog|foggy|mist|misty|haze|hazy)\b/) ? 'fog'
-    : has(/\b(overcast|grey sky|gray sky|gloomy)\b/) ? 'overcast'
-    : has(/\b(cloud|cloudy|clouds)\b/) ? 'cloudy'
-    : null;
+  // Weather that is over or still to come isn't the weather of the moment: "the morning after the
+  // storm", "before the rain", "once the snow had stopped" (their hour and season words still count).
+  const now = t.replace(WEATHER_GONE, ' ');
+  const weather = WEATHER_WORDS.find(([, words]) => new RegExp(`\\b(?:${words})\\b`).test(now))?.[0] ?? null;
   return { hour, season, weather };
 }
+const WEATHER_WORDS = [
+  ['storm', 'storm|stormy|thunder|thunderstorm|gale|tempest'],
+  ['rain', 'rain|rainy|raining|drizzle|drizzling|showers?'],
+  ['snow', 'snow|snowy|snowing|blizzard|snowfall'],
+  ['fog', 'fog|foggy|mist|misty|haze|hazy'],
+  ['overcast', 'overcast|grey sky|gray sky|gloomy'],
+  ['cloudy', 'cloud|cloudy|clouds'],
+];
+const ANY_WEATHER = WEATHER_WORDS.map(([, words]) => words).join('|');
+const WEATHER_GONE = new RegExp(`\\b(?:after|before|since|until|till|once)\\s+(?:(?:the|a|an|all|this|that|its|last)\\s+)?(?:[a-z'-]+\\s+)?(?:${ANY_WEATHER})\\b`
+  + `|\\b(?:${ANY_WEATHER})\\s+(?:(?:(?:had|has|have)\\s+)?(?:stopped|cleared|passed|eased|ended|lifted)|(?:is|was)\\s+over)\\b`, 'g');
 
 function rotate([x, z], deg) {
   const t = deg * D2R, c = Math.cos(t), s = Math.sin(t);
@@ -323,6 +331,34 @@ export class World {
     return result;
   }
 
+  /**
+   * One note for each character whose card was deleted but whom the page still lists (its Who) or
+   * casts in 3D: named when their look still has a "name", with what to remove where.
+   */
+  deletedCards(scene, chain, castDir) {
+    const listed = scene.page.characterIds ?? [];
+    const castIds = Array.isArray(castDir) ? castDir.map((c) => c?.who) : [];
+    // The page whose "cast" it is: this one, or the one it continues.
+    const from = [scene, ...chain].find((s) => s.dir.cast != null);
+    const other = from && from !== scene ? `"${from.page.title || from.page.path}"` : null;
+    const groups = new Map();
+    for (const id of new Set([...listed, ...castIds.filter((ref) => String(ref).startsWith('shape:'))])) {
+      if (this.character(id)) continue;
+      const key = directionKey(this.direction, 'characters', id);
+      const name = key != null && typeof this.direction.characters[key].name === 'string' ? this.direction.characters[key].name.trim() : '';
+      const inList = listed.includes(id), inCast = castIds.includes(id);
+      const group = `${name}|${inList}|${inCast}`;
+      groups.set(group, { name, inList, inCast, n: (groups.get(group)?.n ?? 0) + 1 });
+    }
+    return [...groups.values()].map(({ name, inList, inCast, n }) => {
+      const who = name ? `${name}, whose card was deleted, is` : n > 1 ? `${n} characters whose cards were deleted are` : 'A character whose card was deleted is';
+      const cast3d = other ? `in the 3D cast ${inList ? 'it' : 'this page'} takes from ${other}` : inList ? 'in its 3D cast' : 'in this page\'s 3D cast';
+      const where = [inList && 'listed on this page', inCast && cast3d].filter(Boolean).join(' and ');
+      const fix = [inList && 'under Who', inCast && `from ${other ? `the "cast" of ${other}` : 'this page\'s "cast"'} in staging.json`].filter(Boolean).join(', and ');
+      return `${who} still ${where}: remove them ${fix}.`;
+    });
+  }
+
   sceneState(index) {
     const scene = this.scenes[index];
     if (!scene) return null;
@@ -456,10 +492,12 @@ export class World {
     const castDir = scene.dir.cast ?? (chain.length ? inherit('cast') ?? [] : []);
     const cast = [];
     const used = new Set();
+    warnings.push(...this.deletedCards(scene, chain, castDir));
     for (const c of castDir) {
       const who = this.character(c.who);
       if (!who) {
-        warnings.push(String(c.who).startsWith('shape:') ? 'The cast has a character whose card was deleted.' : `The cast has "${c.who}", who is not a character on the canvas.`);
+        // A deleted card ("shape:…") has its note above; a name that matches no card gets this one.
+        if (!String(c.who).startsWith('shape:')) warnings.push(`The cast has "${c.who}", who is not a character on the canvas.`);
         continue;
       }
       if (page.characterIds?.length && !page.characterIds.includes(who.id)) warnings.push(`${who.name} is staged here but not listed on this page.`);
@@ -469,7 +507,7 @@ export class World {
     const missing = (page.characterIds ?? []).filter((id) => !used.has(id));
     missing.forEach((id, i) => {
       const who = this.character(id);
-      if (!who) { warnings.push('This page lists a character whose card was deleted.'); return; }
+      if (!who) return; // a deleted card: noted with the cast above
       // A shallow arc that opens to the south, where the camera looks from: everyone faces its
       // middle, so they talk to each other and their faces read (no backs to the camera).
       const n = missing.length;
@@ -635,13 +673,19 @@ const PLACE_WORDS = [
   ['town', ['town', 'village', 'square', 'market', 'city', 'street', 'plaza', 'bakery', 'shop', 'store', 'inn', 'tavern', 'cafe', 'café', 'school', 'library', 'museum', 'station', 'hamlet']],
 ];
 
-/** The set named by the text, matching whole words (plurals too); in a name, the last one wins ("Dead Marsh"). */
+// What can follow a set word in one compound place name: "Lakeside", "Riverbend", "Woodlands".
+const PLACE_SUFFIX = 'side|view|shore|front|land|top|bank|bend|crest';
+
+/**
+ * The set named by the text, matching whole words, their plurals and compounds like "Lakeside"
+ * or "Hilltop" (not "Pierre" or "Springfield"); in a name, the last one wins ("Dead Marsh").
+ */
 function placeSetIn(text, isName) {
   let best = null;
   for (const [set, words] of PLACE_WORDS) {
     // "spring" is a lake only in a name; in a description it is the season.
     const list = isName ? words : words.filter((w) => w !== 'spring');
-    for (const m of text.matchAll(new RegExp(`\\b(?:${list.join('|')})(?:e?s)?\\b`, 'g'))) {
+    for (const m of text.matchAll(new RegExp(`\\b(?:${list.join('|')})(?:e?s|(?:${PLACE_SUFFIX})s?)?\\b`, 'g'))) {
       if (!best || (isName ? m.index > best.index : m.index < best.index)) best = { set, index: m.index };
     }
   }
@@ -769,37 +813,48 @@ const SKIN_TONES = [
   [/\b(brown|dark)[- ]skin(?:ned)?\b/, '#9c6a48'],
 ];
 
-// Words that turn an animal into a job or a thing ("dog walker", "cat burglar", "pony tail").
-const NOT_THE_ANIMAL = 'walkers?|trainers?|sitters?|riders?|herders?|herds?|catchers?|lovers?|groomers?|whisperers?|keepers?|breeders?|owners?|handlers?|burglars?|fanciers?|shows?|tails?|treats?|food|bed|hair|print|ears?|eye|eyed|like|shaped';
+const PEOPLE = 'boy|girl|man|men|woman|women|kid|child|fellow|guy|lady|gentleman|person|one|folk';
+// Words that turn an animal into a job, a thing or a person ("dog walker", "cat burglar", "pony
+// tail", "cat lady").
+const NOT_THE_ANIMAL = `walkers?|trainers?|sitters?|riders?|herders?|herds?|catchers?|lovers?|haters?|groomers?|whisperers?|keepers?|breeders?|owners?|handlers?|burglars?|fanciers?|shows?|tails?|treats?|food|bed|hair|print|ears?|eye|eyed|like|shaped|ladies|people|${PEOPLE}`;
+
+// What can't stand between "a" and the noun the phrase is about: another article, a pronoun, a
+// preposition or conjunction, a verb ("walks", "rides") or a person ("walks her dog", "a man with
+// a dog", "carrying her little boy"). Adjectives and a possessive name can ("Ada's loyal dog").
+const NOT_A_MODIFIER = `an?|the|this|that|these|those|my|your|his|her|its|our|their|whose|who|which|with|without|of|in|on|at|by|for|to|from|into|about|after|before|near|like|as|than|and|or|but|nor|is|are|was|were|be|been|has|have|had|do|does|did|can|could|will|would|${PEOPLE}`;
+// One word that can: none of those, and no verb ending in -s ("walks"; "nervous", "fearless",
+// "Ada's" and "Mrs" are fine).
+const MODIFIER = `(?:mr?s|(?!(?:${NOT_A_MODIFIER})[\\s,])(?![a-z]*[^siu'\\s]s[\\s,])[a-z'-]+)`;
+/**
+ * The phrase a text is about, ending in `noun`: the one it starts with ("A golden dog in a blue
+ * shirt", "Ada's little brother", "Old Pell"), or the one after "<name> is a" ("Biscuit is a dog")
+ * or "<name>, a" ("Mira, a tall girl"); not a noun further on ("walks her dog", "a mother
+ * carrying her little boy", "strong as an ox").
+ */
+const aboutThe = (noun, commas = false) => new RegExp(`^\\s*(?:(?:${MODIFIER}\\s+){1,3}?(?:is|was)\\s+|(?:${MODIFIER}\\s+){0,2}${MODIFIER},\\s+(?=(?:an?|the)\\s))?`
+  + `(?:(?:an?|the|one|this|that)\\s+)?(?:${MODIFIER}${commas ? ',?' : ''}\\s+){0,3}?(?:${noun})`);
 
 /**
  * The species of the character the text describes: an animal named as the subject ("A golden
  * dog in a blue shirt", "An old toad fisherman", "Biscuit is a dog"), not one mentioned in
- * passing ("raises cows", "a cat burglar", "Catherine", "dogged").
+ * passing ("raises cows", "a cat burglar", "walks her dog", "Catherine", "dogged").
  */
 function speciesIn(appearance, role) {
   const words = Object.values(SPECIES_WORDS).flat().join('|');
-  const animal = `(${words})\\b(?![-'])(?!\\s+(?:${NOT_THE_ANIMAL})\\b)`;
-  const subject = [
-    new RegExp(`^\\s*(?:(?:an?|the|one|this|that)\\s+)?(?:[a-z'-]+\\s+){0,3}?${animal}`),
-    new RegExp(`\\b(?:is|was|as|like)\\s+(?:an?|the)\\s+(?:[a-z'-]+\\s+){0,3}?${animal}`),
-  ];
+  const animal = aboutThe(`(${words})\\b(?![-'])(?!\\s+(?:${NOT_THE_ANIMAL})\\b)`);
   for (const text of [appearance, role]) {
-    for (const re of subject) {
-      const m = re.exec(text);
-      if (m) return Object.entries(SPECIES_WORDS).find(([, list]) => list.includes(m[1]))[0];
-    }
+    const m = animal.exec(text);
+    if (m) return Object.entries(SPECIES_WORDS).find(([, list]) => list.includes(m[1]))[0];
   }
   return 'human';
 }
 
 // Words for build, taken only when they describe the character ("a tall woman", "a little dog",
-// "a short, round man"), not their things ("short hair", "a small hat").
-const PEOPLE = 'boy|girl|man|men|woman|women|kid|child|fellow|guy|lady|gentleman|person|one|folk';
+// "a short, round man"), not their things ("short hair", "a small hat") or someone else ("her
+// little boy", "a woman with a tall man").
 const BUILD = [
   ['lanky', 'lanky|gangly'],
   ['tall', 'tall'],
-  ['kid', 'child|kid|toddler'],
   ['short', 'short|little|tiny|small|petite'],
   ['round', 'round|rotund|portly'],
   ['chubby', 'plump|chubby|stout|chunky'],
@@ -807,19 +862,31 @@ const BUILD = [
   ['muscular', 'muscular|brawny|strong|athletic'],
   ['slim', 'slim|thin|skinny|slender|wiry'],
 ];
-function bodyIn(text) {
-  // Children: "a little girl", "Ada's little brother", "a six-year-old boy".
-  if (/\b(child|kid|toddler|little (?:boy|girl|brother|sister|son|daughter|one))\b|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|\d|1[0-2])-year-old\b/.test(text)) return 'kid';
+// Children: "a little girl", "Ada's little brother", "a six-year-old boy", "Tom is a child".
+const KID = aboutThe('(?:child|kid|toddler|little (?:boy|girl|brother|sister|son|daughter|one)|(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|\\d|1[0-2])-year-old)\\b');
+function bodyIn(texts) {
+  if (texts.some((t) => KID.test(t))) return 'kid';
   const subjects = `${PEOPLE}|${Object.values(SPECIES_WORDS).flat().join('|')}`;
-  let best = null;
-  for (const [body, words] of BUILD) {
-    const m = new RegExp(`\\b(?:${words})\\b(?=(?:,?\\s+[a-z'-]+){0,2}?,?\\s+(?:${subjects})\\b)`).exec(text);
-    if (m && (!best || m.index < best.index)) best = { body, index: m.index };
+  const build = aboutThe(`(${BUILD.map(([, words]) => words).join('|')})\\b(?=(?:,?\\s+[a-z'-]+){0,2}?,?\\s+(?:${subjects})\\b)`, true);
+  for (const text of texts) {
+    const m = build.exec(text);
+    if (m) return BUILD.find(([, words]) => words.split('|').includes(m[1]))[0];
   }
-  return best?.body ?? null;
+  return null;
 }
-const MALE = /\b(boy|man|men|he|him|his|gentleman|father|dad|papa|grandpa|grandfather|granddad|grandad|uncle|king|prince|lad|son|grandson|brother|nephew|husband|sir|mr|mister|lord|duke|monk|priest|groom|schoolboy)\b|\b(?!wo|hu)[a-z]+m[ae]n\b/;
-const OLD = /(?<!-)\bold\b(?!-)|\b(elderly|aged|grandmother|grandfather|granny|grandma|grandpa|gran|grandad)\b/;
+// "-man" words are male ("fisherman", "postman"); "-woman" ones and "human" are not.
+const MALE = /\b(boy|man|men|he|him|his|gentleman|father|dad|papa|grandpa|grandfather|granddad|grandad|uncle|king|prince|lad|son|grandson|brother|nephew|husband|sir|mr|mister|lord|duke|monk|priest|groom|schoolboy)\b|\b[a-z]+(?<!wo|hu)m[ae]n\b/;
+// Age, also only from the character the text is about: "an old fisherman", "Old Pell", "an aged
+// captain", "a fisherman, old and grumpy", "a grandmother who…", "Granny Pell", "a man aged 70";
+// not "her old coat", "aged twelve", "middle-aged" or "her grandmother's".
+const AN_AGE = '\\d|(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|a|about|around|nearly|almost|over|under|just)\\b';
+const SIXTY_PLUS = '(?:sixty|seventy|eighty|ninety|(?:a\\s+)?hundred|[6-9]\\d|1\\d\\d)';
+const OLD = [
+  aboutThe(`(?:old|elderly|aged(?!\\s+(?:${AN_AGE})))\\b(?![-'])`),
+  aboutThe(`[a-z'-]+,\\s+(?:very\\s+)?(?:old|elderly)\\b(?![-'])`),
+  aboutThe('(?:great-)*(?:grandmother|grandfather|granny|grandma|grandpa|gran|grandad|granddad)\\b'),
+  aboutThe(`(?:[a-z'-]+,?\\s+)?(?:aged\\s+${SIXTY_PLUS}|${SIXTY_PLUS}(?:-[a-z]+)?[- ]years?[- ]old)\\b`),
+];
 const ONE_PIECE = new Set(['dress', 'gown', 'robe', 'frock', 'overalls', 'jumpsuit', 'dungarees', 'smock', 'apron']);
 
 export function guessSpec(c, forceSpecies = null) {
@@ -838,14 +905,15 @@ export function guessSpec(c, forceSpecies = null) {
   let hairWord = colorWord(HAIR_COLORS, 'hair|haired|locks|curls|braids|pigtails|ponytail|bob|bun')?.color
     ?? { blonde: 'blonde', blond: 'blond', brunette: 'brown', redhead: 'red', redheaded: 'red' }[/\b(blonde?|brunette|redhead(?:ed)?)\b/.exec(text)?.[1]];
   if (hairWord === 'dark' && /\bdark[- ]brown\b/.test(text)) hairWord = 'brown';
-  if (!hairWord && OLD.test(text)) hairWord = (h >>> 11) % 2 ? 'gray' : 'white'; // old: grey or white
+  const old = [appearance, role].some((t) => OLD.some((re) => re.test(t)));
+  if (!hairWord && old) hairWord = (h >>> 11) % 2 ? 'gray' : 'white'; // old: grey or white
   const styleWord = HAIR_STYLES.find(([, re]) => re.test(text))?.[0];
   // Without a style in the text, boys and men get a short one, older people a tidy one.
-  const styles = MALE.test(text) ? ['spiky', 'swept', 'bob'] : OLD.test(text) ? ['bun', 'bob', 'swept'] : ['bob', 'spiky', 'swept', 'pigtails', 'ponytail', 'bun', 'long'];
+  const styles = MALE.test(text) ? ['spiky', 'swept', 'bob'] : old ? ['bun', 'bob', 'swept'] : ['bob', 'spiky', 'swept', 'pigtails', 'ponytail', 'bun', 'long'];
   const skins = ['#f8d3b0', '#f1c39c', '#e0a47c', '#c98e66', '#9c6a48', '#6e4a33'];
   const top = colorWord(CLOTH_COLORS, TOPS);
   const bottom = colorWord(CLOTH_COLORS, BOTTOMS);
-  const body = bodyIn(text);
+  const body = bodyIn([appearance, role]);
   const spec = {
     species,
     skin: SKIN_TONES.find(([re]) => re.test(text))?.[1] ?? skins[h % skins.length],
