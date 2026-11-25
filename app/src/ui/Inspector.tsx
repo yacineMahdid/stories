@@ -1,12 +1,12 @@
-import { useRef, type ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import { useValue, type Editor, type TLShape } from 'tldraw'
 import { EMPTY_TIME, LORE_CATEGORIES, PALETTE, PIN_KINDS, type WorldTime, type CharacterShape, type ContainerShape, type LoreShape, type PinShape, type SceneShape } from '../shapes/types'
 import { effectiveModifiers, focusShape, getCharacters, getLore, getPages, getPins, PAGES } from '../lib/world'
-import { ageAt, isSet, relation } from '../lib/time'
+import { ageAt, formatHour, isSet, parseHour, relation } from '../lib/time'
 import { addStructural, buildOutline, findNode, LEVEL, tidyAll, type OutlineNode } from '../lib/structure'
 import { uploadFile } from '../lib/persistence'
 import { findIssues } from '../lib/checks'
-import { CharacterLook, PagePreview, PlacePreview, ThreeBoundary } from './ThreeViews'
+import { CharacterLook, followRename, PagePreview, PlacePreview, ThreeBoundary } from './ThreeViews'
 
 type Props<S extends TLShape> = { editor: Editor; shape: S }
 
@@ -39,14 +39,38 @@ function TimeInput({ value, onChange }: { value: WorldTime; onChange: (t: WorldT
   const num = (v: string) => (v.trim() === '' || isNaN(Number(v)) ? null : Number(v))
   return (
     <div className="ins-time">
-      {(['year', 'month', 'day', 'hour'] as const).map((k) => (
+      {(['year', 'month', 'day'] as const).map((k) => (
         <label key={k}>
           <small>{k}</small>
           <input type="number" value={value[k] ?? ''} placeholder={k === 'year' ? '—' : ''} onChange={(e) => onChange({ ...value, [k]: num(e.target.value) })} />
         </label>
       ))}
+      <label className="hour">
+        <small>hour</small>
+        <HourField value={value.hour} onChange={(hour) => onChange({ ...value, hour })} />
+      </label>
       {isSet(value) && <button className="link" onClick={() => onChange({ ...EMPTY_TIME })}>clear</button>}
     </div>
+  )
+}
+
+/** The hour as you'd write it ("15:30"); 15.5 and 15 work too. */
+function HourField({ value, onChange }: { value: number | null; onChange: (hour: number | null) => void }) {
+  const shown = value == null ? '' : Number.isInteger(value) ? String(value) : formatHour(value)
+  const [text, setText] = useState(shown)
+  const [editing, setEditing] = useState(false)
+  return (
+    <input
+      type="text" inputMode="decimal" value={editing ? text : shown} placeholder="hh:mm"
+      onFocus={() => { setText(shown); setEditing(true) }}
+      onBlur={() => setEditing(false)}
+      onChange={(e) => {
+        setText(e.target.value)
+        const h = parseHour(e.target.value)
+        if (!e.target.value.trim()) onChange(null)
+        else if (h != null && h >= 0 && h < 24) onChange(h) // half-typed or out of range: wait
+      }}
+    />
   )
 }
 
@@ -83,7 +107,7 @@ function CharacterInspector({ editor, shape }: Props<CharacterShape>) {
   return (
     <>
       <h2 style={{ color: p.color }}>Character</h2>
-      <Field label="Name"><input value={p.name} onChange={(e) => set({ name: e.target.value })} /></Field>
+      <Field label="Name"><input value={p.name} onChange={(e) => { followRename('characters', shape.id, p.name, e.target.value); set({ name: e.target.value }) }} /></Field>
       <Field label="Role"><input value={p.role} placeholder="protagonist, rival, mentor…" onChange={(e) => set({ role: e.target.value })} /></Field>
       <Field label="Colour"><ColorPicker value={p.color} onChange={(color) => set({ color })} /></Field>
       <Field label="Born (world year)" hint="Optional. Their age is worked out on every page.">
@@ -125,7 +149,7 @@ function PinInspector({ editor, shape }: Props<PinShape>) {
   return (
     <>
       <h2 style={{ color: p.color }}>Map pin</h2>
-      <Field label="Name"><input value={p.name} onChange={(e) => set({ name: e.target.value })} /></Field>
+      <Field label="Name"><input value={p.name} onChange={(e) => { followRename('places', shape.id, p.name, e.target.value); set({ name: e.target.value }) }} /></Field>
       <Field label="Kind">
         <select value={p.kind} onChange={(e) => set({ kind: e.target.value })}>{PIN_KINDS.map((k) => <option key={k}>{k}</option>)}</select>
       </Field>

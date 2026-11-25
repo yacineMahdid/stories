@@ -171,11 +171,16 @@ export class WorldView {
     return this.world;
   }
 
-  /** Already showing this page or place of this very world (and nothing asked to change it)? */
+  /** On screen now: this page or place of this very world, and no other show waiting? */
   showing(kind, id, overrides) {
     const s = this.shown;
-    return !!s && s.kind === kind && s.id === id && s.version === this.worldVersion && !Object.values(overrides ?? {}).some((v) => v != null);
+    return !!s && s.ticket === this.ticket && this.matches(s, kind, id, overrides);
   }
+  matches(s, kind, id, overrides) {
+    return s.kind === kind && s.id === id && s.version === this.worldVersion && !Object.values(overrides ?? {}).some((v) => v != null);
+  }
+  /** The shot the camera is on. */
+  get shotIndex() { return this.director?.shotIndex ?? 0; }
 
   pages() {
     return (this.world?.scenes ?? []).map((s, i) => ({ index: i, id: s.page.id, title: s.page.title, path: s.page.path }));
@@ -196,12 +201,12 @@ export class WorldView {
     const ticket = this.ticket = (this.ticket ?? 0) + 1;
     return this.queue(async () => {
       if (ticket !== this.ticket) return null;
-      if (keepShot && this.showing('page', pageId, overrides)) return this.director.state;
+      if (keepShot && this.shown && this.matches(this.shown, 'page', pageId, overrides)) { this.shown.ticket = ticket; return this.director.state; }
       const i = this.world?.sceneIndex.get(pageId);
       if (i == null) return null;
       const version = this.worldVersion;
       const state = await this.director.showState(this.world.sceneState(i), overrides, { keepShot });
-      this.shown = state ? { kind: 'page', id: pageId, version } : null;
+      this.shown = state ? { kind: 'page', id: pageId, version, ticket } : null;
       return state;
     });
   }
@@ -210,10 +215,10 @@ export class WorldView {
     const ticket = this.ticket = (this.ticket ?? 0) + 1;
     return this.queue(async () => {
       if (ticket !== this.ticket) return null;
-      if (this.showing('place', pinId, moment)) return this.director.state;
+      if (this.shown && this.matches(this.shown, 'place', pinId, moment)) { this.shown.ticket = ticket; return this.director.state; }
       const version = this.worldVersion;
       const state = await this.director.showPlace(pinId, moment);
-      this.shown = state ? { kind: 'place', id: pinId, version } : null;
+      this.shown = state ? { kind: 'place', id: pinId, version, ticket } : null;
       return state;
     });
   }

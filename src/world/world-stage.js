@@ -170,9 +170,12 @@ export class WorldStage {
   resize() {
     const w = this.container.clientWidth || 1;
     const h = this.container.clientHeight || 1;
+    const changed = w !== this.size?.[0] || h !== this.size?.[1];
+    this.size = [w, h];
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    if (changed) this.onResize?.(w, h);
   }
 
   /** Advance the world by dt seconds and draw one frame. */

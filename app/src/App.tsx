@@ -42,6 +42,7 @@ function addShape(editor: Editor) {
 /** One indicator for both files: the canvas (data/world.json) and the 3D direction (data/staging.json). */
 function SaveStatus({ save }: { save: SaveState }) {
   const staging = useStagingStatus()
+  if (save === 'error') return <span className="save error" title={staging.status === 'error' ? `The 3D direction isn't saved either: ${staging.error}` : undefined}>{staging.status === 'error' ? 'Not saved' : 'Save failed'}</span>
   if (staging.status === 'error') return <span className="save error" title={staging.error}>3D not saved</span>
   const state = save === 'saved' && staging.status === 'saving' ? 'saving' : save
   return <span className={`save ${state}`}>{state === 'saved' ? 'Saved' : state === 'saving' ? 'Saving…' : 'Save failed'}</span>

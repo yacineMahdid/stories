@@ -308,6 +308,12 @@ export class Director {
     this.cameraMove = null;
     this.userCamera = false;
     stage.controls.addEventListener('start', () => { this.userCamera = true; });
+    // A new size or shape of view frames the shot again (unless the camera was moved by hand).
+    let reframe = null;
+    stage.onResize = () => {
+      clearTimeout(reframe);
+      reframe = setTimeout(() => { if (!this.disposed && !this.userCamera && this.shots?.length) this.shot(this.shotIndex); }, 150);
+    };
     stage.add(this);
   }
 
@@ -335,7 +341,8 @@ export class Director {
 
   async showState(state, overrides = {}, { keepShot = false } = {}) {
     if (!state || this.disposed) return null;
-    const sameScene = keepShot && this.state && this.state.page?.id === state.page?.id;
+    const sceneOf = (s) => (s?.page ? `page:${s.page.id}` : `place:${s?.place?.id}`);
+    const sameScene = keepShot && this.state && sceneOf(this.state) === sceneOf(state);
     const previousShot = this.shotIndex;
     Object.assign(state, Object.fromEntries(Object.entries(overrides).filter(([, v]) => v != null)));
     this.state = state;
@@ -364,7 +371,9 @@ export class Director {
     if (!this.state) return;
     if (season && season !== this.state.season) {
       const moment = { hour: hour ?? this.state.hour, weather: weather ?? this.state.weather, season, ambient };
-      return this.state.index >= 0 ? this.show(this.state.index, moment) : this.showState(this.world.placeState(this.state.place.id, moment), {});
+      // A new season rebuilds the set; the camera stays on the shot it was on.
+      const state = this.state.index >= 0 ? this.world.sceneState(this.state.index) : this.world.placeState(this.state.place.id, moment);
+      return this.showState(state, this.state.index >= 0 ? moment : {}, { keepShot: true });
     }
     if (hour != null) this.state.hour = hour;
     if (weather) this.state.weather = weather;

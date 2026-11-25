@@ -174,6 +174,48 @@ export function fitAncestors(editor: Editor, shape: TLShape) {
   }
 }
 
+/**
+ * Give a page card (or a box) a new height without changing the reading order: whatever sits
+ * below it in the same box moves down, or back up, by as much as needed, and each box around it
+ * is refitted the same way up to the story. Boxes grow to fit; when something shrinks they shrink
+ * by at most that much, never below what their contents need.
+ */
+export function resizeKeepingOrder(editor: Editor, shape: ContainerShape | SceneShape, h: number) {
+  let current: ContainerShape | SceneShape = shape
+  let newH = h
+  for (;;) {
+    const oldH = current.props.h
+    if (Math.abs(newH - oldH) < 0.5) break
+    editor.updateShape({ id: current.id, type: current.type, props: { h: newH } } as Parameters<Editor['updateShape']>[0])
+    shiftBelow(editor, current, oldH, newH)
+    const parent: TLShape | undefined = editor.getShape(current.parentId as TLShapeId)
+    if (!isContainer(parent)) break
+    const need = Math.max(LEVEL[parent.type].min[1], ...editor.getSortedChildIdsForParent(parent.id).map((id) => {
+      const k = editor.getShape(id)!
+      return k.y + editor.getShapeGeometry(k).bounds.h + PAD
+    }))
+    const dy = newH - oldH
+    newH = dy > 0 ? Math.max(parent.props.h, need) : Math.max(need, parent.props.h + dy)
+    current = parent
+  }
+}
+
+/** After `shape` went from oldH to newH tall, move the shapes below it so the gap stays right. */
+function shiftBelow(editor: Editor, shape: TLShape, oldH: number, newH: number) {
+  const oldBottom = shape.y + oldH
+  const siblings = editor.getSortedChildIdsForParent(shape.parentId as TLParentId).map((id) => editor.getShape(id)!).filter((k) => k.id !== shape.id)
+  const below = siblings.filter((k) => k.y >= oldBottom - 1)
+  if (!below.length) return
+  const above = siblings.filter((k) => k.y < oldBottom - 1)
+  const bottom = Math.max(shape.y + newH, ...above.map((k) => k.y + editor.getShapeGeometry(k).bounds.h))
+  const top = Math.min(...below.map((k) => k.y))
+  let shift = bottom + GAP - top
+  const dy = newH - oldH
+  shift = dy > 0 ? Math.max(0, shift) : Math.min(0, Math.max(shift, dy)) // never further than the change
+  if (Math.abs(shift) < 0.5) return
+  for (const k of below) editor.updateShape({ id: k.id, type: k.type, y: k.y + shift })
+}
+
 /* ───────────── tidy layout ───────────── */
 
 /** Lay a container out from the bottom up: pages & chapters in a row, books stacked. Returns its new size. */

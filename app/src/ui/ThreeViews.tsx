@@ -2,9 +2,9 @@ import { Component, createContext, useContext, useEffect, useMemo, useRef, useSt
 import { getSnapshot, type Editor } from 'tldraw'
 import type { CharacterShape, PinShape, SceneShape } from '../shapes/types'
 import { coverPreviews, directionKey, effectiveSpec, getStudio, getPreview, guessLook, lookOptions, placePresets, weathers, WorldView, type Look, type StageState } from '../three/bridge.js'
-import { deleteIn, edit, setIn, STAGING_FILE, useStaging, useStagingStatus, type Op } from '../lib/staging'
+import { deleteIn, edit, getStaging, setIn, STAGING_FILE, useStaging, useStagingStatus, type Op } from '../lib/staging'
 import { uploadFile } from '../lib/persistence'
-import { fitAncestors } from '../lib/structure'
+import { resizeKeepingOrder } from '../lib/structure'
 
 /* ───────────── shared ───────────── */
 
@@ -62,6 +62,18 @@ export class ThreeBoundary extends Component<{ children: ReactNode }, { error: s
       </div>
     )
   }
+}
+
+/**
+ * A look or place written by hand under a card's name would stop matching when the card is
+ * renamed: move it under the card's id first, so it stays with the card.
+ */
+export function followRename(section: 'characters' | 'places', id: string, oldName: string, newName: string) {
+  if (oldName === newName) return
+  const d = getStaging()
+  const key = directionKey(d, section, id, oldName)
+  if (key == null || key === id || key === id.replace(/^shape:/, '') || key.toLowerCase() === newName.toLowerCase()) return
+  edit([{ op: 'set', path: [section, id], value: d[section][key] }, { op: 'delete', path: [section, key] }])
 }
 
 /** How long the selection must rest before a 3D preview is (re)built. */
@@ -293,6 +305,9 @@ export function PagePreview({ editor, shape }: { editor: Editor; shape: SceneSha
   const [busy, setBusy] = useState(true)
   const [shot, setShot] = useState(0)
   const [saving, setSaving] = useState(false)
+  const [problem, setProblem] = useState('')
+  // What's on screen comes from the view (the shot may have moved when the page changed).
+  const sync = () => { setState(view.state ? { ...view.state } : null); setShot(view.shotIndex) }
 
   const shownRef = useRef<string | null>(null)
   useEffect(() => {
@@ -302,27 +317,43 @@ export function PagePreview({ editor, shape }: { editor: Editor; shape: SceneSha
       // The same page again (the canvas changed): keep the shot and the camera, and when
       // nothing 3D changed (a still put on the card), leave the stage as it is.
       const keepShot = shownRef.current === shape.id
-      if (keepShot && view.showing('page', shape.id)) return setBusy(false)
+      if (keepShot && view.showing('page', shape.id)) { sync(); return setBusy(false) }
       shownRef.current = shape.id
       setBusy(true)
-      view.showPage(shape.id, {}, { keepShot }).then((s) => { if (live) { setState(s); if (!keepShot) setShot(0) } }).catch((e) => console.error(e)).finally(() => { if (live) setBusy(false) })
+      view.showPage(shape.id, {}, { keepShot }).then((s) => { if (live && s) sync() }).catch((e) => console.error(e)).finally(() => { if (live) setBusy(false) })
     }, SETTLE_MS)
     return () => { live = false; clearTimeout(t) }
   }, [doc, direction, shape.id])
 
   // The still goes on the page card itself, so the Story canvas reads like a storyboard.
+  // The card grows to make room for the picture; what sits below it moves down so the reading
+  // order stays, and the card remembers by how much it grew, so removing the still gives it back.
   const addStill = async () => {
     setSaving(true)
+    setProblem('')
     try {
       const blob = await view.still(960, 540)
       const url = await uploadFile(fileFrom(blob, `${shape.props.title || 'page'}-still`))
-      // The card grows to make room for the picture, and its chapter grows with it.
       const current = editor.getShape(shape.id) as SceneShape
+      const want = Math.max(current.props.h, Math.round(current.props.w * 9 / 16 * 0.92) + 250)
+      const grown = Number(current.meta?.stillGrow ?? 0) + (want - current.props.h)
+      editor.markHistoryStoppingPoint('put still')
       editor.run(() => {
-        editor.updateShape({ id: shape.id, type: 'scene', props: { still: url, h: Math.max(current.props.h, Math.round(current.props.w * 9 / 16 * 0.92) + 250) } })
-        fitAncestors(editor, editor.getShape(shape.id)!)
+        editor.updateShape({ id: shape.id, type: 'scene', props: { still: url }, meta: { ...current.meta, stillGrow: grown } })
+        resizeKeepingOrder(editor, editor.getShape(shape.id) as SceneShape, want)
       })
+    } catch (e) {
+      setProblem(`The still could not be saved: ${e instanceof Error ? e.message : e}`)
     } finally { setSaving(false) }
+  }
+  const removeStill = () => {
+    const current = editor.getShape(shape.id) as SceneShape
+    const grown = Number(current.meta?.stillGrow ?? 0)
+    editor.markHistoryStoppingPoint('remove still')
+    editor.run(() => {
+      editor.updateShape({ id: shape.id, type: 'scene', props: { still: '' }, meta: { ...current.meta, stillGrow: 0 } })
+      if (grown > 0) resizeKeepingOrder(editor, editor.getShape(shape.id) as SceneShape, Math.max(260, current.props.h - grown))
+    })
   }
 
   return (
@@ -346,8 +377,9 @@ export function PagePreview({ editor, shape }: { editor: Editor; shape: SceneSha
       <div className="ins-row">
         <button className="primary" onClick={() => openStage(shape.id)}>Open 3D stage</button>
         <button disabled={saving || busy} onClick={addStill}><Busy on={saving}>{shape.props.still ? 'Replace the card’s still' : 'Put this shot on the card'}</Busy></button>
-        {shape.props.still && <button onClick={() => editor.updateShape({ id: shape.id, type: 'scene', props: { still: '' } })}>Remove still</button>}
+        {shape.props.still && <button onClick={removeStill}>Remove still</button>}
       </div>
+      {problem && <small className="three-error">{problem}</small>}
     </div>
   )
 }
@@ -367,6 +399,9 @@ export function StageOverlay({ editor, pageId, onClose }: { editor: Editor; page
     coverPreviews(true)
     // While the stage is open, the canvas underneath takes no keys (Backspace would delete the
     // selected shape, letters would switch tools) and nothing behind the stage can be focused.
+    // On close, focus goes back where it was (a field in the inspector, or the canvas).
+    const opener = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null
+    const canvasHadFocus = !!opener?.closest('.tl-container')
     const wasFocused = editor.getIsFocused()
     editor.blur()
     const root = rootRef.current
@@ -378,7 +413,8 @@ export function StageOverlay({ editor, pageId, onClose }: { editor: Editor; page
       behind.forEach((el) => el.removeAttribute('inert'))
       view.dispose()
       coverPreviews(false)
-      if (wasFocused) editor.focus()
+      if (opener?.isConnected && !canvasHadFocus) opener.focus()
+      else if (wasFocused && (canvasHadFocus || !opener)) editor.focus()
     }
   }, [view])
   const [pages, setPages] = useState<{ id: string; title: string; path: string }[]>([])
@@ -388,6 +424,7 @@ export function StageOverlay({ editor, pageId, onClose }: { editor: Editor; page
   const [busy, setBusy] = useState(true)
   const [playing, setPlaying] = useState(false)
   const shownRef = useRef<string | null>(null)
+  const sync = () => { setState(view.state ? { ...view.state } : null); setShot(view.shotIndex) }
 
   useEffect(() => {
     view.setWorld(doc, direction)
@@ -398,11 +435,11 @@ export function StageOverlay({ editor, pageId, onClose }: { editor: Editor; page
     if (id !== current) setCurrent(id)
     let live = true
     const keepShot = shownRef.current === id
-    if (keepShot && view.showing('page', id)) { setBusy(false); return } // nothing 3D changed
+    if (keepShot && view.showing('page', id)) { sync(); setBusy(false); return } // nothing 3D changed
     setBusy(true)
     const t = setTimeout(() => {
       shownRef.current = id
-      view.showPage(id, {}, { keepShot }).then((s) => { if (live) { setState(s); if (!keepShot) setShot(0) } }).catch((e) => console.error(e)).finally(() => { if (live) setBusy(false) })
+      view.showPage(id, {}, { keepShot }).then((s) => { if (live && s) sync() }).catch((e) => console.error(e)).finally(() => { if (live) setBusy(false) })
     }, SETTLE_MS)
     return () => { live = false; clearTimeout(t) }
   }, [doc, direction, current])
@@ -437,7 +474,7 @@ export function StageOverlay({ editor, pageId, onClose }: { editor: Editor; page
   // A new season rebuilds the set: show "Staging…" first, then do the work.
   const changeSeason = (season: string) => {
     setBusy(true)
-    setTimeout(() => view.retime({ season }).then(() => setState({ ...(view.state as StageState) })).finally(() => setBusy(false)), 50)
+    setTimeout(() => view.retime({ season }).then(sync).finally(() => setBusy(false)), 50)
   }
 
   const retime = (m: { hour?: number; weather?: string; season?: string }) => {
@@ -461,7 +498,7 @@ export function StageOverlay({ editor, pageId, onClose }: { editor: Editor; page
         <aside className="stage-card">
           <small>{state.page.path}</small>
           <h2>{state.page.title || 'Untitled page'}</h2>
-          <p className="when">{state.page.when}{state.place ? ` · ${state.place.name}` : ''}</p>
+          <p className="when">{[state.page.when, state.place?.name].filter(Boolean).join(' · ')}</p>
           {state.page.summary && <p>{state.page.summary}</p>}
           {(state.changes.length > 0 || state.notes.length > 0) && (
             <ul className="three-notes">
@@ -489,7 +526,7 @@ export function StageOverlay({ editor, pageId, onClose }: { editor: Editor; page
         )}
       </footer>
       {busy && <div className="three-loading big">Staging…</div>}
-      {!busy && !pages.length && <div className="three-loading big">Add pages on the Story tab to see them here.</div>}
+      {!busy && !pages.length && <div className="three-loading big empty">Add pages on the Story tab to see them here.</div>}
     </div>
   )
 }

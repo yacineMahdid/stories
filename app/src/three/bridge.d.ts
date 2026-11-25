@@ -59,6 +59,8 @@ export class WorldView {
   readonly shots: Shot[]
   readonly state: StageState | null
   readonly warnings: string[]
+  /** The shot the camera is on. */
+  readonly shotIndex: number
   retime(moment: { hour?: number; weather?: string; season?: string }): Promise<unknown>
   still(width?: number, height?: number): Promise<Blob>
   dispose(): void

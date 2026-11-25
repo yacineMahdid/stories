@@ -22,13 +22,29 @@ export function sameMoment(a: WorldTime, b: WorldTime) {
   return (['year', 'month', 'day', 'hour'] as const).every((k) => a[k] == null || b[k] == null || a[k] === b[k])
 }
 
+/** 15.5 → "15:30". */
+export function formatHour(hour: number): string {
+  const minutes = Math.round(hour * 60)
+  return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`
+}
+
+/** "15:30", "15.5" or "15" → 15.5 (null when empty or not a time). */
+export function parseHour(text: string): number | null {
+  const v = text.trim()
+  if (!v) return null
+  const m = /^(\d{1,2})(?::(\d{1,2}))?$/.exec(v)
+  if (m) return Number(m[1]) + (m[2] ? Number(m[2]) / 60 : 0)
+  const n = Number(v)
+  return isNaN(n) ? null : n
+}
+
 export function formatTime(t: WorldTime): string {
   if (!isSet(t)) return 'undated'
   const parts = [`Year ${t.year}`]
   if (t.month != null) parts.push(`month ${t.month}`)
   if (t.day != null) parts.push(`day ${t.day}`)
   let s = parts.join(', ')
-  if (t.hour != null) s += `, ${String(t.hour).padStart(2, '0')}:00`
+  if (t.hour != null) s += `, ${formatHour(t.hour)}`
   return s
 }
 
