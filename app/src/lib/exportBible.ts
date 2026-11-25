@@ -80,14 +80,18 @@ export function buildStoryBible(editor: Editor): string {
   return out.join('\n')
 }
 
+/**
+ * Saves the story bible in the data folder's exports and downloads a copy. Returns where it was
+ * saved, or '' when it could only be downloaded (the dev server refused it or isn't running).
+ */
 export async function exportStoryBible(editor: Editor): Promise<string> {
   const md = buildStoryBible(editor)
-  const res = await fetch('/api/export?name=story-bible.md', { method: 'PUT', body: md })
+  const saved = await fetch('/api/export?name=story-bible.md', { method: 'PUT', body: md }).then((res) => (res.ok ? res.text() : ''), () => '')
   const blob = new Blob([md], { type: 'text/markdown' })
   const a = document.createElement('a')
   a.href = URL.createObjectURL(blob)
   a.download = 'story-bible.md'
   a.click()
   URL.revokeObjectURL(a.href)
-  return res.ok ? await res.text() : 'downloaded'
+  return saved
 }

@@ -17,10 +17,18 @@ export function findIssues(editor: Editor): Issue[] {
   const scenes = pages.map((p) => p.scene)
   const exists = (id: string) => !!editor.getShape(id as any)
 
+  // A deleted card stays listed on its pages (so Undo can bring it back): say where to take it off.
+  const lost = (ids: string[], one: string, many: string, where: string) => {
+    const n = new Set(ids.filter((id) => !exists(id))).size
+    return n === 0 ? '' : n === 1 ? `a deleted ${one}: remove it under ${where}` : `${n} deleted ${many}: remove them under ${where}`
+  }
+
   scenes.forEach((s, i) => {
     const label = `${pages[i].node.path}${s.props.title ? ` “${s.props.title}”` : ''}`
-    if (s.props.characterIds.some((id) => !exists(id))) issues.push({ level: 'error', shapeId: s.id, message: `${label} references a deleted character.` })
-    if (s.props.locationIds.some((id) => !exists(id))) issues.push({ level: 'error', shapeId: s.id, message: `${label} references a deleted map pin.` })
+    const cast = lost(s.props.characterIds, 'character', 'characters', 'Who')
+    const places = lost(s.props.locationIds, 'map pin', 'map pins', 'Where')
+    if (cast) issues.push({ level: 'error', shapeId: s.id, message: `${label} references ${cast}.` })
+    if (places) issues.push({ level: 'error', shapeId: s.id, message: `${label} references ${places}.` })
     if (!s.props.when.trim() && !isSet(s.props.at)) issues.push({ level: 'info', shapeId: s.id, message: `${label} has no time set.` })
     if (!s.props.locationIds.length) issues.push({ level: 'info', shapeId: s.id, message: `${label} isn’t placed on the map.` })
     if (!s.props.characterIds.length) issues.push({ level: 'info', shapeId: s.id, message: `${label} has no characters.` })

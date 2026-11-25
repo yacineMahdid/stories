@@ -28,14 +28,15 @@ export function formatHour(hour: number): string {
   return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`
 }
 
-/** "15:30", "15.5" or "15" → 15.5 (null when empty or not a time). */
+/**
+ * "15:30", "15.5" or "15" → 15.5. Null when empty, half typed ("15:3") or not a time of day
+ * ("12:75", "25"), so a typo never moves a page to another hour.
+ */
 export function parseHour(text: string): number | null {
   const v = text.trim()
-  if (!v) return null
-  const m = /^(\d{1,2})(?::(\d{1,2}))?$/.exec(v)
-  if (m) return Number(m[1]) + (m[2] ? Number(m[2]) / 60 : 0)
-  const n = Number(v)
-  return isNaN(n) ? null : n
+  const m = /^(\d{1,2})(?::([0-5]\d))?$/.exec(v) // minutes are two digits, 00 to 59
+  const hour = m ? Number(m[1]) + (m[2] ? Number(m[2]) / 60 : 0) : /^\d{1,2}\.\d+$/.test(v) ? Number(v) : null
+  return hour != null && hour < 24 ? hour : null
 }
 
 export function formatTime(t: WorldTime): string {

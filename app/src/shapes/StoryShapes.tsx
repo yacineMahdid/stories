@@ -164,12 +164,13 @@ function SceneCard({ shape }: { shape: SceneShape }) {
       {isSet(p.at) && <span className="sc-date">{formatTime(p.at)}</span>}
       <strong>{p.title || 'Untitled page'}</strong>
       <div className="sc-chips">
+        {/* Named like the page inspector's rows that take them off the page. */}
         {info.characters.map((c, i) => c
           ? <span key={c.id} className="sc-chip" style={{ background: c.props.color }}>{c.props.name}{p.modifiers[c.id]?.text ? ' *' : ''}</span>
-          : <span key={i} className="sc-chip sc-missing">missing character</span>)}
+          : <span key={i} className="sc-chip sc-missing">deleted character</span>)}
         {info.places.map((pl, i) => pl
           ? <span key={pl.id} className="sc-chip sc-place" style={{ borderColor: pl.props.color }}>⌖ {pl.props.name}</span>
-          : <span key={i} className="sc-chip sc-missing">missing place</span>)}
+          : <span key={i} className="sc-chip sc-missing">deleted map pin</span>)}
       </div>
       <p>{p.summary || <i>What happens here?</i>}</p>
     </HTMLContainer>

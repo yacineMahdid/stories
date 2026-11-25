@@ -211,6 +211,18 @@ function SceneInspector({ editor, shape }: Props<SceneShape>) {
     set({ [key]: p[key].includes(id) ? p[key].filter((x) => x !== id) : [...p[key], id] } as any)
   const setModifier = (cid: string, patch: Partial<{ text: string; persist: boolean }>) =>
     set({ modifiers: { ...p.modifiers, [cid]: { ...(p.modifiers[cid] ?? { text: '', persist: false }), ...patch } } })
+  // A deleted card stays listed on its pages (so Undo can bring it back). Its row under Who or
+  // Where takes it off this page, with its modifier, as an undo step of its own.
+  const lostCast = [...new Set(p.characterIds.filter((id) => !data.characters.some((c) => c.id === id)))]
+  const lostPlaces = [...new Set(p.locationIds.filter((id) => !data.pins.some((pin) => pin.id === id)))]
+  const dropLost = (key: 'characterIds' | 'locationIds', id: string) => {
+    const props = key === 'characterIds'
+      ? { characterIds: p.characterIds.filter((x) => x !== id), modifiers: Object.fromEntries(Object.entries(p.modifiers).filter(([k]) => k !== id)) }
+      : { locationIds: p.locationIds.filter((x) => x !== id) }
+    editor.markHistoryStoppingPoint('remove deleted card')
+    editor.updateShape({ id: shape.id, type: 'scene', props })
+    editor.markHistoryStoppingPoint('removed deleted card') // a quick edit right after (a box under Who) isn't folded in
+  }
 
   return (
     <>
@@ -231,6 +243,10 @@ function SceneInspector({ editor, shape }: Props<SceneShape>) {
       <h3>Where</h3>
       {!data.pins.length && <p className="muted">Add pins on the Map tab first.</p>}
       <div className="ins-checks">
+        {lostPlaces.map((id) => (
+          <div key={id} className="ins-lost"><span className="dot" />Deleted map pin
+            <button onClick={() => dropLost('locationIds', id)} title="Take the deleted map pin off this page">Remove</button></div>
+        ))}
         {data.pins.map((pin) => (
           <label key={pin.id}><input type="checkbox" checked={p.locationIds.includes(pin.id)} onChange={() => toggle('locationIds', pin.id)} />
             <span className="dot" style={{ background: pin.props.color }} />{pin.props.name}</label>
@@ -239,6 +255,10 @@ function SceneInspector({ editor, shape }: Props<SceneShape>) {
 
       <h3>Who</h3>
       {!data.characters.length && <p className="muted">Create characters on the Characters tab first.</p>}
+      {lostCast.map((id) => (
+        <div key={id} className="ins-cast ins-lost"><span className="dot" />Deleted character
+          <button onClick={() => dropLost('characterIds', id)} title="Take the deleted character off this page">Remove</button></div>
+      ))}
       {data.characters.map((c) => {
         const on = p.characterIds.includes(c.id)
         const carried = on ? effectiveModifiers(data.pages, data.index, c.id).filter((m) => m !== p.modifiers[c.id]?.text.trim()) : []

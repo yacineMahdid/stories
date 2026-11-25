@@ -58,7 +58,10 @@ function Header({ editor, save, onStage }: { editor: Editor; save: SaveState; on
     'page:backstory': getLore(editor).length,
     'page:story': getScenes(editor).length,
   } as Record<string, number>), [editor])
-  const [exported, setExported] = useState('')
+  // Where the last export was saved, for a few seconds ('' when it could only be downloaded).
+  const [exported, setExported] = useState<string | null>(null)
+  const exportTip = exported == null ? `Saves story-bible.md in ${__STORY_DATA__}/exports and downloads a copy`
+    : exported ? `Saved as ${exported}, and downloaded` : `Downloaded. It couldn't be saved in ${__STORY_DATA__}/exports.`
   return (
     <header className="topbar">
       <span className="brand">Story Canvas</span>
@@ -77,8 +80,10 @@ function Header({ editor, save, onStage }: { editor: Editor; save: SaveState; on
           </div>
         )}
         <button onClick={onStage} title="See the story's pages staged in 3D">3D stage</button>
-        <button onClick={async () => { const where = await exportStoryBible(editor); setExported(where); setTimeout(() => setExported(''), 4000) }}>
-          {exported ? `Saved → ${exported}` : 'Export story bible'}
+        {/* A short "done" over the label, the full path in the tooltip: the header never reflows. */}
+        <button className="swap" title={exportTip} onClick={async () => { setExported(await exportStoryBible(editor)); setTimeout(() => setExported(null), 4000) }}>
+          <span className={exported == null ? '' : 'off'}>Export story bible</span>
+          {exported != null && <span>{exported ? 'Saved in exports' : 'Downloaded'}</span>}
         </button>
         <SaveStatus save={save} />
       </div>
