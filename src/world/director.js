@@ -699,6 +699,8 @@ export class Director {
 
   shot(i) {
     if (!this.shots.length) return;
+    // Directing, a shot frames exactly what it saves: what was left of a hand orbit's glide goes.
+    if (this.directing) this.stopGlide();
     this.shotIndex = ((i % this.shots.length) + this.shots.length) % this.shots.length;
     const shot = this.shots[this.shotIndex];
     const place = this.state.place;
@@ -1563,13 +1565,18 @@ export class Director {
     controls.target.set(tx, view.target[1], tz);
     if (Number.isFinite(view.fov)) cam.fov = view.fov;
     cam.updateProjectionMatrix();
-    // Nothing still gliding from the last drag.
-    controls._sphericalDelta?.set(0, 0, 0);
-    controls._panOffset?.set(0, 0, 0);
-    if (typeof controls._scale === 'number') controls._scale = 1;
+    this.stopGlide(); // nothing still gliding from the last drag
     controls.update();
     this.userCamera = true;
     return true;
+  }
+
+  /** Stop what is left of a hand orbit's glide (the orbit controls' damping), so the camera stays put. */
+  stopGlide() {
+    const controls = this.stage.controls;
+    controls._sphericalDelta?.set(0, 0, 0);
+    controls._panOffset?.set(0, 0, 0);
+    if (typeof controls._scale === 'number') controls._scale = 1;
   }
 
   /** The view shot `i` frames (see cameraView), as shot(i) would leave the camera, worked out without moving it. */
