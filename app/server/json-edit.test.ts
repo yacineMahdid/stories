@@ -139,40 +139,74 @@ test('deleting something absent changes nothing', () => {
   assert.equal(out, sample)
 })
 
-// Renames and Undo. The app's Undo of an edit is the edit that takes it back (see undoOf in
-// app/src/lib/staging.ts), carrying what the server said the edit took out of the file.
+// Renames and Undo. The app's Undo of an edit is the edits that take it back (inverse() in
+// app/src/lib/staging.ts, copied here), the last of them carrying what the server said the edit
+// took out of the file.
 const isObj = (v: unknown): v is Record<string, any> => !!v && typeof v === 'object' && !Array.isArray(v)
-const inverseOf = (doc: Record<string, any>, op: JsonOp): JsonOp | null => {
+const inverseOf = (doc: Record<string, any>, op: JsonOp): JsonOp[] => {
   let node = doc
   for (let i = 0; i < op.path.length; i++) {
     const key = op.path[i], path = op.path.slice(0, i + 1), has = Object.hasOwn(node, key)
     if (i === op.path.length - 1) {
-      if (op.op === 'rename') return has && op.to !== key && !Object.hasOwn(node, op.to) ? { op: 'rename', path: [...op.path.slice(0, -1), op.to], to: key } : null
-      return has ? { op: 'set', path, value: node[key] } : op.op === 'set' ? { op: 'delete', path } : null
+      if (op.op === 'rename') return has && op.to !== key && !Object.hasOwn(node, op.to) ? [{ op: 'rename', path: [...op.path.slice(0, -1), op.to], to: key }] : []
+      return has ? [{ op: 'set', path, value: node[key] }] : op.op === 'set' ? [{ op: 'delete', path }] : []
     }
     if (!isObj(node[key])) {
-      if (op.op !== 'set' || (Array.isArray(node[key]) && node[key].length)) return null
-      return has ? { op: 'set', path, value: node[key] } : { op: 'delete', path }
+      if (op.op !== 'set' || (Array.isArray(node[key]) && node[key].length)) return []
+      if (has) return [{ op: 'set', path, value: node[key] }]
+      const made: JsonOp[] = []
+      for (let j = op.path.length - 1; j > i; j--) made.push({ op: 'delete', path: op.path.slice(0, j), ifEmpty: true })
+      return [{ op: 'delete', path: op.path }, ...made]
     }
     node = node[key]
   }
-  return null
+  return []
 }
-/** An edit, its Undo (with what the edit took out) and its Redo: the three texts. */
-const roundTrip = (text: string, op: JsonOp) => {
-  const done = patchText(text, [op])
-  const inv = inverseOf(parseDirection(text), op)
-  const undone = inv ? patchText(done.text, [{ ...inv, restore: done.removed[0] ?? undefined }]) : { text: done.text, spliced: true }
-  const redone = patchText(undone.text, [op])
+/** As sent to the server, and checked there. */
+const wire = (ops: JsonOp[]) => checkOps(JSON.parse(JSON.stringify(ops)))
+/** The Undo of `ops`, made together on `text`, as the app sends it: the last edit's first. */
+const undoFor = (text: string, ops: JsonOp[], removed: (Removed | null)[]) => {
+  let doc = parseDirection(text)
+  const back: JsonOp[] = []
+  ops.forEach((op, i) => {
+    const us = inverseOf(doc, op)
+    const r = removed[i]
+    if (us.length && r) us[us.length - 1] = { ...us[us.length - 1], restore: r }
+    back.unshift(...us)
+    doc = structuredClone(doc)
+    applyOp(doc, op)
+  })
+  return wire(back)
+}
+/** An edit (or several made together), its Undo (with what it took out) and its Redo: the three texts. */
+const roundTrip = (text: string, op: JsonOp | JsonOp[]) => {
+  const ops = Array.isArray(op) ? op : [op]
+  const done = patchText(text, ops)
+  const undone = patchText(done.text, undoFor(text, ops, done.removed))
+  const redone = patchText(undone.text, ops)
   return { done: done.text, undone: undone.text, redone: redone.text, spliced: done.spliced && undone.spliced && redone.spliced }
 }
-const expectRoundTrip = (text: string, op: JsonOp) => {
-  const r = roundTrip(text, op)
+/**
+ * Edits of one undo step (the same field again within a moment, see edit3d in
+ * app/src/lib/staging-history.ts): Undo takes back the last edit, then the one before…; Redo
+ * makes them all again, in order.
+ */
+const stepTrip = (text: string, edits: JsonOp[][]) => {
+  let t = text, spliced = true
+  const undos: JsonOp[][] = []
+  for (const ops of edits) { const r = patchText(t, ops); undos.unshift(undoFor(t, ops, r.removed)); t = r.text; spliced &&= r.spliced }
+  const undone = patchText(t, wire(undos.flat()))
+  const redone = patchText(undone.text, edits.flat())
+  return { done: t, undone: undone.text, redone: redone.text, spliced: spliced && undone.spliced && redone.spliced }
+}
+const expectExact = (text: string, r: ReturnType<typeof roundTrip>) => {
   assert.ok(r.spliced, 'fell back to a full rewrite')
   assert.equal(r.undone, text, 'Undo did not give the file back byte for byte')
   assert.equal(r.redone, r.done, 'Redo did not give the edited file back byte for byte')
   return r
 }
+const expectRoundTrip = (text: string, op: JsonOp | JsonOp[]) => expectExact(text, roundTrip(text, op))
+const expectStepTrip = (text: string, edits: JsonOp[][]) => expectExact(text, stepTrip(text, edits))
 const byTitle = sample.replace('"shape:p1": {', '"Morning in the square": {')
 /** The keys of one section of a file, in the order JSON.parse gives them. */
 const keysOf = (text: string, section: string) => Object.keys(parseDirection(text)[section] as object)
@@ -226,12 +260,7 @@ test('Undo of a delete puts the member back where it was, as it was written', ()
   ] as [string, string[]][]) expectRoundTrip(text, { op: 'delete', path })
 })
 test('Undo of several deletes in one edit, side by side, puts them all back', () => {
-  const ops: JsonOp[] = [{ op: 'delete', path: ['characters', 'shape:biscuit'] }, { op: 'delete', path: ['characters', 'shape:juniper'] }, { op: 'set', path: ['characters', 'shape:mira', 'species'], value: 'cat' }]
-  const done = patchText(handMira, ops)
-  const back = ops.map((op, i) => ({ ...inverseOf(parseDirection(handMira), op)!, restore: done.removed[i] ?? undefined })).reverse()
-  const undone = patchText(done.text, back)
-  assert.ok(undone.spliced)
-  assert.equal(undone.text, handMira)
+  expectRoundTrip(handMira, [{ op: 'delete', path: ['characters', 'shape:biscuit'] }, { op: 'delete', path: ['characters', 'shape:juniper'] }, { op: 'set', path: ['characters', 'shape:mira', 'species'], value: 'cat' }])
 })
 test('Undo of a delete: written anew in the same place when the text no longer reads the same', () => {
   const done = patchText(sample, [{ op: 'delete', path: ['characters', 'shape:hattie'] }])
@@ -265,6 +294,20 @@ test('Undo of a delete keeps the file\'s line breaks', () => {
   assert.ok(!/[^\r]\n/.test(out), 'a bare LF appeared')
   assert.equal(keysOf(out, 'characters')[0], 'shape:mira')
 })
+test('Undo of a delete in a file with mixed line breaks puts the member back as it was', () => {
+  const oneCrlf = handMira.replace('"version": 1,\n', '"version": 1,\r\n') // LF, with one CRLF far away
+  for (const key of ['shape:mira', 'shape:hattie']) expectRoundTrip(oneCrlf, { op: 'delete', path: ['characters', key] })
+  // A CRLF file whose only bare LF goes out with the member: the file looks all CRLF until the Undo.
+  const crlf = sample.replace(/\n/g, '\r\n')
+  const at = crlf.indexOf('\r\n', crlf.indexOf('"shape:hattie"'))
+  const lone = crlf.slice(0, at) + '\n' + crlf.slice(at + 2)
+  expectRoundTrip(lone, { op: 'delete', path: ['characters', 'shape:bruno'] })
+  // The writer made the file all LF in the meantime: the member's own LF text still goes back.
+  const done = patchText(oneCrlf, [{ op: 'delete', path: ['characters', 'shape:mira'] }])
+  const value = (parseDirection(handMira).characters as Record<string, unknown>)['shape:mira']
+  const undone = patchText(done.text.replace(/\r\n/g, '\n'), [{ op: 'set', path: ['characters', 'shape:mira'], value, restore: done.removed[0]! }])
+  assert.equal(undone.text, handMira)
+})
 test('Undo of a set puts back the value as it was written', () => {
   const odd = '{\n  "a": 1.50,\n  "e": "caf\\u00e9",\n  "m": {\n    "x": 1, "y": 2\n  },\n  "z": { }\n}\n'
   expectRoundTrip(odd, { op: 'set', path: ['a'], value: 2 })
@@ -273,13 +316,79 @@ test('Undo of a set puts back the value as it was written', () => {
   expectRoundTrip(odd, { op: 'set', path: ['z', 'k'], value: 1 }) // into an empty object
   expectRoundTrip(sample, { op: 'set', path: ['places', 'shape:new', 'preset'], value: 'lake' }) // makes the place too
   expectRoundTrip('{\n  "places": [],\n  "x": 1\n}\n', { op: 'set', path: ['places', 'shape:a', 'preset'], value: 'lake' })
+  expectRoundTrip('{\n  "version": 1\n}\n', { op: 'set', path: ['places', 'shape:a', 'preset'], value: 'lake' }) // and the section
+  expectRoundTrip('{\n  "places": {   },\n  "x": 1\n}\n', { op: 'set', path: ['places', 'shape:a', 'preset'], value: 'lake' }) // its own "{ }" back
+  expectRoundTrip('{}\n', { op: 'set', path: ['places', 'shape:a', 'preset'], value: 'lake' })
+})
+test('a delete "if empty" takes out only an object with nothing in it', () => {
+  const t = '{\n  "a": {},\n  "b": {\n  },\n  "c": { "x": {} },\n  "d": "",\n  "e": [],\n  "f": null\n}\n'
+  for (const [key, goes] of [['a', true], ['b', true], ['c', false], ['d', false], ['e', false], ['f', false], ['none', false]] as [string, boolean][]) {
+    const { out, spliced } = expectSame(t, [{ op: 'delete', path: [key], ifEmpty: true }])
+    assert.ok(spliced)
+    if (goes) assert.ok(!Object.hasOwn(parseDirection(out), key), key)
+    else assert.equal(out, t, key)
+  }
+  assert.equal(patchText(t, [{ op: 'delete', path: ['c', 'x'], ifEmpty: true }]).text, t.replace('{ "x": {} }', '{}'))
+})
+test('Undo of a set that made an entry leaves what the writer added to it by hand', () => {
+  // A 3D set on a pin with no entry yet, then the writer adds a radius to that entry.
+  const set: JsonOp = { op: 'set', path: ['places', 'shape:new', 'preset'], value: 'lake' }
+  const done = patchText(sample, [set])
+  const hand = done.text.replace('"shape:new": { "preset": "lake" }', '"shape:new": { "preset": "lake", "radius": 9 }')
+  assert.notEqual(hand, done.text)
+  const { out } = expectSame(hand, undoFor(sample, [set], done.removed))
+  assert.equal(out, hand.replace('{ "preset": "lake", "radius": 9 }', '{ "radius": 9 }'))
+  // A look field in a group the look didn't have: the group stays with the writer's field in it.
+  const eyes: JsonOp = { op: 'set', path: ['characters', 'shape:hattie', 'face', 'eyes'], value: 'sleepy' }
+  const done2 = patchText(sample, [eyes])
+  const hand2 = done2.text.replace('"face": { "eyes": "sleepy" }', '"face": { "eyes": "sleepy", "blush": true }')
+  assert.notEqual(hand2, done2.text)
+  const look = (parseDirection(patchText(hand2, undoFor(sample, [eyes], done2.removed)).text).characters as Record<string, any>)['shape:hattie']
+  assert.deepEqual(look.face, { blush: true })
+})
+const presetMill = sample.replace('"shape:mill": {\n', '"shape:mill": {\n      "preset": "forest",\n\n') // a preset, then a blank line
+test('Undo of one step of several edits of a field gives the file back byte for byte', () => {
+  assert.notEqual(presetMill, sample)
+  const pier = ['places', 'shape:pier'], mira = ['characters', 'shape:mira']
+  const look = (parseDirection(handMira).characters as Record<string, any>)['shape:mira']
+  for (const edits of [
+    // "3D set" Automatic (the entry goes), then Forest: the entry is made again, at the end
+    [[{ op: 'delete', path: pier }], [{ op: 'set', path: [...pier, 'preset'], value: 'forest' }]],
+    // Species Cat (skin and hair go), then Human again (they come back, at the end of the look)
+    [[{ op: 'set', path: [...mira, 'species'], value: 'cat' }, { op: 'delete', path: [...mira, 'skin'] }, { op: 'delete', path: [...mira, 'hair'] }],
+      [{ op: 'set', path: [...mira, 'species'], value: 'human' }, { op: 'set', path: [...mira, 'skin'], value: look.skin }, { op: 'set', path: [...mira, 'hair'], value: look.hair }]],
+    // "3D set" Lake, then Automatic: the preset goes, from an entry that has more
+    [[{ op: 'set', path: ['places', 'shape:mill', 'preset'], value: 'lake' }], [{ op: 'delete', path: ['places', 'shape:mill', 'preset'] }]],
+    // a colour dragged through three values
+    [1, 2, 3].map((n) => [{ op: 'set', path: [...mira, 'skin'], value: `#00000${n}` }]),
+    // a preset on a pin with no entry, then another
+    [[{ op: 'set', path: ['places', 'shape:new', 'preset'], value: 'lake' }], [{ op: 'set', path: ['places', 'shape:new', 'preset'], value: 'meadow' }]],
+  ] as JsonOp[][][]) {
+    for (const text of [handMira, presetMill]) expectStepTrip(text, edits)
+  }
+})
+test('text to put back must be the one member, nothing more', () => {
+  const done = patchText(sample, [{ op: 'delete', path: ['characters', 'shape:hattie'] }])
+  const r = done.removed[0]!
+  const value = (parseDirection(sample).characters as Record<string, unknown>)['shape:hattie']
+  const { out } = expectSame(done.text, [{ op: 'set', path: ['characters', 'shape:hattie'], value, restore: { ...r, text: r.text + r.text } }])
+  assert.equal(out.match(/^ {4}"shape:hattie":/gm)?.length, 1)
+  assert.deepEqual(keysOf(out, 'characters'), keysOf(sample, 'characters'))
 })
 test('only well-formed renames, and text to put back that is not text is dropped', () => {
   assert.throws(() => checkOps([{ op: 'rename', path: ['a'], to: 5 }]), JsonEditRefused)
   assert.throws(() => checkOps([{ op: 'rename', path: ['a'], to: '__proto__' }]), JsonEditRefused)
-  const ops = checkOps([{ op: 'set', path: ['a'], value: 1, restore: { text: 7 } }, { op: 'delete', path: ['b'], restore: { text: '{}', after: null, before: null } }])
+  assert.throws(() => checkOps([{ op: 'delete', path: ['a'], ifEmpty: 'yes' }]), JsonEditRefused)
+  const ops = checkOps([
+    { op: 'set', path: ['a'], value: 1, restore: { text: 7 } },
+    { op: 'delete', path: ['b'], restore: { text: '{}', after: null, before: null } },
+    { op: 'set', path: ['c'], value: 1, restore: { text: '1', breaks: 2 } },
+    { op: 'delete', path: ['d'], ifEmpty: true, restore: { text: '{ }', breaks: 'crlf lf' } },
+  ])
   assert.equal(ops[0].restore, undefined)
   assert.deepEqual(ops[1].restore, { text: '{}', after: null, before: null } satisfies Removed)
+  assert.equal(ops[2].restore, undefined)
+  assert.deepEqual(ops[3], { op: 'delete', path: ['d'], ifEmpty: true, restore: { text: '{ }', breaks: 'crlf lf' } })
 })
 
 // Random documents in random layouts, random edits: the text edit must always agree with the
@@ -297,30 +406,40 @@ test('random edits agree with the object edit', () => {
     for (let i = Math.floor(rnd() * 4); i > 0; i--) o[pick(keys)] = value(depth + 1)
     return o
   }
-  let fallbacks = 0, runs = 0, undos = 0
+  const randomOp = (): JsonOp => {
+    const path = Array.from({ length: 1 + Math.floor(rnd() * 3) }, () => pick(keys))
+    const r0 = rnd()
+    return r0 < 0.6 ? { op: 'set', path, value: value(2) } : r0 < 0.85 ? { op: 'delete', path } : { op: 'rename', path, to: pick(keys) }
+  }
+  const exact = (text: string, t: ReturnType<typeof roundTrip>) => {
+    if (!t.spliced || t.undone !== text || t.redone !== t.done) throw new Error(`Undo or Redo changed the file\nundone ${t.undone}\nredone ${t.redone}\ndone ${t.done}`)
+  }
+  let fallbacks = 0, runs = 0, undos = 0, steps = 0
   for (let n = 0; n < 3000; n++) {
     const doc: Record<string, unknown> = { version: 1 }
     for (let i = 0; i < 4; i++) doc[pick(keys)] = value(1)
     const layout = pick(['hand', 'two', 'four', 'tab', 'min'])
     let text = layout === 'hand' ? formatJSON(doc) : layout === 'two' ? JSON.stringify(doc, null, 2) : layout === 'four' ? JSON.stringify(doc, null, 4) : layout === 'tab' ? JSON.stringify(doc, null, '\t') : JSON.stringify(doc)
     text += '\n'
-    const path = Array.from({ length: 1 + Math.floor(rnd() * 3) }, () => pick(keys))
-    const r0 = rnd()
-    const op: JsonOp = r0 < 0.6 ? { op: 'set', path, value: value(2) } : r0 < 0.85 ? { op: 'delete', path } : { op: 'rename', path, to: pick(keys) }
+    const op = randomOp(), op2 = randomOp()
+    let at = 'edit'
     try {
       const r = expectSame(text, [op])
       runs++
       if (!r.spliced) fallbacks++
       // Undo gives the file back byte for byte, and Redo the edited file.
-      const t = roundTrip(text, op)
+      exact(text, roundTrip(text, op))
       undos++
-      if (!t.spliced || t.undone !== text || t.redone !== t.done) throw new Error(`Undo or Redo changed the file\nundone ${t.undone}\nredone ${t.redone}\ndone ${t.done}`)
+      // And so do two edits in one undo step (the same field again within a moment).
+      at = 'step'
+      exact(text, stepTrip(text, [[op], [op2]]))
+      steps++
     } catch (e) {
       if (e instanceof JsonEditRefused) continue
-      throw new Error(`${(e as Error).message}\nlayout ${layout}\nop ${JSON.stringify(op)}\ntext ${text}`)
+      throw new Error(`${(e as Error).message}\nlayout ${layout}\n${at} ${JSON.stringify(at === 'edit' ? op : [op, op2])}\ntext ${text}`)
     }
   }
-  console.log(`     ${runs} edits, ${fallbacks} fell back to a full rewrite; ${undos} undone and redone byte for byte`)
+  console.log(`     ${runs} edits, ${fallbacks} fell back to a full rewrite; ${undos} undone and redone byte for byte, and ${steps} steps of two`)
   assert.ok(fallbacks / runs < 0.01, `too many fallbacks: ${fallbacks}`)
 })
 

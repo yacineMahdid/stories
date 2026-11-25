@@ -54,7 +54,8 @@ const BAD_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
 
 const isName = (k: unknown) => typeof k === 'string' && !BAD_KEYS.has(k)
 const isRemoved = (r: unknown): r is Removed =>
-  isObj(r) && typeof r.text === 'string' && [r.after, r.before].every((k) => k === undefined || k === null || typeof k === 'string')
+  isObj(r) && typeof r.text === 'string' && [r.after, r.before].every((k) => k === undefined || k === null || typeof k === 'string') &&
+  (r.breaks === undefined || typeof r.breaks === 'string')
 
 /** Only well-formed set, delete and rename operations on a non-empty path of names. */
 export function checkOps(ops: unknown): JsonOp[] {
@@ -65,6 +66,8 @@ export function checkOps(ops: unknown): JsonOp[] {
     if (!Array.isArray(op.path) || !op.path.length || !op.path.every(isName)) throw new JsonEditRefused(`Bad path ${JSON.stringify(op.path)}.`)
     if (op.op === 'set' && op.value === undefined) throw new JsonEditRefused(`A set at ${op.path.join(' › ')} needs a value.`)
     if (op.op === 'rename' && !isName(op.to)) throw new JsonEditRefused(`A rename at ${op.path.join(' › ')} needs a new name.`)
+    // Not a plain delete either way: one that can't say whether it is conditional is refused.
+    if (op.op === 'delete' && op.ifEmpty !== undefined && typeof op.ifEmpty !== 'boolean') throw new JsonEditRefused(`A delete at ${op.path.join(' › ')} has a bad "ifEmpty".`)
     // Text to put back only helps the layout: one that isn't is dropped, and the edit still lands.
     if (op.restore !== undefined && !isRemoved(op.restore)) delete op.restore
   }
@@ -91,7 +94,10 @@ export function applyOp(doc: Record<string, unknown>, op: JsonOp) {
     node = node[key] as Record<string, unknown>
   }
   const last = op.path[op.path.length - 1]
-  if (op.op === 'delete') { delete node[last]; return }
+  if (op.op === 'delete') {
+    if (!op.ifEmpty || (isObj(node[last]) && !Object.keys(node[last]).length)) delete node[last]
+    return
+  }
   if (op.op === 'rename') {
     if (!Object.hasOwn(node, last) || op.to === last) return
     if (Object.hasOwn(node, op.to)) throw nameTaken(op.path, op.to)

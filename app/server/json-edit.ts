@@ -5,15 +5,20 @@
  */
 export type JsonOp =
   | { op: 'set'; path: string[]; value: unknown; restore?: Removed }
-  | { op: 'delete'; path: string[]; restore?: Removed }
+  | { op: 'delete'; path: string[]; ifEmpty?: boolean; restore?: Removed } // ifEmpty: only an object with nothing in it
   | { op: 'rename'; path: string[]; to: string; restore?: Removed }
 
 /**
  * The text an edit took out of the file: a value it replaced, a key it renamed, or a member it
- * deleted, with the keys of the members it stood between (null: none). The edit that takes it back
- * carries it as `restore`, and puts that same text back where it was when it still fits.
+ * deleted, with the keys of the members it stood between (null: none) and the kinds of line
+ * break the file had right after the edit (see breaksOf). The edit that takes it back carries it
+ * as `restore`, and puts that same text back where it was when it still fits.
  */
-export type Removed = { text: string; after?: string | null; before?: string | null }
+export type Removed = { text: string; after?: string | null; before?: string | null; breaks?: string }
+
+const BREAKS: [string, RegExp][] = [['crlf', /\r\n/], ['lf', /(?:^|[^\r])\n/], ['cr', /\r(?!\n)/]]
+/** The kinds of line break a text has: "lf", "crlf", "cr" or several ("crlf lf"), "" for none. */
+export const breaksOf = (text: string) => BREAKS.filter(([, re]) => re.test(text)).map(([kind]) => kind).join(' ')
 
 /** A request that can't be applied (it would destroy data); the message says why. */
 export class JsonEditRefused extends Error {}
@@ -137,16 +142,20 @@ export function editJson(source: string, op: JsonOp, style: JsonStyle): { text: 
   const fmt = (value: unknown, indent: string, depth: number) => format(value, indent, depth, unit).replace(/\n/g, eol)
   const root = parse(text)
   if (root.kind !== 'object') throw new JsonEditRefused('The file must hold an object ({ … }).')
-  const splice = (start: number, end: number, insert: string, around?: Pick<Removed, 'after' | 'before'>) =>
-    ({ text: bom + text.slice(0, start) + insert + text.slice(end), removed: end > start ? { text: text.slice(start, end), ...around } : null })
+  const splice = (start: number, end: number, insert: string, around?: Pick<Removed, 'after' | 'before'>) => {
+    const out = text.slice(0, start) + insert + text.slice(end)
+    return { text: bom + out, removed: end > start ? { text: text.slice(start, end), ...around, breaks: breaksOf(out) } : null }
+  }
   const unchanged = { text: source, removed: null }
   const nest = (keys: string[], value: unknown) => keys.reduceRight<unknown>((v, k) => ({ [k]: v }), value)
   const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
   const reads = (json: string, check: (v: any) => boolean) => { try { return check(JSON.parse(json)) } catch { return false } }
-  // Text an earlier edit took out goes back only with the file's line breaks, and only when it
-  // still reads as what this edit writes; otherwise the edit writes it anew.
+  // Text an earlier edit took out goes back as it was written only where its line breaks fit: the
+  // file has the same kinds of line break as right after that edit, or the text has only kinds the
+  // file has. And only when it still reads as what this edit writes; otherwise it is written anew.
   const back = op.restore?.text ?? ''
-  const breaksFit = !!op.restore && !(eol === '\n' ? back.includes('\r') : /(^|[^\r])\n/.test(back))
+  const breaks = breaksOf(text)
+  const breaksFit = !!op.restore && (op.restore.breaks === breaks || breaksOf(back).split(' ').every((k) => !k || breaks.split(' ').includes(k)))
 
   let node: Node = root
   for (let d = 0; d < op.path.length; d++) {
@@ -161,18 +170,22 @@ export function editJson(source: string, op: JsonOp, style: JsonStyle): { text: 
       const value = last ? op.value : nest(op.path.slice(d + 1), op.value)
       const keys = [...new Set(obj.members.map((m) => m.key))] // in the order JSON.parse gives them
       const spot = last && op.restore ? spotOf(keys, key, op.restore) : -1
-      const holds = (n: number) => (v: any) => !!v && Object.keys(v).length === n && Object.hasOwn(v, key) && same(v[key], value)
+      // Does the object `json` hold just `n` members (a key written twice counts twice), this one
+      // among them with this value? Then the text put back is that member and nothing more.
+      const holds = (json: string, n: number) => {
+        try { const node = parse(json); return node.kind === 'object' && node.members.length === n && reads(json, (v) => Object.keys(v).length === n && Object.hasOwn(v, key) && same(v[key], value)) } catch { return false }
+      }
       const first = (k: string) => obj.members.find((m) => m.key === k)!
       const oneLine = !text.slice(obj.start, obj.end).includes('\n')
       if (!obj.members.length) {
-        if (spot === 0 && breaksFit && reads(back, holds(1))) return splice(obj.start, obj.end, back)
+        if (spot === 0 && breaksFit && holds(back, 1)) return splice(obj.start, obj.end, back)
         const outer = indentAt(text, obj.start)
         return splice(obj.start, obj.end, `{${eol}${outer}${unit}${JSON.stringify(key)}: ${fmt(value, outer + unit, d + 1)}${eol}${outer}}`)
       }
       if (spot === 0) {
         // It was the first member: back in front of the one that followed it.
         const next = first(keys[0])
-        if (breaksFit && reads(`{${back}"\\u0000":0}`, holds(2))) return splice(next.keyStart, next.keyStart, back)
+        if (breaksFit && holds(`{${back}"\\u0000":0}`, 2)) return splice(next.keyStart, next.keyStart, back)
         if (oneLine) return splice(next.keyStart, next.keyStart, `${JSON.stringify(key)}: ${inline(value)}, `)
         const indent = indentAt(text, next.keyStart)
         const written = fmt(value, indent, d + 1)
@@ -180,7 +193,7 @@ export function editJson(source: string, op: JsonOp, style: JsonStyle): { text: 
         return splice(next.keyStart, next.keyStart, `${JSON.stringify(key)}: ${written},${d < 1 && tall ? eol + eol : eol}${indent}`)
       }
       const prev = spot > 0 ? first(keys[spot - 1]) : obj.members[obj.members.length - 1]
-      if (spot > 0 && breaksFit && reads(`{"\\u0000":0${back}}`, holds(2))) return splice(prev.value.end, prev.value.end, back)
+      if (spot > 0 && breaksFit && holds(`{"\\u0000":0${back}}`, 2)) return splice(prev.value.end, prev.value.end, back)
       if (oneLine) return splice(prev.value.end, prev.value.end, `, ${JSON.stringify(key)}: ${inline(value)}`)
       const indent = indentAt(text, prev.keyStart)
       const written = fmt(value, indent, d + 1)
@@ -206,6 +219,9 @@ export function editJson(source: string, op: JsonOp, style: JsonStyle): { text: 
         const kept = back.startsWith('"') && back.endsWith('"') && reads(back, (v) => v === op.to)
         return splice(member.keyStart, member.keyEnd, kept ? back : JSON.stringify(op.to))
       }
+      // A delete "if empty" (the Undo of an edit that made this object) leaves one with anything
+      // in it, such as a field the writer added by hand in the meantime.
+      if (op.ifEmpty && !(member.value.kind === 'object' && !member.value.members.length)) return unchanged
       // What a delete takes out comes with the keys around it, so its Undo can put it back there.
       const around = { after: obj.members[index - 1]?.key ?? null, before: obj.members[index + 1]?.key ?? null }
       if (obj.members.length === 1) return splice(obj.start, obj.end, breaksFit && /^\{[ \t\r\n]*\}$/.test(back) ? back : '{}', around)

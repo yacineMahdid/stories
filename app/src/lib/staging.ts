@@ -11,10 +11,10 @@ export type Direction = Record<string, any>
 export type StagingStatus = 'loading' | 'ready' | 'saving' | 'saved' | 'error'
 export type Op =
   | { op: 'set'; path: string[]; value: unknown }
-  | { op: 'delete'; path: string[] }
+  | { op: 'delete'; path: string[]; ifEmpty?: boolean } // ifEmpty: only an object with nothing in it
   | { op: 'rename'; path: string[]; to: string } // the key at `path` becomes `to`, in its place
 /** The text an edit took out of the file, as the server answers it (see app/server/json-edit.ts). */
-type Removed = { text: string; after?: string | null; before?: string | null }
+type Removed = { text: string; after?: string | null; before?: string | null; breaks?: string }
 
 /** Where the direction lives, for messages (data/ unless the app was started with STORY_DATA). */
 export const STAGING_FILE = `${__STORY_DATA__}/staging.json`
@@ -38,10 +38,11 @@ const readError = () => `${unreadable} Fix it; it is read again when you come ba
 
 // An Undo puts back the very text its edit took out of the file (a hand-written entry, its blank
 // line, its place among the others), not just the same values: the server's answer to each edit
-// says what it took out, and the Undo sends that along.
-const undoes = new WeakMap<Op, Op>() // an Undo's op → the edit it takes back
+// says what it took out, and the Undo sends that along (with its last op for that edit).
+const undoes = new WeakMap<Op, Op>() // an op of an Undo → the edit it takes back
 const took = new WeakMap<Op, Removed>() // an edit → what it last took out of the file
-const restoreOf = (op: Op) => { const e = undoes.get(op); return e && took.get(e) }
+const putsBack = new WeakSet<Op>() // the op of an Undo that puts that text back
+const restoreOf = (op: Op) => { const e = putsBack.has(op) ? undoes.get(op) : undefined; return e && took.get(e) }
 
 // Key order as the server keeps it (see spotOf and applyOp in app/server), so the copy here lists
 // the entries in the file's order.
@@ -69,8 +70,9 @@ function apply(doc: Direction, op: Op): Direction {
     node = node[key]
   }
   const last = op.path[op.path.length - 1]
-  if (op.op === 'delete') delete node[last]
-  else if (op.op === 'rename') {
+  if (op.op === 'delete') {
+    if (!op.ifEmpty || (isObject(node[last]) && !Object.keys(node[last]).length)) delete node[last]
+  } else if (op.op === 'rename') {
     if (!Object.hasOwn(node, last) || Object.hasOwn(node, op.to)) return next // nothing to rename, or the name is taken (refused)
     const value = node[last]
     if (isIndex(last) || isIndex(op.to)) { delete node[last]; node[op.to] = value }
@@ -183,32 +185,38 @@ export function undoOf(ops: Op[]): Op[] {
   let d = direction
   const back: Op[] = []
   for (const op of ops) {
-    const u = inverse(d, op)
-    if (u) { undoes.set(u, op); back.unshift(u) }
+    const us = inverse(d, op)
+    for (const u of us) undoes.set(u, op)
+    if (us.length) putsBack.add(us[us.length - 1])
+    back.unshift(...us)
     d = apply(d, op)
   }
   return back
 }
 
-/** The edit that takes `op` back on `d`, or null when `op` changes nothing there. */
-function inverse(d: Direction, op: Op): Op | null {
+/** The edits that take `op` back on `d` (none when `op` changes nothing there). */
+function inverse(d: Direction, op: Op): Op[] {
   let node: Direction = d
   for (let i = 0; i < op.path.length; i++) {
     const key = op.path[i]
     const path = op.path.slice(0, i + 1)
     const has = Object.hasOwn(node, key)
     if (i === op.path.length - 1) {
-      if (op.op === 'rename') return has && op.to !== key && !Object.hasOwn(node, op.to) ? { op: 'rename', path: [...op.path.slice(0, -1), op.to], to: key } : null
-      return has ? { op: 'set', path, value: node[key] } : op.op === 'set' ? { op: 'delete', path } : null
+      if (op.op === 'rename') return has && op.to !== key && !Object.hasOwn(node, op.to) ? [{ op: 'rename', path: [...op.path.slice(0, -1), op.to], to: key }] : []
+      return has ? [{ op: 'set', path, value: node[key] }] : op.op === 'set' ? [{ op: 'delete', path }] : []
     }
     if (!isObject(node[key])) {
-      // A set makes the objects on its way (or one in place of a stray value): that is what goes.
-      if (op.op !== 'set' || (Array.isArray(node[key]) && node[key].length)) return null
-      return has ? { op: 'set', path, value: node[key] } : { op: 'delete', path }
+      if (op.op !== 'set' || (Array.isArray(node[key]) && node[key].length)) return []
+      if (has) return [{ op: 'set', path, value: node[key] }] // it replaced a stray value
+      // It made the objects on its way: what it set goes, then each object it made, deepest
+      // first, if nothing else is in it by then (the writer may have added to it by hand).
+      const made: Op[] = []
+      for (let j = op.path.length - 1; j > i; j--) made.push({ op: 'delete', path: op.path.slice(0, j), ifEmpty: true })
+      return [{ op: 'delete', path: op.path }, ...made]
     }
     node = node[key]
   }
-  return null
+  return []
 }
 
 /**

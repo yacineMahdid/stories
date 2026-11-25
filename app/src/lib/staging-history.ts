@@ -33,10 +33,6 @@ const put = (editor: Editor, mark: Mark) => {
   const doc = editor.getDocumentSettings()
   editor.store.put([{ ...doc, meta: { ...doc.meta, [KEY]: mark } } as TLDocument])
 }
-/** Is path `a` the same as `b`, or inside it? */
-const within = (a: string[], b: string[]) => b.length <= a.length && b.every((k, i) => a[i] === k)
-/** Does `o` write everything at `path`? (A rename moves an entry; it doesn't write what is in it.) */
-const covers = (o: Op, path: string[]) => o.op !== 'rename' && within(path, o.path)
 
 /**
  * Starts a new undo step for an edit of `key` (a field of a card, e.g. "shape:mira|name"),
@@ -62,9 +58,12 @@ export function edit3d(editor: Editor, ops: Op[], key = ops.map((o) => o.path.jo
   startEdit(editor, key)
   const step = current ? steps.get(current) : undefined
   if (step) {
-    // The same field again: still the same step. Its first values are the ones Undo brings back.
-    step.undo = [...undo.filter((u) => !step.undo.some((o) => covers(o, u.path))), ...step.undo]
-    step.redo = [...step.redo.filter((r) => !ops.some((o) => covers(o, r.path))), ...ops]
+    // The same field again: still the same step. Undo takes back this edit and then the ones
+    // before it, each in full, so its first values come back and the file as it was, byte for
+    // byte (an entry one edit deleted and the next made again goes back to its own place, as it
+    // was written); Redo makes them again, in order.
+    step.undo = [...undo, ...step.undo]
+    step.redo = [...step.redo, ...ops]
     return true
   }
   const id = `${session}-${++count}`
