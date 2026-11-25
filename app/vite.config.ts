@@ -6,8 +6,9 @@ import crypto from 'node:crypto'
 import type { IncomingMessage } from 'node:http'
 
 // Everything the canvas creates is saved inside the repo so it can be versioned with git.
+// STORY_DATA=path/to/folder opens another world instead (handy for keeping several).
 const REPO_DIR = path.resolve(import.meta.dirname, '..')
-const DATA_DIR = path.resolve(import.meta.dirname, '../data')
+const DATA_DIR = process.env.STORY_DATA ? path.resolve(process.env.STORY_DATA) : path.resolve(import.meta.dirname, '../data')
 const ASSET_DIR = path.join(DATA_DIR, 'assets')
 const WORLD_FILE = path.join(DATA_DIR, 'world.json')
 const STAGING_FILE = path.join(DATA_DIR, 'staging.json')
@@ -172,6 +173,6 @@ export default defineConfig({
   },
   optimizeDeps: { exclude: ['three'] },
   // The engine (src/, assets/) sits outside app/, so let the dev server read the repo.
-  server: { watch: { ignored: ['**/data/**'] }, fs: { allow: [REPO_DIR] } },
+  server: { watch: { ignored: ['**/data/**', `${DATA_DIR}/**`] }, fs: { allow: [REPO_DIR] } },
   build: { target: 'esnext' }, // the prop catalog loads its families with top-level await
 })

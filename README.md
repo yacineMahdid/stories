@@ -11,7 +11,7 @@ npm install
 npm run dev
 ```
 
-Then open http://localhost:5173.
+Then open http://localhost:5173. Your world is saved in `data/`; `STORY_DATA=path/to/folder npm run dev` opens another one.
 
 | Tab | What lives there |
 | --- | --- |
