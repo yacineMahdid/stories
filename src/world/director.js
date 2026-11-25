@@ -25,6 +25,16 @@ const D2R = Math.PI / 180;
 const TERRAIN_SIZE = 200;
 const REGION = 92;      // things farther than this from the place are not built
 const ACTION = 34;      // grass tufts and wild flowers grow within this radius of the place
+// An automatic place keeps open the side its camera looks from: the tall things places scatter
+// stay out of a lane from just behind each automatic pin's cast toward its camera, as long as a
+// wide shot and wide enough that a big tree beside it doesn't reach in. Farther back, nothing
+// changes.
+const LANE = { back: 2, length: 18, half: 6 };
+// Ground cover too low to hide anyone: it may grow in a camera's lane.
+const LOW_KINDS = new Set(['flowers', 'grass', 'mushroom', 'lilypads', 'leafpile', 'shells']);
+
+/** Adds a staging note to a page's state, once. */
+const noteTo = (state) => (text) => { if (!state.warnings.includes(text)) state.warnings.push(text); };
 
 /* ───────────── the set ───────────── */
 
@@ -40,6 +50,12 @@ class SceneSet {
     this.ticks = [];
     this.lights = null;
     this.warnings = [];
+    // The camera lanes of the automatic places (see LANE); the medium shot of an automatic page
+    // looks from about 20° round from the place's view.
+    this.lanes = [...world.places.values()].filter((p) => p.auto).map((p) => {
+      const a = (p.rotate + (p.dir.view ?? 0) + 20) * D2R;
+      return { at: p.pos, dir: [Math.sin(a), Math.cos(a)] };
+    });
   }
 
   inRegion(pos) {
@@ -126,6 +142,14 @@ class SceneSet {
     return best;
   }
 
+  /** Is (x, z) in an automatic place's camera lane (see LANE)? */
+  inLane(x, z) {
+    return this.lanes.some(({ at, dir }) => {
+      const dx = x - at[0], dz = z - at[1], along = dx * dir[0] + dz * dir[1];
+      return along > -LANE.back && along < LANE.length && Math.abs(dx * dir[1] - dz * dir[0]) < LANE.half;
+    });
+  }
+
   /** Spread a scatter entry over its area on suitable ground, as instanced copies. */
   scatter(s, footprints, ctx) {
     const place = this.world.places.get(s.place);
@@ -157,6 +181,8 @@ class SceneSet {
     const avoid = s.avoid ? { at: s.avoid.at ? this.world.localToWorld(s.avoid.at, place) : center, r: s.avoid.r ?? 4 } : null;
     const kinds = Array.isArray(s.of) ? s.of : [s.of ?? 'tree'];
     const spacing = s.spacing ?? (kinds.includes('tree') ? 2.2 : 0.6);
+    // What a place scatters (not ground cover, nor a page's dressing) leaves the cameras' lanes open.
+    const keepLanes = s.source === 'place' && kinds.some((k) => !LOW_KINDS.has(k));
     const placed = [];
     const groups = new Map();
     const count = s.count ?? 20;
@@ -165,6 +191,7 @@ class SceneSet {
       const z = bound[1] + r.next() * (bound[3] - bound[1]);
       if (!inside(x, z)) continue;
       if (avoid && Math.hypot(x - avoid.at[0], z - avoid.at[1]) < avoid.r) continue;
+      if (keepLanes && this.inLane(x, z)) continue;
       if (this.terrain.isWater(x, z, -0.05) && !s.onWater) continue;
       const surf = this.terrain.surfaceAt(x, z);
       if (!s.onPaths && (surf.dirt > 0.3 || surf.stone > 0.3 || surf.brick > 0.3)) continue;
@@ -179,7 +206,9 @@ class SceneSet {
       const key = `${kind}|${JSON.stringify(params)}|${slot}`;
       if (!groups.has(key)) groups.set(key, { kind, params, slot, matrices: [] });
       const scale = (s.scale ?? 1) * (0.85 + r.next() * 0.3);
-      const y = this.terrain.heightAt(x, z);
+      // Floating things (lily pads) ride the water like single ones; reeds stay rooted on the bed.
+      const ground = this.terrain.heightAt(x, z);
+      const y = CATALOG[kind]?.floats ? Math.max(WATER_LEVEL, ground) : ground;
       groups.get(key).matrices.push(new THREE.Matrix4().compose(
         new THREE.Vector3(x, y, z),
         new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), r.angle()),
@@ -386,13 +415,14 @@ export class Director {
 
   /* cast */
 
-  async characterFor(entry) {
+  async characterFor(entry, gen = this.gen) {
     const c = entry.character;
     const spec = buildSpec(this.world.specFor(c, entry.look));
     if (entry.scale) spec.height = (spec.height ?? 1) * entry.scale;
     const key = JSON.stringify(spec);
     // One model per character, even when two stagings ask for it at once.
     if (this.pending?.has(c.id)) await this.pending.get(c.id).catch(() => {});
+    if (gen !== this.gen) return null; // a newer show dresses the models its own way
     let character = this.characters.get(c.id);
     if (!character) {
       this.pending ??= new Map();
@@ -403,8 +433,9 @@ export class Director {
       character.specKey = key;
       this.characters.set(c.id, character);
     } else if (character.specKey !== key) {
-      await character.apply(spec);
+      // The look asked for last is the one worn (its hair may still be loading).
       character.specKey = key;
+      await character.apply(spec);
     }
     return character;
   }
@@ -420,8 +451,10 @@ export class Director {
       }
     }
     this.cast.clear();
-    const members = (await Promise.all(state.cast.map(async (entry) => ({ entry, character: await this.characterFor(entry) })))).filter((m) => m.character);
+    const members = (await Promise.all(state.cast.map(async (entry) => ({ entry, character: await this.characterFor(entry, gen) })))).filter((m) => m.character);
     if (this.disposed || gen !== this.gen) return; // a newer show is staging its own cast
+    // Whoever this page doesn't have leaves the stage, also a model kept by a show this one cut short.
+    for (const [id, character] of this.characters) if (!keep.has(id)) character.root.removeFromParent();
     // Positions first (facing can point at other cast members).
     for (const m of members) {
       m.mark = this.markFor(m.entry, state);
@@ -482,9 +515,11 @@ export class Director {
     const t = this.set.terrain;
     const blocked = (this.set.footprints ?? []).some((f) => f.solid && Math.hypot(x - f.x, z - f.z) < f.r);
     if (blocked) return false;
-    if (this.deckHeight(x, z) > -Infinity) return true; // a pier or a bridge
+    const around = [[0.4, 0], [-0.4, 0], [0, 0.4], [0, -0.4]];
+    // On a pier or a bridge, with deck (or dry ground) all round: not at the very edge.
+    if (this.deckHeight(x, z) > -Infinity) return around.every(([dx, dz]) => this.deckHeight(x + dx, z + dz) > -Infinity || t.heightAt(x + dx, z + dz) >= WATER_LEVEL + 0.02);
     if (t.heightAt(x, z) < WATER_LEVEL + 0.06 || t.slopeAt(x, z) > 0.4) return false;
-    for (const [dx, dz] of [[0.4, 0], [-0.4, 0], [0, 0.4], [0, -0.4]]) if (t.heightAt(x + dx, z + dz) < WATER_LEVEL + 0.02) return false;
+    for (const [dx, dz] of around) if (t.heightAt(x + dx, z + dz) < WATER_LEVEL + 0.02) return false;
     return true;
   }
 
@@ -526,7 +561,9 @@ export class Director {
         if (!ok(dx, dz)) continue;
         for (const m of auto) {
           const p = m.mark.position;
-          p.set(p.x + dx, this.set.terrain.heightAt(p.x + dx, p.z + dz), p.z + dz);
+          const { y, onDeck } = this.footingAt(p.x + dx, p.z + dz);
+          p.set(p.x + dx, y, p.z + dz);
+          m.mark.onDeck = onDeck;
         }
         return;
       }
@@ -549,11 +586,17 @@ export class Director {
       }
       state.warnings.push(`${entry.character.name} stands at "${at}", which is not in the scene.`);
     }
-    const [x, z] = typeof at === 'string' ? place.pos : this.world.resolveAt(at, place, state.things, undefined, (t) => state.warnings.push(t));
+    const [x, z] = typeof at === 'string' ? place.pos : this.world.resolveAt(at, place, state.things, undefined, noteTo(state));
+    const { y, onDeck } = this.footingAt(x, z);
+    return { position: new THREE.Vector3(x, y, z), yaw: (place?.rotate ?? 0) * D2R, pose: entry.pose ?? 'stand', free: true, onDeck };
+  }
+
+  /** Where a free mark at (x, z) stands: on the deck of a pier or bridge there, else on the ground or the water. */
+  footingAt(x, z) {
     const ground = Math.max(this.set.terrain.heightAt(x, z), WATER_LEVEL);
     const deck = this.deckHeight(x, z);
     const onDeck = deck > ground - 0.05;
-    return { position: new THREE.Vector3(x, onDeck ? deck : ground, z), yaw: (place?.rotate ?? 0) * D2R, pose: entry.pose ?? 'stand', free: true, onDeck };
+    return { y: onDeck ? deck : ground, onDeck };
   }
 
   positionOf(ref, members, state) {
@@ -701,7 +744,11 @@ export class Director {
         // around the target in small steps until the view is clear.
         // An explicit `from` is honored within a small swing.
         if (subs.length && kind !== 'establishing' && kind !== 'top') {
+          const planned = pos.distanceTo(target);
           pos = this.clearView(pos, target, subs, shot.from == null ? 80 : 24, kind) ?? pos;
+          // Come in close, the lens widens so the subjects keep their place in the frame.
+          const closer = pos.distanceTo(target) / planned;
+          if (closer < 0.7 && shot.fov == null) fov = Math.min(2 * Math.atan(Math.tan((fov * D2R) / 2) / closer) / D2R, 65);
         }
       }
     }
@@ -819,6 +866,27 @@ export class Director {
       }
       if (bestScore < 0.04) break;
     }
+    // Swinging round to someone's back is the last resort: first try coming closer (in front of
+    // what is in the way) or rising over it, from the intended side.
+    const away = (p) => faces.filter((s) => {
+      const dx = p.x - s.center.x, dz = p.z - s.center.z;
+      return (Math.sin(s.yaw) * dx + Math.cos(s.yaw) * dz) / (Math.hypot(dx, dz) || 1) < -0.25;
+    }).length;
+    if (away(best) > away(pos)) {
+      let near = null, nearScore = Infinity;
+      for (const step of [0, 8, -8, 16, -16, 24, -24]) {
+        // [distance, rise as a share of the distance]: a medium shot rises about 3.5 units.
+        for (const [k, lift] of [[0.6, 0], [0.6, 0.12], [0.45, 0], [0.45, 0.12], [1, 0.4], [0.75, 0.4]]) {
+          const up = flat.length() * lift;
+          const o = flat.clone().multiplyScalar(k).applyAxisAngle(new THREE.Vector3(0, 1, 0), step * D2R).setY(rise * k + up);
+          const p = target.clone().add(o);
+          if (away(p) > away(pos) || Math.min(...subs.map((s) => s.center.distanceTo(p) - s.radius)) < 1.2) continue;
+          const score = occlusion(p) + hidden(p) + backs(p) + Math.abs(step) * 0.0015 + Math.abs(1 - k) * 0.12 + up * 0.06;
+          if (score < nearScore) { near = p; nearScore = score; }
+        }
+      }
+      if (near && nearScore < bestScore + faceWeight * 0.5) best = near;
+    }
     return best;
   }
 
@@ -893,7 +961,8 @@ class Walker {
     this.speed = entry.speed ?? 1.1;
     this.loop = entry.loop ?? 'pingpong';
     this.terrain = director.set.terrain;
-    this.points = entry.path.map((p) => { const [x, z] = director.world.resolveAt(p, state.place, state.things); return new THREE.Vector3(x, 0, z); });
+    // A bad point is a note on this page, not on the whole world (it would show on the next page).
+    this.points = entry.path.map((p) => { const [x, z] = director.world.resolveAt(p, state.place, state.things, undefined, noteTo(state)); return new THREE.Vector3(x, 0, z); });
     this.lengths = [0];
     for (let i = 1; i < this.points.length; i++) this.lengths.push(this.lengths[i - 1] + this.points[i].distanceTo(this.points[i - 1]));
     this.total = this.lengths[this.lengths.length - 1];

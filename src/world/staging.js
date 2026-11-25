@@ -744,7 +744,8 @@ export function autoPlace(pin, preset = null, room = { near: Infinity, open: 0 }
       wild = { grass: 0.8, flowers: 0 };
       break;
     case 'ruin':
-      things.push({ kind: 'ruin', at: [0, -2] });
+      // Behind the cast's spot, its steps toward the camera: the group stands in front of it.
+      things.push({ kind: 'ruin', at: [0, -6] });
       things.push({ kind: 'scatter', of: 'tree', area: { r: Math.min(20, R) }, avoid: { r: 7 }, count: 16 });
       break;
     case 'wild':
