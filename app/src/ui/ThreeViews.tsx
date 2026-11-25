@@ -1,8 +1,8 @@
 import { Component, createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { getSnapshot, type Editor } from 'tldraw'
+import { getSnapshot, type Editor, type TLShape } from 'tldraw'
 import type { CharacterShape, PinShape, SceneShape } from '../shapes/types'
 import { coverPreviews, directionKey, effectiveSpec, getStudio, getPreview, guessLook, lookOptions, placePresets, weathers, WorldView, type Look, type StageState } from '../three/bridge.js'
-import { getStaging, STAGING_FILE, useStaging, useStagingStatus, type Op } from '../lib/staging'
+import { getStaging, STAGING_FILE, useStaging, useStagingStatus, type Direction, type Op } from '../lib/staging'
 import { edit3d } from '../lib/staging-history'
 import { uploadFile } from '../lib/persistence'
 import { resizeKeepingOrder } from '../lib/structure'
@@ -65,16 +65,33 @@ export class ThreeBoundary extends Component<{ children: ReactNode }, { error: s
   }
 }
 
+type Section = 'characters' | 'places' | 'scenes'
+const CARD = { characters: 'character', places: 'pin', scenes: 'scene' }
+
+/** The key of a card's entry in the direction, the way the 3D world finds it (a page: by id or title). */
+function entryOf(d: Direction, section: Section, id: string, name: string): string | null {
+  if (section !== 'scenes') return directionKey(d, section, id, name)
+  const scenes = isPlain(d.scenes) ? d.scenes : {}
+  if (Object.hasOwn(scenes, id)) return id
+  return (name && Object.keys(scenes).find((k) => k.toLowerCase() === name.toLowerCase())) || null
+}
+
 /**
- * A look or place written by hand under a card's name would stop matching when the card is
- * renamed: move it under the card's id first, so it stays with the card.
+ * A look, place or page direction written by hand under a card's name (a page's title) would
+ * stop matching when the card is renamed: move it under the card's id first, so it stays with
+ * the card. Another card that still has the old name keeps it; the renamed one gets a copy.
+ * `step` is the rename's undo step, so one Undo takes back both.
  */
-export function followRename(editor: Editor, section: 'characters' | 'places', id: string, oldName: string, newName: string) {
+export function followRename(editor: Editor, section: Section, id: string, oldName: string, newName: string, step: string) {
   if (oldName === newName) return
   const d = getStaging()
-  const key = directionKey(d, section, id, oldName)
+  const key = entryOf(d, section, id, oldName)
   if (key == null || key === id || key === id.replace(/^shape:/, '') || key.toLowerCase() === newName.toLowerCase()) return
-  edit3d(editor, [{ op: 'set', path: [section, id], value: d[section][key] }, { op: 'delete', path: [section, key] }])
+  const nameOf = (s: TLShape) => String((s.props as Record<string, unknown>)[section === 'scenes' ? 'title' : 'name'] ?? '')
+  const shared = editor.store.allRecords().some((r) => r.typeName === 'shape' && r.type === CARD[section] && r.id !== id && entryOf(d, section, r.id, nameOf(r)) === key)
+  const ops: Op[] = [{ op: 'set', path: [section, id], value: d[section][key] }]
+  if (!shared) ops.push({ op: 'delete', path: [section, key] })
+  edit3d(editor, ops, step)
 }
 
 /** How long the selection must rest before a 3D preview is (re)built. */
@@ -137,11 +154,13 @@ export function CharacterLook({ editor, shape, onPortrait }: { editor: Editor; s
   useEffect(() => { studio.show(look, shape.id) }, [key, shape.id])
 
   // The first change keeps the whole guessed look; after that, only the fields that change are
-  // written, so hand edits to the other fields survive.
-  const save = (next: Look) => {
+  // written, so hand edits to the other fields survive. Each control is one field for Undo:
+  // dragging through colours is one step.
+  const save = (next: Look, field: string) => {
     const base = ['characters', entryKey]
-    if (!stored) edit3d(editor, [{ op: 'set', path: base, value: clean(next) }])
-    else edit3d(editor, lookOps(base, stored, clean(next)))
+    const step = `${shape.id}|3d ${field}`
+    if (!stored) edit3d(editor, [{ op: 'set', path: base, value: clean(next) }], step)
+    else edit3d(editor, lookOps(base, stored, clean(next)), step)
   }
   // Animals start without hair, like the guessed looks; going back to a person brings back
   // their skin and hair (or the card's guess).
@@ -158,10 +177,10 @@ export function CharacterLook({ editor, shape, onPortrait }: { editor: Editor; s
       ...look, species: next, fur: undefined,
       skin: human ? lastHuman.current.skin ?? guess.skin : guess.skin,
       hair: human ? look.hair ?? lastHuman.current.hair ?? guess.hair : undefined,
-    })
+    }, 'species')
   }
-  const set = (patch: Look) => save({ ...look, ...patch })
-  const setGroup = (group: 'outfit' | 'face' | 'hair', patch: Record<string, any>) => save({ ...look, [group]: clean({ ...(look[group] ?? {}), ...patch }) })
+  const set = (patch: Look) => save({ ...look, ...patch }, Object.keys(patch).join())
+  const setGroup = (group: 'outfit' | 'face' | 'hair', patch: Record<string, any>) => save({ ...look, [group]: clean({ ...(look[group] ?? {}), ...patch }) }, `${group}.${Object.keys(patch).join()}`)
   const species = look.species ?? 'human'
   const outfit = spec.outfit ?? {}
 
@@ -190,7 +209,7 @@ export function CharacterLook({ editor, shape, onPortrait }: { editor: Editor; s
           <input type="color" value={spec.skin ?? '#f8d3b0'} onChange={(e) => set({ skin: e.target.value })} />
         </label>
         <label>Hair
-          <select value={look.hair?.style ?? ''} onChange={(e) => save({ ...look, hair: e.target.value ? { color: look.hair?.color ?? '#4a2f22', style: e.target.value } : undefined })}>
+          <select value={look.hair?.style ?? ''} onChange={(e) => save({ ...look, hair: e.target.value ? { color: look.hair?.color ?? '#4a2f22', style: e.target.value } : undefined }, 'hair')}>
             <Options value={look.hair?.style ?? ''} note={note} list={lookOptions.hair.map((h) => [h.id, h.label])} />
           </select>
         </label>
@@ -231,7 +250,7 @@ export function CharacterLook({ editor, shape, onPortrait }: { editor: Editor; s
       </fieldset>
       <div className="ins-row">
         <button className="primary" disabled={busy} onClick={addPortrait}><Busy on={busy}>Add as portrait</Busy></button>
-        <button disabled={!stored || !editable} onClick={() => edit3d(editor, [{ op: 'delete', path: ['characters', entryKey] }])} title="Forget the edits and guess the look from the card's text again (Undo brings them back)">
+        <button disabled={!stored || !editable} onClick={() => edit3d(editor, [{ op: 'delete', path: ['characters', entryKey] }], `${shape.id}|3d guess`)} title="Forget the edits and guess the look from the card's text again (Undo brings them back)">
           Guess from text
         </button>
       </div>
@@ -270,9 +289,10 @@ export function PlacePreview({ editor, shape }: { editor: Editor; shape: PinShap
 
   // 'Automatic' removes only the preset; anything else written for the place stays.
   const setPreset = (preset: string) => {
-    if (preset) edit3d(editor, [{ op: 'set', path: ['places', entryKey, 'preset'], value: preset }])
-    else if (placeDir && Object.keys(placeDir).some((k) => k !== 'preset')) edit3d(editor, [{ op: 'delete', path: ['places', entryKey, 'preset'] }])
-    else edit3d(editor, [{ op: 'delete', path: ['places', entryKey] }])
+    const step = `${shape.id}|3d set`
+    if (preset) edit3d(editor, [{ op: 'set', path: ['places', entryKey, 'preset'], value: preset }], step)
+    else if (placeDir && Object.keys(placeDir).some((k) => k !== 'preset')) edit3d(editor, [{ op: 'delete', path: ['places', entryKey, 'preset'] }], step)
+    else edit3d(editor, [{ op: 'delete', path: ['places', entryKey] }], step)
   }
 
   return (

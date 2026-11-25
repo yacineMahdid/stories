@@ -17,15 +17,18 @@ let direction: Direction = {}
 let status: StagingStatus = 'loading'
 let error = ''
 let readFailed = false // the file on disk could not be read: no edits until it can
+let unreadable = '' // why it could not be read
 let pending: Op[] = [] // made here, not sent yet
 let inflight: Op[] = [] // sent, not answered yet
 let timer: ReturnType<typeof setTimeout> | undefined
 let flushing: Promise<void> | null = null
 let rereadAfterSave = false // the window came back while a save was on its way
+let failures = 0 // saves that failed in a row: each try by itself waits longer
 const listeners = new Set<() => void>()
 const notify = () => listeners.forEach((l) => l())
 const isObject = (v: unknown): v is Direction => !!v && typeof v === 'object' && !Array.isArray(v)
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
+const readError = () => `${unreadable} Fix it; it is read again when you come back to this tab${pending.length ? ', and the changes not saved yet are saved then' : ''}.`
 
 /** The same edit the server makes, on the copy here (see app/server/json-style.ts). */
 function apply(doc: Direction, op: Op): Direction {
@@ -67,7 +70,8 @@ export async function loadStaging(): Promise<void> {
   } catch (e) {
     status = 'error'
     readFailed = true
-    error = `${(e instanceof Error ? e.message : String(e)).replace(/[.\s]*$/, '.')} Fix it; it is read again when you come back to this tab.`
+    unreadable = (e instanceof Error ? e.message : String(e)).replace(/[.\s]*$/, '.')
+    error = readError()
   }
   notify()
   if (pending.length) schedule()
@@ -80,6 +84,7 @@ async function flush(keepalive = false) {
   inflight = ops
   status = 'saving'
   notify()
+  let failed = false
   try {
     const res = await fetch('/api/staging', { method: 'PATCH', body: JSON.stringify({ ops }), keepalive })
     if (!res.ok) throw await failure(res, `Saving ${STAGING_FILE} failed`)
@@ -88,19 +93,24 @@ async function flush(keepalive = false) {
     if (!same(fresh, direction)) direction = fresh // an identical answer changes nothing on screen
     status = pending.length ? 'saving' : 'saved'
     error = ''
+    failures = 0
   } catch (e) {
-    pending = [...ops, ...pending] // sent again with the next change, or when you come back
+    pending = [...ops, ...pending] // sent again with the next change, when you come back, or a little later
     status = 'error'
-    error = e instanceof Error ? e.message : String(e)
+    error = `${(e instanceof Error ? e.message : String(e)).replace(/[.\s]*$/, '.')} It is tried again by itself.`
+    failed = true
   }
   inflight = []
   notify()
-  if (rereadAfterSave && !pending.length && !readFailed) { rereadAfterSave = false; void loadStaging() }
+  // A failed save is tried again by itself, a little later each time (2 s, 4 s … a minute), and
+  // soon if you came back to the tab while it was on its way.
+  if (failed) { schedule(rereadAfterSave ? 400 : Math.min(60_000, 2_000 * 2 ** failures++)); rereadAfterSave = false }
+  else if (rereadAfterSave && !pending.length && !readFailed) { rereadAfterSave = false; void loadStaging() }
 }
 
-function schedule() {
+function schedule(delay = 400) {
   clearTimeout(timer)
-  timer = setTimeout(() => { flushing = (flushing ?? Promise.resolve()).then(() => flush()) }, 400)
+  timer = setTimeout(() => { flushing = (flushing ?? Promise.resolve()).then(() => flush()) }, delay)
 }
 
 /** Can the direction be edited now? (Not before it has been read, nor while it can't be.) */
@@ -123,6 +133,30 @@ export function edit(ops: Op[]): boolean {
 export const setIn = (path: string[], value: unknown) => edit([{ op: 'set', path, value }])
 /** Delete one value from the direction. */
 export const deleteIn = (path: string[]) => edit([{ op: 'delete', path }])
+
+/** The edits that take `ops` back, from the direction as it is now (in the order to apply them). */
+export function undoOf(ops: Op[]): Op[] {
+  let d = direction
+  const back: Op[] = []
+  for (const op of ops) {
+    const was = op.path.reduce<unknown>((n, k) => (isObject(n) ? n[k] : undefined), d)
+    back.unshift(was === undefined ? { op: 'delete', path: op.path } : { op: 'set', path: op.path, value: was })
+    d = apply(d, op)
+  }
+  return back
+}
+
+/**
+ * Undo or Redo of a 3D edit: an edit that can't be refused. While the file can't be read, it
+ * is shown here at once and waits to be saved until the file can be read again.
+ */
+export function replay(ops: Op[]) {
+  if (edit(ops) || !ops.length) return
+  for (const op of ops) direction = apply(direction, op)
+  pending.push(...ops)
+  if (readFailed) error = readError()
+  notify()
+}
 
 export const getStaging = () => direction
 const subscribe = (l: () => void) => { listeners.add(l); return () => { listeners.delete(l) } }

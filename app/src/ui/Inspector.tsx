@@ -6,21 +6,19 @@ import { ageAt, formatHour, isSet, parseHour, relation } from '../lib/time'
 import { addStructural, buildOutline, findNode, LEVEL, tidyAll, type OutlineNode } from '../lib/structure'
 import { uploadFile } from '../lib/persistence'
 import { findIssues } from '../lib/checks'
+import { startEdit } from '../lib/staging-history'
 import { CharacterLook, followRename, PagePreview, PlacePreview, ThreeBoundary } from './ThreeViews'
 
 type Props<S extends TLShape> = { editor: Editor; shape: S }
 
 /**
- * One Undo per edit: a change to another field or card, or after a pause, starts a new undo
- * step (typing a word in one field is one step, not one per letter, and not lumped with
- * everything since the last click on the canvas).
+ * One Undo per edit: typing a word in one field is one step (see startEdit). `also` makes more
+ * changes in the same step, like the 3D look, place or page direction that follows a rename.
  */
-let lastEdit = { key: '', at: 0 }
-function update<S extends TLShape>(editor: Editor, shape: S, props: Partial<S['props']>) {
-  const key = `${shape.id}|${Object.keys(props).sort().join(',')}`
-  const now = Date.now()
-  if (key !== lastEdit.key || now - lastEdit.at > 1500) editor.markHistoryStoppingPoint('inspector edit')
-  lastEdit = { key, at: now }
+function update<S extends TLShape>(editor: Editor, shape: S, props: Partial<S['props']>, also?: (step: string) => void) {
+  const step = `${shape.id}|${Object.keys(props).sort().join(',')}`
+  startEdit(editor, step)
+  also?.(step)
   editor.updateShape({ id: shape.id, type: shape.type, props } as any)
 }
 
@@ -117,7 +115,7 @@ function CharacterInspector({ editor, shape }: Props<CharacterShape>) {
   return (
     <>
       <h2 style={{ color: p.color }}>Character</h2>
-      <Field label="Name"><input value={p.name} onChange={(e) => { followRename(editor, 'characters', shape.id, p.name, e.target.value); set({ name: e.target.value }) }} /></Field>
+      <Field label="Name"><input value={p.name} onChange={(e) => { const name = e.target.value; update(editor, shape, { name }, (step) => followRename(editor, 'characters', shape.id, p.name, name, step)) }} /></Field>
       <Field label="Role"><input value={p.role} placeholder="protagonist, rival, mentor…" onChange={(e) => set({ role: e.target.value })} /></Field>
       <Field label="Colour"><ColorPicker value={p.color} onChange={(color) => set({ color })} /></Field>
       <Field label="Born (world year)" hint="Optional. Their age is worked out on every page.">
@@ -159,7 +157,7 @@ function PinInspector({ editor, shape }: Props<PinShape>) {
   return (
     <>
       <h2 style={{ color: p.color }}>Map pin</h2>
-      <Field label="Name"><input value={p.name} onChange={(e) => { followRename(editor, 'places', shape.id, p.name, e.target.value); set({ name: e.target.value }) }} /></Field>
+      <Field label="Name"><input value={p.name} onChange={(e) => { const name = e.target.value; update(editor, shape, { name }, (step) => followRename(editor, 'places', shape.id, p.name, name, step)) }} /></Field>
       <Field label="Kind">
         <select value={p.kind} onChange={(e) => set({ kind: e.target.value })}>{PIN_KINDS.map((k) => <option key={k}>{k}</option>)}</select>
       </Field>
@@ -218,7 +216,7 @@ function SceneInspector({ editor, shape }: Props<SceneShape>) {
     <>
       <h2>Page (scene)</h2>
       <p className="muted">{data.path || 'Loose page'}. Drag it into a chapter to place it in the story. Pages read left → right.</p>
-      <Field label="Title"><input value={p.title} onChange={(e) => set({ title: e.target.value })} /></Field>
+      <Field label="Title"><input value={p.title} onChange={(e) => { const title = e.target.value; update(editor, shape, { title }, (step) => followRename(editor, 'scenes', shape.id, p.title, title, step)) }} /></Field>
       <Field label="Exact time" hint="Puts this page on the world chronology next to the backstory.">
         <TimeInput value={p.at} onChange={(at) => set({ at })} />
       </Field>
