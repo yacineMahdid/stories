@@ -172,9 +172,14 @@ export class WorldView {
     return run;
   }
 
-  /** Stage a page. `keepShot` re-stages the same page without resetting the camera. */
+  /**
+   * Stage a page. `keepShot` re-stages the same page without resetting the camera.
+   * Only the latest show matters: one still waiting when a newer one comes is skipped (null).
+   */
   showPage(pageId, overrides = {}, { keepShot = false } = {}) {
+    const ticket = this.ticket = (this.ticket ?? 0) + 1;
     return this.queue(() => {
+      if (ticket !== this.ticket) return null;
       const i = this.world?.sceneIndex.get(pageId);
       if (i == null) return null;
       return this.director.showState(this.world.sceneState(i), overrides, { keepShot });
@@ -182,7 +187,8 @@ export class WorldView {
   }
 
   showPlace(pinId, moment = {}) {
-    return this.queue(() => this.director.showPlace(pinId, moment));
+    const ticket = this.ticket = (this.ticket ?? 0) + 1;
+    return this.queue(() => (ticket !== this.ticket ? null : this.director.showPlace(pinId, moment)));
   }
 
   shot(i) { return this.director?.shot(i); }
@@ -213,7 +219,13 @@ export class WorldView {
 
 let preview = null;
 /** The inspector's world view (shared by page and pin previews). */
-export function getPreview() { return (preview ??= new WorldView()); }
+export function getPreview() {
+  if (!preview) {
+    preview = new WorldView();
+    if (import.meta.env?.DEV) window.previewView = preview; // handy for debugging in the console
+  }
+  return preview;
+}
 
 /** The full stage covers the inspector: its small views stop drawing until it closes. */
 export function coverPreviews(covered) {

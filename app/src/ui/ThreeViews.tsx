@@ -48,6 +48,9 @@ function Busy({ on, children }: { on: boolean; children: ReactNode }) {
 
 const clean = (o: Record<string, any>) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== ''))
 
+/** How long the selection must rest before a 3D preview is (re)built. */
+const SETTLE_MS = 180
+
 /** Staging notes (an unknown prop, a cast member not on the page…), folded away. */
 function Warnings({ list }: { list: string[] }) {
   if (!list.length) return null
@@ -178,9 +181,12 @@ export function PlacePreview({ editor, shape }: { editor: Editor; shape: PinShap
   useEffect(() => {
     let live = true
     setBusy(true)
-    view.setWorld(doc, direction)
-    view.showPlace(shape.id).catch((e) => console.error(e)).finally(() => { if (live) setBusy(false) })
-    return () => { live = false }
+    // A moment's wait first, so clicking through pins quickly builds only the one you stop on.
+    const t = setTimeout(() => {
+      view.setWorld(doc, direction)
+      view.showPlace(shape.id).catch((e) => console.error(e)).finally(() => { if (live) setBusy(false) })
+    }, SETTLE_MS)
+    return () => { live = false; clearTimeout(t) }
   }, [direction, shape.id, doc])
 
   // 'Automatic' removes only the preset; anything else written for the place stays.
@@ -226,12 +232,14 @@ export function PagePreview({ editor, shape }: { editor: Editor; shape: SceneSha
   useEffect(() => {
     let live = true
     setBusy(true)
-    view.setWorld(doc, direction)
-    // The same page again (the canvas changed): keep the shot and the camera.
-    const keepShot = shownRef.current === shape.id
-    shownRef.current = shape.id
-    view.showPage(shape.id, {}, { keepShot }).then((s) => { if (live) { setState(s); if (!keepShot) setShot(0) } }).catch((e) => console.error(e)).finally(() => { if (live) setBusy(false) })
-    return () => { live = false }
+    const t = setTimeout(() => {
+      view.setWorld(doc, direction)
+      // The same page again (the canvas changed): keep the shot and the camera.
+      const keepShot = shownRef.current === shape.id
+      shownRef.current = shape.id
+      view.showPage(shape.id, {}, { keepShot }).then((s) => { if (live) { setState(s); if (!keepShot) setShot(0) } }).catch((e) => console.error(e)).finally(() => { if (live) setBusy(false) })
+    }, SETTLE_MS)
+    return () => { live = false; clearTimeout(t) }
   }, [doc, direction, shape.id])
 
   // The still goes on the page card itself, so the Story canvas reads like a storyboard.
@@ -308,10 +316,12 @@ export function StageOverlay({ editor, pageId, onClose }: { editor: Editor; page
     if (id !== current) setCurrent(id)
     let live = true
     setBusy(true)
-    const keepShot = shownRef.current === id
-    shownRef.current = id
-    view.showPage(id, {}, { keepShot }).then((s) => { if (live) { setState(s); if (!keepShot) setShot(0) } }).catch((e) => console.error(e)).finally(() => { if (live) setBusy(false) })
-    return () => { live = false }
+    const t = setTimeout(() => {
+      const keepShot = shownRef.current === id
+      shownRef.current = id
+      view.showPage(id, {}, { keepShot }).then((s) => { if (live) { setState(s); if (!keepShot) setShot(0) } }).catch((e) => console.error(e)).finally(() => { if (live) setBusy(false) })
+    }, SETTLE_MS)
+    return () => { live = false; clearTimeout(t) }
   }, [doc, direction, current])
 
   const index = pages.findIndex((p) => p.id === current)
