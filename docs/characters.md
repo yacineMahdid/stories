@@ -74,12 +74,35 @@ hero.talking = true;
 hero.socket('rightHand').add(someProp);
 ```
 
+## Hair
+
+Each style (`assets/characters/canonical/hair/<style>.gltf`, Head-bone space) is built by
+`tools/build_hair.py` as a shell hugging the head, plus extra shapes (bun, ponytail, pigtails,
+the long hair's lower layer). The hair is sculpted, not a smooth helmet:
+
+- **Flow.** Strands grow away from a crown, or are pulled toward a tie (ponytail, bun,
+  pigtails); bangs can have their own section, be combed or swept away from a part.
+- **Locks** follow the flow: rounded on top, soft creases between them, a little uneven,
+  merging where the strands converge, and ending in rounded tips where the hair ends.
+- **Hairline:** the shell dips under the skin along the style's hairline, measured exactly to
+  its segments, so edges come out as smooth curves.
+- `TEXCOORD_0` runs across the strands (u) and along them (v), in units of the strand
+  texture's tile; `COLOR_0` rgb is baked occlusion (creases, the hairline, under buns and
+  tails, inside long hair), alpha is how much of the strand texture shows.
+
+`hair.js` gives it a matte material: rough, low specular, no clearcoat, and a soft sheen
+tinted from the hair color (never white). A normal map of fine strand grooves and a matching
+shade map are drawn once at runtime and shared by every character. Every build is identical
+for the same input.
+
 ## Building the assets
 
 ```
 python3 tools/build_base.py assets/characters/canonical/source/AC_Player_Base.obj assets/characters/canonical/base.gltf
 python3 tools/build_hair.py assets/characters/canonical/source/AC_Player_Base.obj assets/characters/canonical/hair
 ```
+
+`build_hair.py` takes an optional third argument to rebuild only some styles (`bob,long`).
 
 ## Trying it
 
