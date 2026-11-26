@@ -231,7 +231,8 @@ Each change is one Undo in the app, and Undo gives the file back exactly as it w
   takes back only its own change in the same way.
 - Units: `at` and shot positions to 0.01, facings in whole place degrees (0–359), `fov` to 0.1°.
   A view straight down is turned only by the small step from its target to its lens: it is written
-  as the shortest step in 0.01s that keeps the turn (within 0.1° in most directions).
+  as the step in 0.01s that changes the picture least, its turn and its tilt together (a fraction
+  of a degree).
 
 **Lock.** `"locked": true` makes the page's direction final, with `"picture"` (the index of a shot
 in `camera`) as the page's picture: the app puts a still of that shot on the page card, exactly
