@@ -3,7 +3,7 @@
 import { Stage } from '../../../src/engine/stage.js';
 import { createCharacter } from '../../../src/engine/character.js';
 import { SPECIES } from '../../../src/engine/species.js';
-import { HAIR_STYLES, HAIR_COLORS } from '../../../src/engine/hair.js';
+import { HAIR_STYLES, HAIR_COLORS, HAIR_TEXTURES } from '../../../src/engine/hair.js';
 import { EYE_STYLES } from '../../../src/engine/eyes.js';
 import { BODY_TYPES } from '../../../src/engine/body.js';
 import { WorldStage } from '../../../src/world/world-stage.js';
@@ -20,6 +20,7 @@ export const lookOptions = {
   species: Object.entries(SPECIES).map(([id, s]) => ({ id, label: s.label })),
   hair: [{ id: '', label: 'None' }, ...HAIR_STYLES],
   hairColors: HAIR_COLORS,
+  hairTextures: HAIR_TEXTURES,
   eyes: Object.entries(EYE_STYLES).map(([id, e]) => ({ id, label: e.label })),
   bodies: Object.entries(BODY_TYPES).map(([id, b]) => ({ id, label: b.label })),
   sleeves: ['none', 'short', 'elbow', 'long'],

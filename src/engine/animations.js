@@ -94,17 +94,20 @@ export const LIBRARY = {
     },
   },
 
+  // The arm is raised out to the side and a little forward, the hand waving at shoulder height
+  // clear of the head: hair hangs rigidly from the head, and beside the cheek the hand would sink
+  // into it (long hair, locs, a bob). The head tilts a little away and looks toward the hand.
   Wave: {
     duration: 1.2,
     pose(ph) {
       const p = ph * TAU;
       return {
         rot: relaxed({
-          Spine1: [0, 0.05, -0.04],
-          Head: [0, -0.08, 0.06],
-          RightShoulder: [0, 0, -0.1],
-          RightArm: [-0.15, 0, -0.6],
-          RightForeArm: [0, 0.15, -0.95 + 0.38 * Math.sin(2 * p)],
+          Spine1: [0, 0.05, -0.03],
+          Head: [0, -0.14, -0.08],
+          RightShoulder: [0, 0, -0.25],
+          RightArm: [0.07, 0.58, -0.25],
+          RightForeArm: [0, 0.35, -0.7 + 0.22 * Math.sin(2 * p)],
         }),
         pos: {},
       };

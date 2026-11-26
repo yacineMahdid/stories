@@ -1,30 +1,199 @@
 [
  {
   "id": "spiky",
-  "label": "Spiky"
- },
- {
-  "id": "bob",
-  "label": "Bob"
+  "label": "Spiky",
+  "textures": [
+   "straight"
+  ],
+  "files": {}
  },
  {
   "id": "swept",
-  "label": "Side part"
+  "label": "Side part",
+  "textures": [
+   "straight"
+  ],
+  "files": {}
  },
  {
-  "id": "pigtails",
-  "label": "Pigtails"
+  "id": "buzz",
+  "label": "Buzz cut",
+  "textures": [
+   "straight"
+  ],
+  "files": {}
  },
  {
-  "id": "ponytail",
-  "label": "Ponytail"
+  "id": "fade",
+  "label": "Fade",
+  "textures": [
+   "coily",
+   "straight"
+  ],
+  "files": {
+   "straight": "fade-straight"
+  }
  },
  {
-  "id": "bun",
-  "label": "Top bun"
+  "id": "quiff",
+  "label": "Quiff",
+  "textures": [
+   "straight"
+  ],
+  "files": {}
+ },
+ {
+  "id": "curls",
+  "label": "Short curls",
+  "textures": [
+   "curly",
+   "coily"
+  ],
+  "files": {
+   "coily": "curls-coily"
+  }
+ },
+ {
+  "id": "shaggy",
+  "label": "Shaggy",
+  "textures": [
+   "straight"
+  ],
+  "files": {}
+ },
+ {
+  "id": "balding",
+  "label": "Balding",
+  "textures": [
+   "straight"
+  ],
+  "files": {}
+ },
+ {
+  "id": "bob",
+  "label": "Bob",
+  "textures": [
+   "straight",
+   "wavy",
+   "curly"
+  ],
+  "files": {
+   "wavy": "bob-wavy",
+   "curly": "bob-curly"
+  }
+ },
+ {
+  "id": "afro",
+  "label": "Afro",
+  "textures": [
+   "coily",
+   "curly"
+  ],
+  "files": {
+   "curly": "afro-curly"
+  }
  },
  {
   "id": "long",
-  "label": "Long"
+  "label": "Long",
+  "textures": [
+   "straight",
+   "wavy",
+   "curly"
+  ],
+  "files": {
+   "wavy": "long-wavy",
+   "curly": "long-curly"
+  }
+ },
+ {
+  "id": "parted",
+  "label": "Center part",
+  "textures": [
+   "straight"
+  ],
+  "files": {}
+ },
+ {
+  "id": "ponytail",
+  "label": "Ponytail",
+  "textures": [
+   "straight"
+  ],
+  "files": {}
+ },
+ {
+  "id": "pigtails",
+  "label": "Pigtails",
+  "textures": [
+   "straight"
+  ],
+  "files": {}
+ },
+ {
+  "id": "braids",
+  "label": "Braids",
+  "textures": [
+   "straight",
+   "curly",
+   "coily"
+  ],
+  "files": {
+   "curly": "braids-curly",
+   "coily": "braids-coily"
+  }
+ },
+ {
+  "id": "cornrows",
+  "label": "Cornrows",
+  "textures": [
+   "coily"
+  ],
+  "files": {}
+ },
+ {
+  "id": "locs",
+  "label": "Locs",
+  "textures": [
+   "coily"
+  ],
+  "files": {}
+ },
+ {
+  "id": "bun",
+  "label": "Top bun",
+  "textures": [
+   "straight",
+   "curly",
+   "coily"
+  ],
+  "files": {
+   "curly": "bun-curly",
+   "coily": "bun-puff"
+  }
+ },
+ {
+  "id": "buns",
+  "label": "Two buns",
+  "textures": [
+   "straight",
+   "curly",
+   "coily"
+  ],
+  "files": {
+   "curly": "buns-curly",
+   "coily": "buns-puff"
+  }
+ },
+ {
+  "id": "updo",
+  "label": "Updo",
+  "textures": [
+   "coily",
+   "straight"
+  ],
+  "files": {
+   "straight": "updo-straight"
+  }
  }
 ]

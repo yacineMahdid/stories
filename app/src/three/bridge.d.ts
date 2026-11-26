@@ -8,8 +8,10 @@ export interface ColorOption extends Option { value: string }
 
 export const lookOptions: {
   species: Option[]
-  hair: Option[]
+  /** The hair styles ('' is none), each with the textures it offers (natural first) and its own texture meshes. */
+  hair: (Option & { textures?: string[]; files?: Record<string, string> })[]
   hairColors: ColorOption[]
+  hairTextures: Option[]
   eyes: Option[]
   bodies: Option[]
   sleeves: string[]

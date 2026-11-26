@@ -4,7 +4,7 @@ import { BASE_URL, SOCKETS } from './rig.js';
 import { buildClips } from './animations.js';
 import { Face } from './face.js';
 import { createBodyMaterial, applyOutfit } from './outfit.js';
-import { createHairMaterial, loadHairGeometry, setHairColor } from './hair.js';
+import { createHairMaterial, hairTexture, loadHairGeometry, setHairColor, setHairTexture } from './hair.js';
 import { loadGLTF } from './loader.js';
 import { EMOTIONS } from './emotions.js';
 import { Symbols } from './symbols.js';
@@ -43,7 +43,7 @@ export const DEFAULT_SPEC = {
   headScale: 1,
   body: 'standard',   // see body.js BODY_TYPES
   ears: 'human',      // see ears.js EAR_STYLES
-  hair: null,         // { style: 'bob', color: '#4a2f22' }, see hair.js
+  hair: null,         // { style: 'bob', color: '#4a2f22', texture?: 'wavy' }, see hair.js
   outfit: null,       // see outfit.js
   fur: null,          // fur patterns, see outfit.js
   parts: [],          // snouts, horns, tails..., see parts.js
@@ -160,26 +160,40 @@ export class Character {
     this.earObjects = buildEars(style, colors).map(({ bone, object }) => { this.bones[bone].add(object); return object; });
   }
 
-  /** Swap the hair style and/or color; `null` removes the hair. */
+  /**
+   * Swap the hair style, texture and/or color; `null` removes the hair. The skin color shows
+   * through where the hair thins out (fades, partings), so a skin change re-tints it too. A style
+   * this engine doesn't know leaves the character without hair; `ready` still resolves.
+   */
   async setHair(hair) {
     this.spec.hair = hair;
     this.hairRequest = hair;
     if (!hair?.style) {
-      this.hairMesh?.removeFromParent();
-      this.hairMesh = null;
+      this.removeHair();
       return;
     }
-    const geometry = await loadHairGeometry(hair.style);
+    const texture = hairTexture(hair.style, hair.texture);
+    const geometry = await loadHairGeometry(hair.style, texture);
     if (this.hairRequest !== hair) return; // a newer request won
-    if (!this.hairMesh) {
-      this.hairMesh = new THREE.Mesh(geometry, this.hairMaterial);
-      this.hairMesh.castShadow = true;
-      this.bones.Head.add(this.hairMesh);
+    if (!geometry) {
+      this.removeHair();
     } else {
-      this.hairMesh.geometry = geometry;
+      if (!this.hairMesh) {
+        this.hairMesh = new THREE.Mesh(geometry, this.hairMaterial);
+        this.hairMesh.castShadow = true;
+        this.bones.Head.add(this.hairMesh);
+      } else {
+        this.hairMesh.geometry = geometry;
+      }
+      setHairTexture(this.hairMaterial, texture);
+      setHairColor(this.hairMaterial, hair.color ?? '#4a2f22', this.spec.skin);
     }
-    setHairColor(this.hairMaterial, hair.color ?? '#4a2f22');
     if (this.spec.ears && EAR_STYLES[this.spec.ears]?.scale === 0) this.setEars(this.spec.ears); // fur follows the hair
+  }
+
+  removeHair() {
+    this.hairMesh?.removeFromParent();
+    this.hairMesh = null;
   }
 
   get clipNames() { return this.clips.map((clip) => clip.name); }
