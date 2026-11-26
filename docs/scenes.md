@@ -173,7 +173,9 @@ A look is a character spec (see `docs/characters.md`) with a `species`:
 
 Spots are the places props offer characters: a bench's seats, a door, the end of a pier, the
 logs around a campfire. A character put on a spot takes its position, facing and pose (sitters
-sit on the seat, at the seat's height).
+sit on the seat, at the seat's height). On a spot that sits, lies or kneels them, `do` can only be
+one of its clips (a seat: Sit; on the floor: SitFloor, SitCrossed; lying: LieDown, Sleep;
+kneeling: Kneel, Squat); any other plays the spot's own pose, so a seat always makes them sit.
 
 **Camera.** One shot or a list. The viewer can switch between shots, and Play runs through every
 page and every shot.
@@ -207,25 +209,37 @@ page and every shot.
 
 The full 3D stage in the Story Canvas app has a **Direct** mode, for directing a page by hand:
 select a character or a prop and drag it, turn it, set what they do, feel and hold, add and remove
-cast and props, set the moment, and frame the shots from where you put the camera. It writes the
-page's `cast`, `camera`, `dressing`, `time`, `weather` and `season`, and nothing else (the place's
-own things belong to the place). Each change is one Undo in the app, and Undo gives the file back
-exactly as it was.
+cast and props, set the moment, and frame the shots from where you put the camera. It writes these
+keys of the page's entry, and nothing else (the place's own things belong to the place):
+- `cast`, `camera`, `dressing`, `time`, `weather` and `season`, as you direct;
+- `feedback`, the notes for Claude;
+- Lock also writes `place`, `ambient` (when there is one), `locked` and `picture` (see Lock).
+
+Each change is one Undo in the app, and Undo gives the file back exactly as it was.
 - Edits go into the page's own entry, under the key it already has (its id, or a title written by
   hand), or its id when it has none.
 - A page that has no `cast` or `camera` of its own (automatic, inherited through `continues`, or
   `{ "same": … }`) gets its own whole list at the first change, taken from what the stage shows:
   moving one character that was placed automatically keeps everyone else where they stand.
 - Lists are written whole: `"cast"`, `"camera"`, `"dressing"` and `"feedback"` are replaced as one
-  value, and the rest of the file keeps its layout.
+  value, and the rest of the file keeps its layout. Entries the change doesn't touch stay exactly as
+  written (a first change of a page with members gathered automatically adds them, where they stand).
+- The file can be edited while the app is open (by hand, or by Claude adding a `reply`): when the
+  app writes a list that changed in the file since it read it, it makes its change on the list as
+  the file has it, entry by entry (matched by `id`, `who`, `added` or `label`) and field by field,
+  so the other change stays. Where both changed the same field, the app's change wins. Its Undo
+  takes back only its own change in the same way.
 - Units: `at` and shot positions to 0.01, facings in whole place degrees (0–359), `fov` to 0.1°.
-  A view straight down keeps the step from its target to its lens a little finer, so it keeps its
-  turn.
+  A view straight down is turned only by the small step from its target to its lens: it is written
+  as the shortest step in 0.01s that keeps the turn (within 0.1° in most directions).
 
 **Lock.** `"locked": true` makes the page's direction final, with `"picture"` (the index of a shot
-in `camera`) as the page's picture: the app puts a still of that shot on the page card. Locking
-writes everything explicitly: each cast member's `at` and `facing`, each shot's exact framing
-(`pos`, `target`, `fov`; keeping `label`, `hold` and `move`). A locked page doesn't gather the
+in `camera`) as the page's picture: the app puts a still of that shot on the page card, exactly
+what the 16:9 frame beside the Direction panel shows. Locking writes everything explicitly, in one
+Undo: the page's `place` (its pin), `time`, `season`, `weather` and `ambient` (when there is one) as
+shown; each cast member's `at` and `facing`; each shot's exact framing (`pos`, `target`, `fov`;
+keeping `label`, `hold` and `move`); `"locked": true` and `"picture"`. Its `dressing`, `changes`,
+`feedback` and `continues` stay as they are. A locked page doesn't gather the
 characters it lists but doesn't cast; each gets a note: "Mira is listed on this page but not in
 its locked 3D cast." Unlocking deletes `locked` and keeps the rest.
 
