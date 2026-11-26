@@ -7,10 +7,10 @@ import { edit3d } from '../lib/staging-history'
 import { putStill, takeStill } from '../lib/stills'
 import { getCharacters } from '../lib/world'
 import {
-  brief, cameraOps, cameraToEdit, castOps, castToEdit, dressingOps, exactShot, facingChoice, feedbackOps, framedShot, framingOf, FRAMINGS, heldChoice, isExact,
-  isLocked, lockedCamera, lockOps, memberIndex, momentHint, momentOps, movedFields, newMember, newNote, newShotAt, newThing, newThingId, noteIndex, noteShot,
-  ownDressing, ownFeedback, ownsCamera, refersTo, roundFov, sceneEntry, sceneEntryKey, sceneKey, shotName, shotSubjects, slugOf, stepKey, toggledDone, unlockOps,
-  withMember, withoutMember, withSubject, wordsOf, yawToward, type CastEntry, type Listed, type MomentField,
+  brief, cameraOps, cameraToEdit, castOps, castToEdit, closeSubject, dressingOps, exactShot, facingChoice, feedbackOps, framedShot, framingOf, FRAMINGS, heldChoice,
+  idsIn, isExact, isLocked, lockedCamera, lockOps, memberIndex, momentHint, momentOps, movedFields, newMember, newNote, newShotAt, newThing, newThingId, noteIndex,
+  noteShot, ONE_SUBJECT, ownDressing, ownFeedback, ownsCamera, refersTo, roundFov, sceneEntry, sceneEntryKey, sceneKey, shotName, shotSubjects, slugOf, standAt,
+  stepKey, toggledDone, unlockOps, withCloseSubject, withMember, withoutMember, withSubject, wordsOf, yawToward, type CastEntry, type Listed, type MomentField,
 } from '../lib/direct'
 
 /*
@@ -43,18 +43,28 @@ export interface DirectContext {
 /**
  * Every edit Direct mode makes, as one undo step each (edit3d; nudges and drags of the same field
  * within a moment merge). Each reads the file and the stage when it runs: the page's entry key, its
- * own lists, and the cast as the stage shows it for a copy on write. An edit asked for while the
- * stage is re-staging waits for it (the models are being rebuilt then), and they run in order.
+ * own lists, and the cast as the stage shows it for a copy on write. An edit that reads the stage,
+ * asked for while it is re-staging, waits for it (the models are being rebuilt then); the others
+ * (the moment, notes) don't, unless an earlier edit is waiting. They run in order, and closing the
+ * stage drops none of them (see close).
  */
 export function createDirectEdits(editor: Editor, view: WorldView, ctx: DirectContext) {
   let closed = false
   let queue: Promise<void> = Promise.resolve()
   let waiting = 0
-  const run = (fn: () => void, dropped?: () => void) => {
+  /** `stage`: the edit reads the stage (castMarks, a prop, the shots), so it waits for a re-stage in flight. */
+  const run = (fn: () => void, dropped?: () => void, stage = true) => {
     if (closed) return dropped?.()
-    if (!waiting && !view.pending) return fn()
+    if (!waiting && !(stage && view.pending)) return fn()
     waiting++
-    queue = queue.then(() => view.idle()).then(() => { waiting--; if (!closed) fn(); else dropped?.() }, () => { waiting--; dropped?.() })
+    queue = queue.then(() => (stage ? view.idle() : undefined)).then(() => { waiting--; safely(fn) }, () => { waiting--; dropped?.() })
+  }
+  /** One that fails doesn't hold up the ones after it. */
+  const safely = (fn: () => void) => { try { fn() } catch (e) { console.error('[direct]', e) } }
+  /** `fn` after every edit waiting to run (at once when none is). */
+  const after = (fn: () => void) => {
+    if (!waiting) return fn()
+    queue = queue.then(() => safely(fn))
   }
 
   // A slider writes once it rests (or before anything else is edited), not at every step.
@@ -74,11 +84,11 @@ export function createDirectEdits(editor: Editor, view: WorldView, ctx: DirectCo
   /** Where the page is written: its entry key and its entry, as the file has them now. */
   type Target = { page: { id: string; title: string }; key: string; entry: Record<string, any> }
   /**
-   * Run an edit of the page on stage: after any slider write waiting, and after a re-stage in
-   * flight. It belongs to that page: when the stage has gone on to another page by then, it is
-   * dropped (it would read the other page's cast); `dropped` hears so.
+   * Run an edit of the page on stage: after any slider write waiting, and (`stage`: it reads the
+   * stage) after a re-stage in flight. It belongs to that page: when the stage has gone on to another
+   * page by then, it is dropped (it would read the other page's cast); `dropped` hears so.
    */
-  const now = (fn: (t: Target) => void, dropped?: () => void) => {
+  const now = (fn: (t: Target) => void, dropped?: () => void, stage = true) => {
     flush()
     const page = ctx.page()
     if (!page) return dropped?.()
@@ -86,7 +96,7 @@ export function createDirectEdits(editor: Editor, view: WorldView, ctx: DirectCo
       if (ctx.page()?.id !== page.id) return dropped?.()
       const d = getStaging()
       fn({ page, key: sceneKey(d, page.id, page.title), entry: sceneEntry(d, page.id, page.title) })
-    }, dropped)
+    }, dropped, stage)
   }
   const sceneShape = (id: string) => editor.getShape(id as SceneShape['id']) as SceneShape | undefined
   const nameOf = (who: string) => getCharacters(editor).find((c) => c.id === who)?.props.name ?? view.castInfo().find((c) => c.who === who)?.name ?? ''
@@ -147,8 +157,19 @@ export function createDirectEdits(editor: Editor, view: WorldView, ctx: DirectCo
   const api = {
     flush,
     later,
-    /** The stage closes: a slider's edit still waiting is saved; nothing after it. */
-    close() { flush(); closed = true },
+    /**
+     * The stage closes: a slider's edit still waiting is saved, and so is every edit waiting for a
+     * re-stage; nothing asked for after this. Resolves once they have run: the view (which they read)
+     * is disposed then.
+     */
+    close(): Promise<void> {
+      flush()
+      closed = true
+      return queue
+    },
+    /** Undo and Redo: after a slider's edit still waiting, and any edit waiting for a re-stage, has landed (so the step they take back is the last one). */
+    undo() { flush(); after(() => editor.undo()) },
+    redo() { flush(); after(() => editor.redo()) },
     /** A lock is on its way (its picture is being made): nothing that changes staging meanwhile. */
     get locking() { return locking },
 
@@ -214,12 +235,13 @@ export function createDirectEdits(editor: Editor, view: WorldView, ctx: DirectCo
       })
     },
 
-    /** Add a prop to the page's dressing at the middle of the view, facing the camera. `then` gets its id. */
+    /** Add a prop to the page's dressing at the middle of the picture (clear of the cast), facing the camera. `then` gets its id. */
     addProp(kind: string, then?: (id: string) => void) {
       now((t) => {
-        const c = view.centerMark()
+        const c = view.propMark(kind)
         if (!c) return
-        const id = newThingId(slugOf(t.page.title, t.page.id), kind, view.thingIds())
+        // Ids are global: none the world makes, nor any the file names (a deleted page's entry too).
+        const id = newThingId(slugOf(t.page.title, t.page.id), kind, [...view.thingIds(), ...idsIn(getStaging())])
         if (edit3d(editor, dressingOps(t.key, [...ownDressing(t.entry), newThing(id, kind, c.at, c.facing)]), stepKey(t.page.id, 'dressing', id, 'add'))) then?.(id)
       })
     },
@@ -248,9 +270,9 @@ export function createDirectEdits(editor: Editor, view: WorldView, ctx: DirectCo
       })
     },
 
-    /** Save the hour (`time`), weather or season on the page; undefined resets it (deletes the key). */
+    /** Save the hour (`time`), weather or season on the page; undefined resets it (deletes the key). It needs nothing from the stage. */
     moment(field: MomentField, value: number | string | undefined) {
-      now((t) => { edit3d(editor, momentOps(t.key, field, value), stepKey(t.page.id, field)) })
+      now((t) => { edit3d(editor, momentOps(t.key, field, value), stepKey(t.page.id, field)) }, undefined, false)
     },
 
     /* ── the camera: the shot on screen ── */
@@ -297,6 +319,18 @@ export function createDirectEdits(editor: Editor, view: WorldView, ctx: DirectCo
         if (writeCamera(t, list, String(i), 'framing')) staged(t.page.id, () => ctx.goShot(i))
       })
     },
+    /** A close-up of `who` (the shot on screen frames them only), framed again. */
+    setCloseSubject(who: string) {
+      now((t) => {
+        const i = view.shotIndex
+        const list = shotsBase(t)
+        if (!list[i]) return
+        const next = withCloseSubject(list[i], view.castInfo().map((c) => ({ id: c.who, name: c.name })), who)
+        if (JSON.stringify(next) === JSON.stringify(list[i])) return
+        list[i] = next
+        if (writeCamera(t, list, String(i), 'on')) staged(t.page.id, () => ctx.goShot(i))
+      })
+    },
     /** Frame `who` in the shot on screen too (`on` true), or no longer, and frame it again. */
     setSubject(who: string, on: boolean) {
       now((t) => {
@@ -318,7 +352,7 @@ export function createDirectEdits(editor: Editor, view: WorldView, ctx: DirectCo
         const i = view.shotIndex
         const note = newNote({ text, view: view.cameraView(), shot: view.shots[i] ? noteShot(view.shots[i], i) : null, about, added: new Date().toISOString() })
         writeNotes(t, [...ownFeedback(t.entry), note], note.added!, 'add')
-      })
+      }, undefined, false)
     },
     /** Mark a note done, or open again. `hint`: where it was in the list. */
     noteDone(note: Feedback, hint: number) {
@@ -328,7 +362,7 @@ export function createDirectEdits(editor: Editor, view: WorldView, ctx: DirectCo
         if (i < 0) return
         list[i] = toggledDone(list[i])
         writeNotes(t, list, noteStep(note, i), 'done')
-      })
+      }, undefined, false)
     },
     /** Delete a note. */
     removeNote(note: Feedback, hint: number) {
@@ -338,7 +372,7 @@ export function createDirectEdits(editor: Editor, view: WorldView, ctx: DirectCo
         if (i < 0) return
         list.splice(i, 1)
         writeNotes(t, list, noteStep(note, i), 'remove')
-      })
+      }, undefined, false)
     },
 
     /* ── the lock ── */
@@ -365,7 +399,7 @@ export function createDirectEdits(editor: Editor, view: WorldView, ctx: DirectCo
         const place = st.place?.id && editor.getShape(st.place.id as SceneShape['id'])?.type === 'pin' ? st.place.id : null
         const ops = lockOps(t.key, t.entry, {
           place, time: st.hour, season: st.season, weather: st.weather, ambient: st.ambient,
-          cast: view.castMarks(), camera: lockedCamera(view.shots, i, v, (k) => view.shotView(k)), picture: i,
+          cast: view.castMarks({ explicit: true }), camera: lockedCamera(view.shots, i, v, (k) => view.shotView(k)), picture: i,
         })
         const was = JSON.stringify(t.entry)
         takeStill(view, t.page.title).then((url) => {
@@ -380,7 +414,7 @@ export function createDirectEdits(editor: Editor, view: WorldView, ctx: DirectCo
     },
     /** Unlock: "locked" goes; the rest of the direction, the picture shot and the card's still stay. */
     unlock() {
-      now((t) => { if (isLocked(t.entry)) edit3d(editor, unlockOps(t.key), stepKey(t.page.id, 'unlock')) })
+      now((t) => { if (isLocked(t.entry)) edit3d(editor, unlockOps(t.key), stepKey(t.page.id, 'unlock')) }, undefined, false)
     },
     /** Retake picture: a new still of the picture shot on the card (after a look changed, say). */
     retake(done: (problem?: string) => void) {
@@ -406,8 +440,14 @@ const CLICK_PX = 3
 /**
  * Pointer handling while directing, in the capture phase on the view, so a press on someone or a
  * prop of this page turns the orbit controls off before they see it. A press that moves more than
- * a few pixels drags (Shift or Alt: turns to face the pointer); less is a click, which selects (on
- * nothing: deselects). An empty-space drag still orbits. Nothing starts while a re-stage runs.
+ * a few pixels drags (Shift or Alt: turns to face the pointer) and selects what it drags; less is a
+ * click, which selects (on nothing: deselects). An empty-space drag still orbits. Nothing starts
+ * while a re-stage runs.
+ *
+ * A drag keeps the point grabbed under the pointer: it holds the pointer's offset from the ground
+ * under the model (as seen on screen), and moves the model by as much as the ground under pointer +
+ * offset moves. (The ground under the pointer itself lies far behind a body grabbed at the chest,
+ * and moves faster there than the body would.)
  */
 export function useDirectPointer(view: WorldView, on: boolean, opts: {
   canStage: () => boolean
@@ -422,43 +462,37 @@ export function useDirectPointer(view: WorldView, on: boolean, opts: {
     type Drag = {
       pointerId: number; x0: number; y0: number; hit: Picked | null; ignored: boolean
       took: boolean; started: boolean; changed: boolean; turn: boolean
-      from: [number, number]; grab: [number, number]
+      /** where it stands (world), for a turn; the mark a move moves, the ground under the model and the pointer's offset from it on screen */
+      from: [number, number]; at: [number, number]; foot: [number, number]; offset: [number, number]
     }
     let drag: Drag | null = null
     let frame = 0
     let hover: [number, number] | null = null
-    const cursor = (c: string) => { if (el.style.cursor !== c) el.style.cursor = c }
+    // The canvas is what the pointer is over (the orbit controls give it a cursor of its own).
+    const canvas = view.canvas
+    const cursor = (c: string) => {
+      if (el.style.cursor !== c) el.style.cursor = c
+      if (canvas.style.cursor !== c) canvas.style.cursor = c
+    }
 
-    /** Where the thing grabbed stands (world), and the grab offset from the ground under the pointer. */
+    /** What a drag of `hit` starts from (see WorldView.grabOf), with the pointer's offset from the ground under it. */
     const grip = (hit: Picked, x: number, y: number) => {
-      let at: [number, number] | null = null, mark: [number, number] | null = null, walker = false
-      if (hit.kind === 'cast') {
-        const info = view.castInfo().find((c) => c.who === hit.id)
-        if (info?.pos && info.at) {
-          at = [info.pos[0], info.pos[2]]
-          // A walker is somewhere along its path: what moves is its mark (where the path is).
-          walker = info.walker
-          mark = walker ? view.fromLocal(info.at) : at
-        }
-      } else {
-        const t = view.thingMark(hit.id)
-        if (t) at = mark = [t.pos[0], t.pos[2]]
-      }
-      if (!at || !mark) return null
-      const g = view.groundPoint(x, y)
-      return { from: at, grab: (g ? [mark[0] - g.x, mark[1] - g.z] : [0, 0]) as [number, number], walker }
+      const g = view.grabOf(hit.kind, hit.id)
+      if (!g) return null
+      const walker = hit.kind === 'cast' && !!view.castInfo().find((c) => c.who === hit.id)?.walker
+      return { from: [g.foot.x, g.foot.z] as [number, number], at: g.at, foot: [g.foot.x, g.foot.z] as [number, number], offset: [g.screen[0] - x, g.screen[1] - y] as [number, number], walker }
     }
 
     const down = (e: PointerEvent) => {
       if (e.button !== 0 || drag) return
       const ignored = view.pending // don't fight a re-stage in flight
       const hit = ignored ? null : view.pick(e.clientX, e.clientY)
-      drag = { pointerId: e.pointerId, x0: e.clientX, y0: e.clientY, hit, ignored, took: false, started: false, changed: false, turn: e.shiftKey || e.altKey, from: [0, 0], grab: [0, 0] }
+      drag = { pointerId: e.pointerId, x0: e.clientX, y0: e.clientY, hit, ignored, took: false, started: false, changed: false, turn: e.shiftKey || e.altKey, from: [0, 0], at: [0, 0], foot: [0, 0], offset: [0, 0] }
       if (!hit || !ref.current.canStage()) return // a click selects; a drag orbits
       const g = grip(hit, e.clientX, e.clientY)
       if (!g) return
       // A walker faces the way it walks: Shift+drag moves it too.
-      Object.assign(drag, { from: g.from, grab: g.grab, took: true, turn: drag.turn && !g.walker })
+      Object.assign(drag, { from: g.from, at: g.at, foot: g.foot, offset: g.offset, took: true, turn: drag.turn && !g.walker })
       view.controls.enabled = false // before the orbit controls see this press
       el.setPointerCapture(e.pointerId)
       // No preventDefault: the press still takes the focus off a field of the panel, so the keys
@@ -469,16 +503,20 @@ export function useDirectPointer(view: WorldView, on: boolean, opts: {
       if (drag && e.pointerId === drag.pointerId) {
         if (!drag.took) return
         if (!drag.started && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) <= CLICK_PX) return
+        const { hit } = drag
+        if (!drag.started && hit) ref.current.select(hit) // what you handle is what the panel and the keys act on
         drag.started = true
         cursor('grabbing')
-        const g = view.groundPoint(e.clientX, e.clientY)
-        const { hit } = drag
-        if (!g || !hit) return
+        if (!hit) return
         if (drag.turn) {
+          const g = view.groundPoint(e.clientX, e.clientY)
+          if (!g) return
           const yaw = yawToward(drag.from, [g.x, g.z])
           drag.changed = (hit.kind === 'cast' ? view.turnCast(hit.id, yaw) : view.turnThing(hit.id, yaw)) || drag.changed
         } else {
-          const x = g.x + drag.grab[0], z = g.z + drag.grab[1]
+          const g = view.groundPoint(e.clientX + drag.offset[0], e.clientY + drag.offset[1])
+          if (!g) return
+          const x = drag.at[0] + g.x - drag.foot[0], z = drag.at[1] + g.z - drag.foot[1]
           drag.changed = (hit.kind === 'cast' ? view.moveCast(hit.id, x, z) : view.moveThing(hit.id, x, z)) || drag.changed
         }
         return
@@ -730,8 +768,8 @@ export function DirectPanel({ editor, view, state, shot, framed, selected, onSel
             <h2>{page.title || 'Untitled page'}</h2>
           </div>
           <div className="dp-tools">
-            <button onClick={() => { edits.flush(); editor.undo() }} disabled={!canUndo} aria-label="Undo" title="Undo (Ctrl+Z)">↶</button>
-            <button onClick={() => { edits.flush(); editor.redo() }} disabled={!canRedo} aria-label="Redo" title="Redo (Ctrl+Shift+Z)">↷</button>
+            <button onClick={() => edits.undo()} disabled={!canUndo} aria-label="Undo" title="Undo (Ctrl+Z)">↶</button>
+            <button onClick={() => edits.redo()} disabled={!canRedo} aria-label="Redo" title="Redo (Ctrl+Shift+Z)">↷</button>
           </div>
         </div>
         <div className="dp-lock">
@@ -879,7 +917,16 @@ function CameraSection({ view, state, own, shots, shot, lensKey, cast, edits, ca
             <Choices value={exact ? '' : framing} list={FRAMINGS} />
           </select>
         </Row>
-        {!exact && framing !== 'establishing' && listed.length > 0 && (
+        {!exact && ONE_SUBJECT.has(framing) && listed.length > 0 && (
+          // A close-up frames one character: the first it names (else the first of the cast).
+          <Row label="On" htmlFor="dp-close-on">
+            <select id="dp-close-on" value={closeSubject(cur, listed) ?? ''} title="A close-up frames one character"
+              onChange={(e) => edits.setCloseSubject(e.target.value)}>
+              {listed.map((c) => <option key={c.id} value={c.id}>{c.name || 'Unnamed'}</option>)}
+            </select>
+          </Row>
+        )}
+        {!exact && framing !== 'establishing' && !ONE_SUBJECT.has(framing) && listed.length > 0 && (
           <Row label="On" hint={subjects.others.length ? `Also frames ${subjects.others.map((x) => wordsOf(x.replace(/^shape:/, ''))).join(', ')}` : undefined}>
             <div className="dp-on" role="group" aria-label="Frame these">
               {listed.map((c) => {
@@ -909,7 +956,7 @@ function CameraSection({ view, state, own, shots, shot, lensKey, cast, edits, ca
         <button disabled={!canStage} onClick={() => edits.addShot()} title="Add a shot framed exactly where the camera is now">New shot from this view</button>
         <button disabled={!canStage || shots.length < 2} onClick={() => edits.removeShot()} title="Remove the shot on screen">Remove shot</button>
       </div>
-      <p className="dp-hint dp-after">The camera stays where you put it while you direct. A shot in the dock frames it again.</p>
+      <p className="dp-hint dp-after">The lit frame is the picture, what Lock puts on the page card. The camera stays where you put it while you direct; a shot in the dock frames it again.</p>
     </section>
   )
 }
@@ -967,7 +1014,7 @@ function NotesSection({ page, own, shots, shot, selected, edits, canNote, onView
     }
   }
   const aboutName = about ? nameOf(about) || wordsOf(about.replace(/^shape:/, '')) : ''
-  const aboutNow = shots[shot] ? `Saved with this view (${shotLabel(noteShot(shots[shot], shot))})${aboutName ? `, about ${aboutName}` : ''}.` : ''
+  const aboutNow = shots[shot] ? `A note keeps this view (${shotLabel(noteShot(shots[shot], shot))})${aboutName ? `, about ${aboutName}` : ''}.` : ''
   return (
     <section className="dp-section" aria-label="Notes for Claude">
       <h3>Notes for Claude</h3>
@@ -1093,15 +1140,18 @@ function MemberSection({ c, entry, cast, view, edits, canStage, onSelect }: {
         {!c.walker && (
           <Row label="Stand at" htmlFor="dp-spot">
             <select id="dp-spot" value={spotNow}
-              title="A spot on a prop nearby sets where they stand, which way they face and how (a seat makes them sit)"
+              title="A spot on a prop nearby sets where they stand, which way they face and how (a seat makes them sit). Spots are on benches, doors, piers and the like."
               onChange={(e) => {
                 const ref = e.target.value
-                if (ref) set({ at: ref, facing: undefined }, 'at')
+                const spot = spots.find((s) => s.ref === ref)
+                // A seat makes them sit: a Doing that would stand them up through it goes (Automatic).
+                if (ref) set(standAt(entry, ref, spot?.pose ?? 'stand', directOptions.spotClips), 'at')
                 else if (c.at) set({ at: c.at, facing: entry.facing ?? stageFacing }, 'at')
               }}>
               <option value="">Where you put them</option>
               {spotNow && !spots.some((s) => s.ref === spotNow) && <option value={spotNow}>{wordsOf(spotNow)}</option>}
               {spots.map((s) => <option key={s.ref} value={s.ref}>{s.label}{s.by && s.by !== who ? ` (${nameOf(s.by)})` : ''}</option>)}
+              {!spots.length && !spotNow && <option value="-" disabled>No spots nearby (move them next to a bench or door)</option>}
             </select>
           </Row>
         )}
@@ -1170,9 +1220,9 @@ function MomentSection({ state, edits, canStage, retime }: {
       <fieldset className="dp-fields" disabled={!canStage}>
         <Row label="Time" htmlFor="dp-time" hint={source('time', from.hour)}>
           <div className="dp-range">
-            <input id="dp-time" type="range" min={0} max={24} step={0.25} value={state.hour}
+            <input id="dp-time" type="range" min={0} max={23.75} step={0.25} value={state.hour % 24}
               onChange={(e) => {
-                const hour = Number(e.target.value)
+                const hour = Number(e.target.value) % 24 // one value per moment: 24 is 0
                 retime({ hour })
                 edits.later('time', () => edits.moment('time', hour))
               }} />

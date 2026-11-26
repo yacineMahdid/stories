@@ -1,7 +1,7 @@
-import { Component, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Component, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { getSnapshot, type Editor, type TLShape } from 'tldraw'
 import type { CharacterShape, PinShape, SceneShape } from '../shapes/types'
-import { coverPreviews, directionKey, effectiveSpec, getStudio, getPreview, guessLook, lookOptions, placePresets, weathers, WorldView, type Look, type Picked, type StageState } from '../three/bridge.js'
+import { coverPreviews, directionKey, effectiveSpec, getStudio, getPreview, guessLook, lookOptions, placePresets, weathers, WorldView, type Frame, type Look, type Picked, type StageState } from '../three/bridge.js'
 import { getStaging, STAGING_FILE, useStaging, useStagingStatus, type Direction, type Op } from '../lib/staging'
 import { edit3d } from '../lib/staging-history'
 import { uploadFile } from '../lib/persistence'
@@ -405,6 +405,40 @@ const DIRECT_DOC_MS = 30
 const DIRECT_SETTLE_MS = 60
 const SLOW_MS = 400
 
+/** The page's picture: the shape of the still Lock puts on its card (960×540). */
+const PICTURE = 16 / 9
+const GAP = 12
+/**
+ * Directing, where the picture is on the stage: the biggest 16:9 frame in the open part of the view
+ * (left of the panel, between the stage bar and the dock), below the page card when that leaves it
+ * about as big. Null when there is no room (the panel covers the view). Shots are framed for it, and
+ * Lock and Retake picture put exactly what it shows on the card. `cardMax`: how tall the page card
+ * may be so it ends above the picture (it scrolls), or null when it is clear of it anyway.
+ */
+function pictureFrame(root: HTMLElement, bar: HTMLElement | null, dock: HTMLElement | null, panel: HTMLElement | null, card: HTMLElement | null): { frame: Frame | null; cardMax: number | null } {
+  const r = root.getBoundingClientRect()
+  const box = (el: HTMLElement | null) => {
+    const b = el?.getBoundingClientRect()
+    return b && b.width > 0 && b.height > 0 ? { left: b.left - r.left, top: b.top - r.top, right: b.right - r.left, bottom: b.bottom - r.top } : null
+  }
+  const p = box(panel), b = box(bar), d = box(dock), c = box(card)
+  const x0 = GAP, x1 = (p ? p.left : r.width) - GAP
+  const y0 = (b ? b.bottom : 0) + GAP, y1 = (d ? d.top : r.height) - GAP
+  const fit = (top: number): Frame | null => {
+    const w = x1 - x0, h = y1 - top
+    if (w < 120 || h < 68) return null
+    const fw = Math.min(w, h * PICTURE), fh = fw / PICTURE
+    return { x: x0 + (w - fw) / 2, y: top + (h - fh) / 2, w: fw, h: fh }
+  }
+  const any = fit(y0)
+  // The card as tall as its content (it may be scrolling now): below it, when that leaves the picture about as big.
+  const natural = c && card ? c.top + card.scrollHeight : null
+  const below = natural != null ? fit(natural + GAP) : null
+  if (below && any && below.w >= any.w * 0.85) return { frame: below, cardMax: null }
+  const over = !!any && !!c && natural != null && any.x < c.right && any.y < natural + GAP
+  return { frame: any, cardMax: over ? Math.max(40, any!.y - GAP - c!.top) : null }
+}
+
 /**
  * Every page of the story in 3D, full screen: pages, shots, time, weather, season and Play. Direct
  * mode (`direct`: open in it) directs the page on screen: see DirectPanel.tsx.
@@ -419,6 +453,9 @@ export function StageOverlay({ editor, pageId, direct: directAtOpen = false, onC
   const rootRef = useRef<HTMLDivElement>(null)
   const barRef = useRef<HTMLElement>(null)
   const dockRef = useRef<HTMLElement>(null)
+  const panelRef = useRef<HTMLElement>(null)
+  const cardRef = useRef<HTMLElement>(null)
+  const [picture, setPicture] = useState<Frame | null>(null) // directing: the picture's frame on the stage
   const [pages, setPages] = useState<{ id: string; title: string; path: string }[]>([])
   const [current, setCurrent] = useState<string | undefined>(pageId)
   const [state, setState] = useState<StageState | null>(null)
@@ -462,9 +499,13 @@ export function StageOverlay({ editor, pageId, direct: directAtOpen = false, onC
     root?.focus()
     if (import.meta.env.DEV) (window as any).stageView = view // handy for debugging in the console
     return () => {
-      edits.close() // a slider's edit still waiting is saved
+      // A slider's edit still waiting is saved, and so is an edit waiting for a re-stage: they read
+      // the stage, so it goes once they have landed.
+      const saved = edits.close()
       behind.forEach((el) => el.removeAttribute('inert'))
-      view.dispose()
+      view.suspend()
+      view.el.remove()
+      void saved.finally(() => view.dispose())
       coverPreviews(false)
       if (opener?.isConnected && !canvasHadFocus) opener.focus()
       else if (wasFocused && (canvasHadFocus || !opener)) editor.focus()
@@ -589,6 +630,59 @@ export function StageOverlay({ editor, pageId, direct: directAtOpen = false, onC
     return () => ro.disconnect()
   }, [direct])
 
+  // Directing, the picture is a 16:9 frame beside the panel (pictureFrame): the camera is framed for
+  // it, and Lock puts exactly what it shows on the page card. A shot the director framed for the whole
+  // view is framed again for it when it first appears; after that the camera stays where it is.
+  const hasState = !!state
+  useLayoutEffect(() => {
+    const root = rootRef.current
+    if (!direct || !root || !hasState) {
+      view.setFrame(null)
+      setPicture(null)
+      root?.style.removeProperty('--card-max-h')
+      return
+    }
+    const fit = () => {
+      const { frame: f, cardMax } = pictureFrame(root, barRef.current, dockRef.current, panelRef.current, cardRef.current)
+      // A tall page card ends above the picture, and scrolls.
+      if (cardMax != null) root.style.setProperty('--card-max-h', `${Math.round(cardMax)}px`)
+      else root.style.removeProperty('--card-max-h')
+      const was = view.frame
+      view.setFrame(f)
+      setPicture(view.frame)
+      if (!was && view.frame && !view.userCamera && view.shots.length) frameRef.current(view.shotIndex)
+    }
+    fit()
+    const ro = new ResizeObserver(fit)
+    for (const el of [root, barRef.current, dockRef.current, panelRef.current, cardRef.current]) if (el) ro.observe(el)
+    return () => ro.disconnect()
+  }, [direct, hasState])
+
+  // A select, checkbox or slider of the panel set with the mouse gives the keys back to the stage once
+  // it changes, so the next arrow nudges (and Q, E turn) what is selected instead of changing that
+  // field again and saving it. One reached with the keyboard (Tab) keeps them.
+  useEffect(() => {
+    const panel = panelRef.current
+    if (!direct || !panel) return
+    let pointed: Element | null = null
+    const down = (e: PointerEvent) => { pointed = e.target instanceof Element ? e.target.closest('select, input') : null }
+    const focus = (e: FocusEvent) => { if (e.target !== pointed) pointed = null }
+    const changed = (e: Event) => {
+      const t = e.target
+      if (!(t instanceof HTMLElement) || t !== pointed || !t.matches('select, input[type="checkbox"], input[type="range"]')) return
+      pointed = null
+      setTimeout(() => { if (document.activeElement === t) { t.blur(); rootRef.current?.focus() } }, 0)
+    }
+    panel.addEventListener('pointerdown', down, true)
+    panel.addEventListener('focusin', focus, true)
+    panel.addEventListener('change', changed, true)
+    return () => {
+      panel.removeEventListener('pointerdown', down, true)
+      panel.removeEventListener('focusin', focus, true)
+      panel.removeEventListener('change', changed, true)
+    }
+  }, [direct, hasState])
+
   useDirectPointer(view, direct, {
     canStage,
     select: setSelected,
@@ -600,8 +694,8 @@ export function StageOverlay({ editor, pageId, direct: directAtOpen = false, onC
     deselect: () => setSelected(null),
     close: onClose,
     page: (step) => { edits.flush(); go(index + step) },
-    undo: () => { edits.flush(); editor.undo() },
-    redo: () => { edits.flush(); editor.redo() },
+    undo: () => edits.undo(),
+    redo: () => edits.redo(),
     leaveField: () => { (document.activeElement as HTMLElement | null)?.blur(); rootRef.current?.focus() },
     nudge: (p, right, away) => edits.nudge(p.kind, p.id, right, away),
     turn: (p, deg) => edits.turn(p.kind, p.id, deg),
@@ -611,6 +705,7 @@ export function StageOverlay({ editor, pageId, direct: directAtOpen = false, onC
   return (
     <div className={direct ? 'stage-overlay directing' : 'stage-overlay'} role="dialog" aria-modal="true" aria-label="3D stage" tabIndex={-1} ref={rootRef}>
       <Slot view={view} className="stage-view" />
+      {direct && picture && <div className="direct-frame" aria-hidden="true" style={{ left: picture.x, top: picture.y, width: picture.w, height: picture.h }} />}
       <header className="stage-bar" ref={barRef}>
         <button onClick={onClose} aria-label="Close the 3D stage">✕</button>
         <button disabled={index <= 0} onClick={() => go(index - 1)} aria-label="Previous page">←</button>
@@ -623,7 +718,7 @@ export function StageOverlay({ editor, pageId, direct: directAtOpen = false, onC
           title="Direct this page: select and drag the cast and props, set what they do and feel, and save it to the page">Direct</button>
       </header>
       {state && (
-        <aside className="stage-card">
+        <aside className="stage-card" ref={cardRef}>
           <small>{state.page.path}</small>
           <h2>{state.page.title || 'Untitled page'}</h2>
           <p className="when">{[state.page.when, state.place?.name].filter(Boolean).join(' · ')}</p>
@@ -638,7 +733,7 @@ export function StageOverlay({ editor, pageId, direct: directAtOpen = false, onC
         </aside>
       )}
       {direct && state && (
-        <aside className="direct-panel" aria-label="Direction">
+        <aside className="direct-panel" aria-label="Direction" ref={panelRef}>
           <ThreeBoundary>
             <DirectPanel editor={editor} view={view} state={state} shot={shot} framed={framed} selected={selected} onSelect={setSelected} edits={edits} retime={retime} />
           </ThreeBoundary>

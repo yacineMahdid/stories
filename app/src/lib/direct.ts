@@ -25,12 +25,12 @@ const clone = <T,>(v: T): T => (v === undefined ? v : structuredClone(v))
 /* ───────────── the entry key ───────────── */
 
 /**
- * The key of a page's own entry in "scenes", the way the 3D world finds it: its id, else its title
- * written by hand (any case). Null when it has none.
+ * The key of a page's own entry in "scenes", the way the 3D world finds it (World.sceneKey): its id
+ * (when it holds something), else its title written by hand (any case). Null when it has none.
  */
 export function sceneEntryKey(direction: Direction, pageId: string, title: string): string | null {
   const scenes = isPlain(direction?.scenes) ? direction.scenes : {}
-  if (Object.hasOwn(scenes, pageId)) return pageId
+  if (Object.hasOwn(scenes, pageId) && scenes[pageId] != null) return pageId
   return (title && Object.keys(scenes).find((k) => k.toLowerCase() === title.toLowerCase())) || null
 }
 
@@ -147,6 +147,18 @@ export function movedFields(entry: CastEntry | undefined, mark: CastEntry | unde
   return out
 }
 
+/**
+ * Standing them at a spot ("Stand at"): the spot sets where they stand, which way they face and
+ * how. On one that sits, lies or kneels them, a `do` that isn't one of its clips (`clips`, by pose:
+ * directOptions.spotClips) goes, so the spot's own pose plays (a seat makes them sit).
+ */
+export function standAt(entry: CastEntry | undefined, ref: string, pose: string, clips: Record<string, string[]>): Partial<CastEntry> {
+  const patch: Partial<CastEntry> = { at: ref, facing: undefined }
+  const doing = typeof entry?.do === 'string' ? entry.do : ''
+  if (doing && clips[pose] && !clips[pose].includes(doing)) patch.do = undefined
+  return patch
+}
+
 /** A new cast member, where the stage found room for them (WorldView.freeMark()). */
 export const newMember = (who: string, at: Local, facing: number): CastEntry => ({ who, at: [round2(at[0]), round2(at[1])], facing: deg360(facing), do: 'Idle' })
 
@@ -185,6 +197,24 @@ export function heldChoice(hold: unknown, kinds: string[]): string {
 export function slugOf(title: string, pageId: string): string {
   const slug = (s: string) => s.toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
   return slug(title).slice(0, 24).replace(/-+$/, '') || slug(pageId.replace(/^shape:/, '')) || 'page'
+}
+
+/**
+ * Every id the direction file names, wherever it is: a place's things, every page entry's dressing
+ * and added things, also an entry whose page is gone from the canvas (Undo of its deletion brings it
+ * back). A new prop's id must be none of these, nor any the world makes (WorldView.thingIds()).
+ */
+export function idsIn(direction: unknown): string[] {
+  const ids = new Set<string>()
+  const walk = (v: unknown) => {
+    if (Array.isArray(v)) v.forEach(walk)
+    else if (isPlain(v)) {
+      if (typeof v.id === 'string' && v.id) ids.add(v.id)
+      Object.values(v).forEach(walk)
+    }
+  }
+  if (isPlain(direction)) { walk(direction.places); walk(direction.scenes) }
+  return [...ids]
 }
 
 /** A thing id nobody has yet (ids are global across the world): `<page slug>-<kind>-<n>`. */
@@ -259,8 +289,9 @@ export const FRAMINGS: [string, string][] = [
 /** A shot with exact framing: it says where the camera is (`pos`) and what it looks at (`target`). */
 export const isExact = (s: Shot | undefined) => !!s && Array.isArray(s.pos) && Array.isArray(s.target)
 
-/** What a shot is called: its label, else its framing, else its number (as the shot chips show it). */
-export const shotName = (s: Shot | undefined, i: number) => (typeof s?.label === 'string' && s.label) || (typeof s?.shot === 'string' && s.shot) || `Shot ${i + 1}`
+/** What a shot is called: its label, else its framing (as the Framing select names it), else its number. */
+export const shotName = (s: Shot | undefined, i: number) => (typeof s?.label === 'string' && s.label)
+  || (typeof s?.shot === 'string' && s.shot && (FRAMINGS.find(([id]) => id === s.shot)?.[1] ?? wordsOf(s.shot))) || `Shot ${i + 1}`
 
 /** The framing a shot gets from the director: its `shot`, else medium (wide with nobody on stage). */
 export const framingOf = (s: Shot | undefined, anyone: boolean) => (isExact(s) ? 'exact' : typeof s?.shot === 'string' ? s.shot : anyone ? 'medium' : 'wide')
@@ -304,6 +335,25 @@ export function shotSubjects(s: Shot | undefined, cast: Listed[]): { members: Se
     else others.push(String(ref))
   }
   return { members, others }
+}
+
+/** Framings that frame one subject only: the first of the shot's `on` (else of the cast, in staging order). */
+export const ONE_SUBJECT = new Set(['close'])
+
+/** Whom a close-up frames: the first cast member its `on` names, else the first of the cast (null: nobody). */
+export function closeSubject(s: Shot | undefined, cast: Listed[]): string | null {
+  const on = s?.on == null ? [] : Array.isArray(s.on) ? s.on : [s.on]
+  for (const ref of on) {
+    const c = cast.find((m) => refersTo(ref, m.id, m.name))
+    if (c) return c.id
+  }
+  return cast[0]?.id ?? null
+}
+
+/** A close-up of `who` (its `on` names only them), or the shot as it is when it frames them already. */
+export function withCloseSubject(s: Shot, cast: Listed[], who: string): Shot {
+  if (closeSubject(s, cast) === who) return clone(s)
+  return { ...clone(s), on: [who] }
 }
 
 /**

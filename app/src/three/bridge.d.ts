@@ -27,6 +27,8 @@ export const directOptions: {
   held: Option[]
   /** a page's dressing: every set piece by family (no hand props, rows, rings or scatters) */
   props: { family: string; label: string; kinds: Option[] }[]
+  /** by a spot's pose (sit, floor, lie, kneel): the clips it can play; any other `do` gives way to the spot's pose */
+  spotClips: Record<string, string[]>
 }
 
 /** A first look from the card's text; `species` forces one (a person's skin and hair, an animal's fur). */
@@ -197,6 +199,8 @@ export interface ThingMark {
   entry: ThingEntry
 }
 
+/** A part of the view, in CSS pixels from its top left. */
+export interface Frame { x: number; y: number; w: number; h: number }
 /** A prop's spot a character can stand at (WorldView.spotsNear). */
 export interface Spot {
   /** "thingId.spot": what a cast entry's `at` takes */
@@ -218,6 +222,9 @@ export class WorldView {
   el: HTMLElement
   mount(parent: HTMLElement): void
   unmount(parent: HTMLElement): void
+  /** Stop drawing (nobody can see it), and draw again. */
+  suspend(): void
+  resume(): void
   setWorld(document: unknown, direction: Direction): unknown
   pages(): { index: number; id: string; title: string; path: string }[]
   /**
@@ -249,6 +256,14 @@ export class WorldView {
   readonly directing: boolean
   /** The orbit controls (set `enabled = false` on pointerdown over something you drag, back on at pointerup). */
   readonly controls: { enabled: boolean }
+  /** The canvas the stage draws on: the element under the pointer (its cursor is what shows). */
+  readonly canvas: HTMLCanvasElement
+  /**
+   * The picture's frame in the view (CSS pixels from its top left), or null for all of it: shots
+   * are framed for it, the camera aims at its middle, and a still shows what it shows. True when it changed.
+   */
+  setFrame(frame: Frame | null): boolean
+  readonly frame: Frame | null
   /** Staging work waiting or under way: ignore pointerdown until it is done. */
   readonly pending: boolean
   /** Resolves once no staging work is waiting or under way (also work queued meanwhile). */
@@ -288,19 +303,29 @@ export class WorldView {
   /** The exact framing shot i gives (what the camera shows after shot(i)), without moving the camera. */
   shotView(i: number): CameraView | null
   /**
-   * The page's cast as entries to write as its "cast" (copy on write): who (card id), at (local
-   * [x, z] or the spot string), facing (degrees or the entry's reference), the rest as written.
-   * The entries come from the direction as it is now (also while a re-stage is on its way);
-   * gathered members are written where they stand, moved or turned ones where they are now.
-   * Writing it back stages the same picture.
+   * The page's cast as entries to write as its "cast" (copy on write), from the direction as it is
+   * now (also while a re-stage is on its way): an entry nobody moved or turned exactly as written,
+   * a moved or turned one with where it stands (`at`, a walker's `path`) or faces (`facing`) now,
+   * and gathered members (by card id) where they stand. `explicit` (the lock): everyone with an
+   * explicit at ([x, z] or the spot string) and facing (degrees or the entry's reference), by card
+   * id. Writing it back stages the same picture.
    */
-  castMarks(): CastEntry[]
+  castMarks(opts?: { explicit?: boolean }): CastEntry[]
   /** Everyone on stage, in staging order, with where they stand and face now. */
   castInfo(): CastInfo[]
   /** One of this page's own dressing props, with the entry to write back (null for anything else). */
   thingMark(id: string): ThingMark | null
-  /** The ground at the middle of the view, facing the camera (for a new prop). */
+  /** The ground at the middle of the picture, facing the camera. */
   centerMark(): { at: Local; facing: number } | null
+  /** Where a new prop of `kind` goes: the ground nearest the middle of the picture, clear of the cast (`clear`, default 0.8, plus its size) and of solid props, facing the camera. */
+  propMark(kind: string, clear?: number): { at: Local; facing: number } | null
+  /**
+   * What a drag of a cast member or one of this page's props starts from: `at`, the world [x, z]
+   * moveCast/moveThing moves (a walker: where its path is), `foot`, the ground under the model now
+   * (world), and `screen`, that point in client pixels. Keep the pointer's offset from `screen`, and
+   * move by as much as the ground under pointer + offset moves from `foot`.
+   */
+  grabOf(kind: 'cast' | 'thing', id: string): { at: Local; foot: WorldPoint; screen: [number, number] } | null
   /** Open ground near the middle of the view, `clear` (default 0.9) from everyone, facing the camera (for a new cast member). */
   freeMark(clear?: number): { at: Local; facing: number } | null
   /** The spots of the props near a local point (default r = 2), nearest first. */

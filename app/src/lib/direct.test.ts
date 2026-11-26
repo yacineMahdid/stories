@@ -7,6 +7,7 @@ import {
   sceneKey, slugOf, stepKey, withMember, withoutMember, wordsOf, worldToLocal, yawOf, yawToward, type CastEntry, type Listed,
   brief, exactShot, feedbackOps, framedShot, framingOf, FRAMINGS, isExact, isLocked, lockedCamera, lockOps, newNote, newShotAt, newShotLabel,
   noteIndex, noteShot, ownFeedback, ownsCamera, shotName, shotSubjects, toggledDone, unlockOps, withSubject, type CameraView, type Feedback, type Shot,
+  closeSubject, idsIn, ONE_SUBJECT, standAt, withCloseSubject,
 } from './direct.ts'
 import { patchText, parseDirection, applyOp, checkOps, type JsonOp, type Removed } from '../../server/json-style.ts'
 
@@ -248,8 +249,49 @@ test('Framing: shot set, pos, target and fov gone; the rest stays', () => {
   assert.equal(framingOf(undefined, false), 'wide')
   assert.deepEqual(FRAMINGS.map(([id]) => id), ['establishing', 'wide', 'medium', 'two', 'close', 'over', 'low', 'high', 'top'])
   assert.equal(shotName({ label: 'Hello', shot: 'medium' }, 1), 'Hello')
-  assert.equal(shotName({ shot: 'medium' }, 1), 'medium')
+  // An automatic shot by its framing, as the Framing select names it (sentence case).
+  assert.equal(shotName({ shot: 'medium' }, 1), 'Medium')
+  assert.equal(shotName({ shot: 'two' }, 0), 'Two shot')
+  assert.equal(shotName({ shot: 'close' }, 0), 'Close-up')
+  assert.equal(shotName({ shot: 'birdsEye' }, 0), 'Birds eye')
   assert.equal(shotName({}, 1), 'Shot 2')
+})
+test('a close-up frames one: the first its "on" names, else the first of the cast; choosing writes "on"', () => {
+  const cast = [mira, biscuit, juniper]
+  assert.equal(closeSubject({ shot: 'close' }, cast), 'shape:mira')
+  assert.equal(closeSubject({ shot: 'close', on: ['Biscuit', 'shape:mira'] }, cast), 'shape:biscuit')
+  assert.equal(closeSubject({ shot: 'close', on: 'bridge' }, cast), 'shape:mira') // a thing: the director frames the first of the cast
+  assert.equal(closeSubject({ shot: 'close' }, []), null)
+  assert.deepEqual(withCloseSubject({ shot: 'close', label: 'Mira' }, cast, 'shape:biscuit'), { shot: 'close', label: 'Mira', on: ['shape:biscuit'] })
+  assert.deepEqual(withCloseSubject({ shot: 'close', label: 'Mira' }, cast, 'shape:mira'), { shot: 'close', label: 'Mira' }) // framed already
+  assert.ok(ONE_SUBJECT.has('close') && !ONE_SUBJECT.has('two'))
+})
+test('Stand at: a seat drops a Doing that would stand them up; a standing spot keeps it', () => {
+  const clips = { sit: ['Sit'], floor: ['SitFloor', 'SitCrossed'], lie: ['LieDown', 'Sleep'], kneel: ['Kneel', 'Squat'] }
+  const biscuit = { who: 'shape:biscuit', at: [1.9, 3.1], facing: 328, do: 'Wave', feel: 'excited' } as CastEntry
+  const sit = standAt(biscuit, 'bench-east.left', 'sit', clips)
+  assert.deepEqual(sit, { at: 'bench-east.left', facing: undefined, do: undefined })
+  assert.ok('do' in sit && 'facing' in sit) // both deleted by withMember
+  assert.deepEqual(withMember([biscuit], 'shape:biscuit', 'Biscuit', sit), [{ who: 'shape:biscuit', at: 'bench-east.left', feel: 'excited' }])
+  assert.deepEqual(standAt({ ...biscuit, do: 'Sit' }, 'bench-east.left', 'sit', clips), { at: 'bench-east.left', facing: undefined })
+  assert.deepEqual(standAt(biscuit, 'bakery.door', 'stand', clips), { at: 'bakery.door', facing: undefined })
+  assert.deepEqual(standAt(biscuit, 'wall.lean', 'lean', clips), { at: 'wall.lean', facing: undefined })
+  assert.deepEqual(standAt({ ...biscuit, do: 'SitCrossed' }, 'campfire.rest', 'floor', clips), { at: 'campfire.rest', facing: undefined })
+  assert.deepEqual(standAt(undefined, 'pier.end', 'sit', clips), { at: 'pier.end', facing: undefined })
+})
+test('ids: every id the file names, also in an entry whose page is gone, for a new prop id', () => {
+  const d = { places: { 'shape:square': { things: [{ id: 'fountain', kind: 'fountain' }, { id: 'lamps', kind: 'row', of: 'lamp' }] } },
+    scenes: { 'shape:gone': { dressing: [{ id: 'campfire-barrel-6', kind: 'barrel' }] }, 'shape:p3': { changes: [{ add: { id: 'campfire-barrel-5', kind: 'barrel' } }] } },
+    characters: { x: { id: 'not-a-thing' } } }
+  assert.deepEqual(idsIn(d).sort(), ['campfire-barrel-5', 'campfire-barrel-6', 'fountain', 'lamps'])
+  assert.equal(newThingId('campfire', 'barrel', [...idsIn(d), 'campfire-barrel-1', 'campfire-barrel-2', 'campfire-barrel-3', 'campfire-barrel-4']), 'campfire-barrel-7')
+  assert.deepEqual(idsIn(null), [])
+})
+test('entry key: a null entry under the page id doesn\'t count (the title\'s entry does), as the engine stages it', () => {
+  const d = { scenes: { 'shape:p8': null, 'first snow at the pier': { camera: [{ shot: 'wide' }] } } }
+  assert.equal(sceneEntryKey(d, 'shape:p8', 'First snow at the pier'), 'first snow at the pier')
+  assert.ok(sceneEntry(d, 'shape:p8', 'First snow at the pier').camera)
+  assert.equal(sceneKey({ scenes: { 'shape:p8': null } }, 'shape:p8', 'Nothing'), 'shape:p8') // none: the page id (the null goes)
 })
 test('On: whom a shot frames, by card id or name; back to everyone, "on" goes; never nobody', () => {
   const cast = [mira, biscuit, juniper]

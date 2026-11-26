@@ -167,13 +167,35 @@ export class WorldStage {
     this.flashLight.target.position.copy(this.focusCenter);
   }
 
-  resize() {
+  /**
+   * The part of the view the picture is (CSS pixels from the view's top left: { x, y, w, h }), or
+   * null for all of it. The camera is aimed at its middle and framed for its shape, and the rest of
+   * the view shows what lies around it (the scene direction editor keeps its panel beside it, and
+   * locks the picture it shows). True when it changed.
+   */
+  setFrame(frame) {
+    const f = frame && frame.w >= 1 && frame.h >= 1 ? { x: Math.round(frame.x), y: Math.round(frame.y), w: Math.round(frame.w), h: Math.round(frame.h) } : null;
+    if (JSON.stringify(f) === JSON.stringify(this.frame ?? null)) return false;
+    this.frame = f;
+    this.resize(true);
+    return true;
+  }
+
+  resize(force = false) {
     const w = this.container.clientWidth || 1;
     const h = this.container.clientHeight || 1;
-    const changed = w !== this.size?.[0] || h !== this.size?.[1];
+    const changed = force || w !== this.size?.[0] || h !== this.size?.[1];
     this.size = [w, h];
     this.renderer.setSize(w, h, false);
-    this.camera.aspect = w / h;
+    const f = this.frame;
+    if (f) {
+      // The picture is the camera's whole frame; the view is a window onto a larger one round it.
+      this.camera.aspect = f.w / f.h;
+      this.camera.setViewOffset(f.w, f.h, -f.x, -f.y, w, h);
+    } else {
+      this.camera.aspect = w / h;
+      this.camera.clearViewOffset();
+    }
     this.camera.updateProjectionMatrix();
     if (changed) this.onResize?.(w, h);
   }

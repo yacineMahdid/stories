@@ -338,6 +338,11 @@ section.dp-selected h3 { color: var(--accent); }
 .three-chips button.exact::after { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-left: 6px; vertical-align: 1px; }
 .three-chips button.on.exact::after { background: #fff; }
 .three-chips button.picture::before { content: ''; display: inline-block; width: 8px; height: 6px; border: 1.5px solid currentColor; border-radius: 1.5px; margin-right: 5px; vertical-align: 0; }
+/* Directing, the picture (what shots frame, and what Lock puts on the page card) is a 16:9 frame
+   beside the panel; the view round it is dimmed. Clicks go through to the stage. */
+.direct-frame { position: absolute; pointer-events: none; outline: 1px solid #ffffffb8; box-shadow: 0 0 0 200vmax #0e121838; }
+/* A tall page card ends above the picture while directing (--card-max-h), and scrolls. */
+.stage-overlay.directing .stage-card { max-height: var(--card-max-h, calc(100% - 200px)); }
 /* While directing, the page card stays clear of the panel: on a narrow stage it is only its title,
    on a very narrow one it goes. */
 @media (max-width: 720px) {
