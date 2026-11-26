@@ -52,6 +52,7 @@ HEAD = POS['Head']                      # Head bone rest position (output is rel
 N_AZ, N_POL, POL_MAX = 288, 150, 0.80 * math.pi
 MAP_R = 0.22                            # arc-length scale used to measure distances to the hairline
 SINK = 0.012                            # how far the shell dips under the skin outside the hairline
+OFFSET = 0.002                          # how far out of the (smoothed) skin the shell's base surface lies
 EDGE = 0.018                            # width of the rounded edge at the hairline
 TILE_U, TILE_V = 0.24, 0.48             # world size of one tile of the strand textures (hair.js)
 UV_SCALE = 16.0                         # TEXCOORD_0 is stored as uv / UV_SCALE (hair.js repeats by it)
@@ -164,7 +165,7 @@ def head_setup(obj_path):
     for _ in range(4):
         r = (np.roll(r, 1, axis=1) + 2 * r + np.roll(r, -1, axis=1)) / 4                     # around (wraps)
         r = np.vstack([r[:1], (r[:-2] + 2 * r[1:-1] + r[2:]) / 4, r[-1:]])                  # top to bottom
-    r = r + 0.002                                                                          # stay just outside
+    r = r + OFFSET                                                                         # stay just outside
     # The pole gets the same treatment as the rings around it: it continues the smoothed dome of
     # the first two rings (r = a + b theta^2), so the top of every shell is round, with no pit.
     top_r = float(r[0].mean() - (r[1].mean() - r[0].mean()) / 3)
@@ -517,19 +518,20 @@ STYLES = {
     },
     'buzz': {
         'label': 'Buzz cut', 'textures': ['straight', 'coily'],
-        # a skin-tight cap; the scalp shows through it, more so along the hairline
-        'edge': NATURAL, 'top': 0.009, 'side': 0.006, 'edge_w': 0.024, 'lock_bump': 0.0,
+        # a skin-tight cap; the scalp shows through it, more so along the hairline (the mix is in
+        # linear light, where a fifth of a light skin turned black hair light brown)
+        'edge': NATURAL, 'top': 0.009, 'side': 0.006, 'edge_w': 0.024, 'soft_edge': 0.03, 'lock_bump': 0.0,
         'flow': [face_pole(8, locks=26)], 'conformal': True, 'depth': 0.0, 'tips': [],
-        'skin': lambda c: 0.2 + 0.5 * (1 - smoothstep(0.0, 0.03, c.s)), 'strand': 0.5,
+        'skin': lambda c: 0.08 + 0.62 * (1 - smoothstep(0.0, 0.03, c.s_vis)), 'strand': 0.5,
     },
     'fade': {
         'label': 'Fade', 'textures': ['coily', 'straight'],
         # a short rounded top over sides that fade into the skin, with a crisp line-up
-        'edge': LINEUP, 'top': 0.044, 'side': 0.0035, 'band': (0.85, 0.97), 'edge_w': 0.03, 'lock_bump': 0.0,
+        'edge': LINEUP, 'top': 0.044, 'side': 0.0035, 'band': (0.85, 0.97), 'edge_w': 0.03, 'soft_edge': 0.02, 'lock_bump': 0.0,
         'flow': [face_pole(8, locks=20)], 'conformal': True, 'depth': 0.0, 'tips': [],
         'lumps': [(320, 0.09, 0.006)], 'lump_band': True, 'lump_occ': 0.12,
-        # the sides fade into the skin; right at the hairline the shell is all skin, so no ledge shows
-        'skin': lambda c: np.maximum(0.82 * (1 - smoothstep(0.79, 0.86, c.y)), 1 - smoothstep(0.0, 0.012, c.s)) * (c.y < 0.88),
+        # the sides fade into the skin, and right at their edge the shell is all skin
+        'skin': lambda c: np.maximum(0.82 * (1 - smoothstep(0.79, 0.86, c.y)), 1 - smoothstep(0.0, 0.012, c.s_vis)) * (c.y < 0.88),
     },
     'quiff': {
         'label': 'Quiff', 'textures': ['straight'],
@@ -856,7 +858,20 @@ def shell(name, style, A, d, r, top_r, rng):
     s_tip = s - tip * (1 - h) * np.minimum(cs, 1.0) - style.get('chop', 0.4) * tip * tipx
     if style.get('scallop'):                      # the edge is made of curls
         s_tip = s_tip + style['scallop'] * (lump - 0.5)
-    t = np.where(s_tip > 0, -SINK + (thick + SINK) * smoothstep(0, style.get('edge_w', EDGE), s_tip), -SINK)
+    edge_w = style.get('edge_w', EDGE)
+    # Where the edge comes out of the skin: the shell rises from SINK under it, so it breaks the
+    # surface part way up its rounded edge (thin hair: well inside the hairline curve).
+    sunk = np.clip(SINK / np.maximum(thick + SINK, 1e-6), 0.0, 1.0)            # inverse smoothstep of this
+    s_vis = s_tip - edge_w * (0.5 - np.sin(np.arcsin(1 - 2 * sunk) / 3))
+    if style.get('soft_edge'):
+        # Thin hair (buzz cut, fade) grows out of the skin at that same line at a gentle angle
+        # instead, easing into its thickness over `soft_edge`, so the edge shows no ledge. It must
+        # not come out flat: nearly level with the skin, the line where the two cross would follow
+        # the grid in steps. Outside the line the shell keeps going down, under the skin.
+        x = np.clip(s_vis / style['soft_edge'], None, 1.0)
+        t = np.maximum(-OFFSET + (thick + OFFSET) * (1 - (1 - x) ** 2), -SINK)
+    else:
+        t = np.where(s_tip > 0, -SINK + (thick + SINK) * smoothstep(0, edge_w, s_tip), -SINK)
     V = CENTER + D * (Rh + t)[:, None]
 
     # Triangles of the grid; the ones buried under the skin are dropped.
@@ -878,7 +893,7 @@ def shell(name, style, A, d, r, top_r, rng):
         occ *= 0.88 + 0.12 * rows
     occ *= 0.97 + 0.05 * smoothstep(0.72, 0.98, y)                                   # tops a touch lighter
 
-    ctx = SimpleNamespace(D=D, y=y, s=s, s_upper=s_upper, s_tip=s_tip, h=h, e=e, Az=Az, theta=theta, upper=upper, grow=grow)
+    ctx = SimpleNamespace(D=D, y=y, s=s, s_upper=s_upper, s_tip=s_tip, s_vis=s_vis, h=h, e=e, Az=Az, theta=theta, upper=upper, grow=grow)
     skin = np.clip(style['skin'](ctx), 0, 1) if style.get('skin') else np.zeros(n)
     skin = np.maximum(skin, part_skin)
     strand = style.get('strand', 1.0)

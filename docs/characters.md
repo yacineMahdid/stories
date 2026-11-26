@@ -150,7 +150,9 @@ space. The hair is sculpted, not a smooth helmet:
   the head with a closed end, so no gap or open end shows at the root; free ends are rounded or
   tied.
 - **Hairline:** the shell dips under the skin along the style's hairline, measured exactly to
-  its segments, so edges come out as smooth curves, with the same soft edge on every style.
+  its segments, so edges come out as smooth curves with a rounded edge. Hair only millimetres
+  thick (the buzz cut, the fade's sides) instead grows out of the skin at a shallow angle, so
+  its hairline shows no ledge.
 
 ### Files
 
@@ -175,8 +177,8 @@ transform:
 - `extras`: `{ attachTo: 'Head', style, texture, tile: [0.24, 0.48], uvScale: 16 }`.
 
 `index.json` lists `[{ id, label, textures, files }]`; nothing reads it. A page fetches only the
-files its looks use. The 26 files take {{TOTAL_SIZE}} in all; each has between {{MIN_VERTS}} and
-{{MAX_VERTS}} vertices.
+files its looks use. The 26 files take 28.9 MB in all, from 0.27 MB (Balding) to 1.5 MB (Locs),
+or 0.19 to 0.94 MB gzipped; each has between 8,592 (Balding) and 47,370 (Locs) vertices.
 
 ### Material
 

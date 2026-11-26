@@ -350,9 +350,15 @@ function tileMaps(family) {
   return tiles.get(family);
 }
 
-// The body's skin response (outfit.js), which the hair takes on where the skin shows through.
+// The body's skin response, which the hair takes on where the skin shows through: what the body
+// actually draws (createBodyMaterial in outfit.js), a plain white sheen of 0.35. Its line that
+// tints the sheen by the painted color patches text inside an #include, so it never reaches the
+// shader; a tinted sheen here made faded sides and partings darker and more orange than the skin
+// next to them (on #6e4a33 a forced full-skin shell drew 91,51,16 where the head drew 111,78,56).
 const SKIN_ROUGHNESS = 0.8;
 const SKIN_SHEEN = 0.35;
+const SKIN_SHEEN_ROUGHNESS = 0.8;
+const SKIN_SPECULAR = 0.25;
 const DEFAULT_SKIN = '#f8d3b0';
 
 /**
@@ -371,14 +377,14 @@ export function createHairMaterial() {
   });
   const uniforms = {
     hairSkin: { value: new THREE.Color(DEFAULT_SKIN) },
-    hairSkinSheen: { value: new THREE.Color() },
     hairLight: { value: 0 },
   };
   Object.assign(material.userData, { uniforms, sheen: 1, normalScale: 0.85, skin: DEFAULT_SKIN });
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
     // Chunks are still #include lines here: expand the ones patched inside.
-    const chunk = (name, from, to) => THREE.ShaderChunk[name].replace(from, to);
+    const chunk = (name, ...pairs) => pairs.reduce((text, [from, to]) => text.replace(from, to), THREE.ShaderChunk[name]);
+    const f2 = (x) => x.toFixed(2);
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nattribute vec4 color;\nvarying vec4 vHair;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvHair = color;');
@@ -386,7 +392,6 @@ export function createHairMaterial() {
       .replace('#include <common>', `#include <common>
 varying vec4 vHair;
 uniform vec3 hairSkin;
-uniform vec3 hairSkinSheen;
 uniform float hairLight;
 // Light hair bounces light into its own creases, so they are shallower and keep the hair's hue
 // instead of going gray (the multi-bounce occlusion fit of Jimenez et al. 2016).
@@ -399,16 +404,18 @@ vec3 hairBounce( float v, vec3 albedo ) {
       // the skin shows through where the hair thins out
       .replace('vec4 diffuseColor = vec4( diffuse, opacity );', 'vec4 diffuseColor = vec4( mix( diffuse, hairSkin, vHair.g ), opacity );')
       // the strands fade out where they converge (crown, ties, tips)
-      .replace('#include <map_fragment>', chunk('map_fragment', 'diffuseColor *= sampledDiffuseColor;',
-        'diffuseColor.rgb *= mix( vec3( 1.0 ), sampledDiffuseColor.rgb, vHair.a );'))
+      .replace('#include <map_fragment>', chunk('map_fragment', ['diffuseColor *= sampledDiffuseColor;',
+        'diffuseColor.rgb *= mix( vec3( 1.0 ), sampledDiffuseColor.rgb, vHair.a );']))
       .replace('#include <color_fragment>', `float hairSoft = 1.0 - ( 1.0 - vHair.r ) * ( 1.0 - 0.3 * hairLight );
 vec3 hairOcc = mix( vec3( vHair.r ), hairBounce( hairSoft, diffuseColor.rgb ), hairLight );
 diffuseColor.rgb *= hairOcc;`)
-      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>\nroughnessFactor = mix( roughnessFactor, ${SKIN_ROUGHNESS.toFixed(2)}, vHair.g );`)
-      .replace('#include <normal_fragment_maps>', chunk('normal_fragment_maps', 'mapN.xy *= normalScale;', 'mapN.xy *= normalScale * vHair.a;'))
-      // the sheen follows the shading: none deep in a crease; on the skin it is the body's
-      .replace('#include <lights_physical_fragment>', chunk('lights_physical_fragment', 'material.sheenColor = sheenColor;',
-        'material.sheenColor = mix( sheenColor, hairSkinSheen, vHair.g ) * hairOcc;'));
+      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>\nroughnessFactor = mix( roughnessFactor, ${f2(SKIN_ROUGHNESS)}, vHair.g );`)
+      .replace('#include <normal_fragment_maps>', chunk('normal_fragment_maps', ['mapN.xy *= normalScale;', 'mapN.xy *= normalScale * vHair.a;']))
+      // the sheen follows the shading: none deep in a crease; on the skin, sheen and specular are the body's
+      .replace('#include <lights_physical_fragment>', chunk('lights_physical_fragment',
+        ['material.sheenColor = sheenColor;', `material.sheenColor = mix( sheenColor, vec3( ${f2(SKIN_SHEEN)} ), vHair.g ) * hairOcc;`],
+        ['clamp( sheenRoughness, 0.0001, 1.0 )', `clamp( mix( sheenRoughness, ${f2(SKIN_SHEEN_ROUGHNESS)}, vHair.g ), 0.0001, 1.0 )`],
+        ['float specularIntensityFactor = specularIntensity;', `float specularIntensityFactor = mix( specularIntensity, ${f2(SKIN_SPECULAR)}, vHair.g );`]));
   };
   material.customProgramCacheKey = () => 'hair-soft-2';
   return material;
@@ -469,7 +476,6 @@ function updateLook(material) {
   if (!uniforms) return;
   // Light hair (pink, blonde, gray, white): softer, hue-keeping occlusion (see the shader).
   uniforms.hairLight.value = smoothstep(lum, 0.3, 0.45);
-  // Where the skin shows through it takes the body's sheen: 0.35 * mix(0.35, skin, 0.75).
+  // Where the skin shows through (COLOR_0 g) the hair is the skin, with the body's response.
   uniforms.hairSkin.value.set(skin);
-  uniforms.hairSkinSheen.value.setScalar(0.35).lerp(uniforms.hairSkin.value, 0.75).multiplyScalar(SKIN_SHEEN);
 }
