@@ -127,7 +127,11 @@ button.primary { background: var(--accent) !important; color: #fff; border-color
 .sc-lore header, .sc-scene header { display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--muted); }
 .sc-lore strong, .sc-scene strong { font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sc-tag { background: var(--ink); color: #fff; padding: 1px 8px; border-radius: 99px; text-transform: uppercase; letter-spacing: 0.05em; font-size: 10px; font-weight: 600; }
-.sc-tags { display: flex; gap: 4px; align-items: center; }
+.sc-tags { display: flex; gap: 4px; align-items: center; flex-shrink: 0; }
+.sc-tags > * { white-space: nowrap; }
+/* A locked page's header has its badge too: the path gives way first, then the "when". */
+.sc-tags ~ .sc-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sc-tags ~ em { min-width: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sc-lock { display: inline-flex; align-items: center; gap: 3px; background: var(--accent); color: #fff; padding: 1px 7px; border-radius: 99px; text-transform: uppercase; letter-spacing: 0.05em; font-size: 10px; font-weight: 600; }
 .sc-scene { border-color: #cfd8e3; }
 .sc-chips { display: flex; flex-wrap: wrap; gap: 4px; }
