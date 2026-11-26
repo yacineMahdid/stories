@@ -120,18 +120,26 @@ export function createDirectEdits(editor: Editor, view: WorldView, ctx: DirectCo
   }
   /**
    * `fn` once the stage shows the direction as it is now (the edit just made has been staged), for
-   * an edit that frames its shot again. Dropped when the stage has gone to another page or closed.
+   * an edit that frames its shot again. Dropped when the stage has gone to another page or closed
+   * (`dropped` hears so).
    */
-  const staged = (pageId: string, fn: () => void) => {
+  const staged = (pageId: string, fn: () => void, dropped?: () => void) => {
     const t0 = Date.now()
     const tick = () => {
-      if (closed || ctx.page()?.id !== pageId || Date.now() - t0 > 120_000) return
+      if (closed || ctx.page()?.id !== pageId || Date.now() - t0 > 120_000) return dropped?.()
       if (view.upToDate(getStaging())) fn()
       else setTimeout(tick, 40)
     }
     setTimeout(tick, 0)
   }
-  /** The notes the page has now, and one changed (found again in the file, where it is now). */
+  /** Like now(), once the stage shows what the file says (nothing of an edit just made still to stage). */
+  const nowStaged = (fn: (t: Target) => void, dropped?: () => void) => {
+    now((t) => staged(t.page.id, () => {
+      const d = getStaging()
+      fn({ page: t.page, key: sceneKey(d, t.page.id, t.page.title), entry: sceneEntry(d, t.page.id, t.page.title) })
+    }, dropped), dropped)
+  }
+  /** Writing the page's notes: the whole list; each note's add, done and delete is a step of its own. */
   const writeNotes = (t: Target, list: Feedback[], ...step: string[]) => edit3d(editor, feedbackOps(t.key, list), stepKey(t.page.id, 'note', ...step))
   const noteStep = (note: Feedback, i: number) => (typeof note.added === 'string' && note.added ? note.added : String(i))
   let locking = false
@@ -343,13 +351,16 @@ export function createDirectEdits(editor: Editor, view: WorldView, ctx: DirectCo
      * the direction and the card's picture change in one go, one undo step. `done` hears how it went.
      */
     lock(done: (problem?: string) => void) {
-      now((t) => {
+      if (locking) return
+      locking = true // nothing that changes staging from now on (the pointer and keys ask)
+      const finish = (problem?: string) => { locking = false; done(problem) }
+      nowStaged((t) => {
         const st = view.state
-        if (locking || isLocked(t.entry)) return done()
-        if (!st || st.page.id !== t.page.id) return done('The page is not on stage yet.')
+        if (isLocked(t.entry)) return finish()
+        if (!st || st.page.id !== t.page.id) return finish('The page is not on stage yet.')
         const i = view.shotIndex
         const v = steady()
-        if (!v) return done('The page is not on stage yet.')
+        if (!v) return finish('The page is not on stage yet.')
         // The pin it stands at (not the stand-in a world with no pins gets).
         const place = st.place?.id && editor.getShape(st.place.id as SceneShape['id'])?.type === 'pin' ? st.place.id : null
         const ops = lockOps(t.key, t.entry, {
@@ -357,20 +368,15 @@ export function createDirectEdits(editor: Editor, view: WorldView, ctx: DirectCo
           cast: view.castMarks(), camera: lockedCamera(view.shots, i, v, (k) => view.shotView(k)), picture: i,
         })
         const was = JSON.stringify(t.entry)
-        locking = true
         takeStill(view, t.page.title).then((url) => {
-          locking = false
-          if (closed) return done()
+          if (closed) return finish()
           // Nothing else changed the page meanwhile (its controls are off while it locks).
-          if (JSON.stringify(sceneEntry(getStaging(), t.page.id, t.page.title)) !== was) return done('The page changed while it was being locked. Try again.')
-          if (!edit3d(editor, ops, stepKey(t.page.id, 'lock'))) return done('The direction can\'t be edited now.')
+          if (JSON.stringify(sceneEntry(getStaging(), t.page.id, t.page.title)) !== was) return finish('The page changed while it was being locked. Try again.')
+          if (!edit3d(editor, ops, stepKey(t.page.id, 'lock'))) return finish('The direction can\'t be edited now.')
           putStill(editor, t.page.id as SceneShape['id'], url) // the same undo step
-          done()
-        }, (e) => {
-          locking = false
-          done(`The picture could not be made: ${e instanceof Error ? e.message : e}`)
-        })
-      }, () => done())
+          finish()
+        }, (e) => finish(`The picture could not be made: ${e instanceof Error ? e.message : e}`))
+      }, () => finish())
     },
     /** Unlock: "locked" goes; the rest of the direction, the picture shot and the card's still stay. */
     unlock() {
