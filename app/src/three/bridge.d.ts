@@ -251,6 +251,8 @@ export class WorldView {
   readonly pending: boolean
   /** Resolves once no staging work is waiting or under way (also work queued meanwhile). */
   idle(): Promise<void>
+  /** Would staging this page now build its set again (another page or place, a new season, a prop added, moved or removed)? That is the slow part. */
+  rebuilds(pageId: string): boolean
   /** Stage the page on screen again as the direction has it (the viewer's own time, weather and season go), keeping the camera. */
   restage(): Promise<StageState | null>
   /** The camera was moved by hand since a shot last framed it. */

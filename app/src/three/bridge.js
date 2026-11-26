@@ -263,6 +263,16 @@ export class WorldView {
   }
 
   /**
+   * Would staging this page now build its set again (another page or place, a new season, a prop
+   * added, moved or removed)? That is the slow part of staging: the rest takes a moment.
+   */
+  rebuilds(pageId) {
+    const i = this.world?.sceneIndex.get(pageId);
+    if (i == null || !this.director?.state || this.director.state.page?.id !== pageId) return true;
+    return this.director.setKeyFor(this.world.sceneState(i)) !== this.director.setKey;
+  }
+
+  /**
    * Stage the page on screen again as the direction has it: the time, weather and season the viewer
    * picked (retime) go, the camera stays. Null when no page is on screen.
    */

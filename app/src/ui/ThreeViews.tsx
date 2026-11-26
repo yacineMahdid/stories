@@ -415,8 +415,9 @@ export function PagePreview({ editor, shape }: { editor: Editor; shape: SceneSha
 const SEASONS = ['spring', 'summer', 'autumn', 'winter']
 const fmtHour = (h: number) => `${String(Math.floor(h) % 24).padStart(2, '0')}:${String(Math.round((h % 1) * 60) % 60).padStart(2, '0')}`
 // While directing, the canvas only changes by the panel's own edits and Undo, and edits should show
-// at once: a short wait for the canvas and before a re-stage (a few quick edits still make one),
-// and "Staging…" only for a re-stage that takes a while (a new set).
+// at once: a short wait for the canvas and before a re-stage (a few quick edits still make one).
+// "Staging…" shows for a re-stage that takes a while: one that builds the set again (at once, and
+// the work starts once it is on screen: the build is one long job) or that runs past SLOW_MS.
 const DIRECT_DOC_MS = 30
 const DIRECT_SETTLE_MS = 60
 const SLOW_MS = 400
@@ -442,6 +443,7 @@ export function StageOverlay({ editor, pageId, direct: directAtOpen = false, onC
   const [busy, setBusy] = useState(true)
   const [playing, setPlaying] = useState(false)
   const shownRef = useRef<string | null>(null)
+  const [slow, setSlow] = useState(false) // directing: a re-stage that takes a while shows "Staging…"
   const sync = () => { setState(view.state ? { ...view.state } : null); setShot(view.shotIndex) }
 
   // Direct mode: what is selected (a cast member or a prop of the page), and every edit.
@@ -497,11 +499,16 @@ export function StageOverlay({ editor, pageId, direct: directAtOpen = false, onC
     setBusy(true)
     // Directing, the camera stays exactly where it is (the director keeps it while directing anyway).
     const directing = directRef.current
-    const t = setTimeout(() => {
+    const rebuild = directing && view.rebuilds(id)
+    if (rebuild) setSlow(true)
+    let frame = 0, after: ReturnType<typeof setTimeout> | undefined
+    const stage = () => {
       shownRef.current = id
       view.showPage(id, {}, directing ? { keepCamera: keepShot } : { keepShot }).then((s) => { if (live && s) { sync(); dropGone() } }).catch((e) => console.error(e)).finally(() => { if (live) setBusy(false) })
-    }, directing ? DIRECT_SETTLE_MS : SETTLE_MS)
-    return () => { live = false; clearTimeout(t) }
+    }
+    // A new set: once "Staging…" has been drawn (the frame after it, then the task after the paint).
+    const t = setTimeout(() => (rebuild ? (frame = requestAnimationFrame(() => { after = setTimeout(stage, 0) })) : stage()), directing ? DIRECT_SETTLE_MS : SETTLE_MS)
+    return () => { live = false; clearTimeout(t); cancelAnimationFrame(frame); clearTimeout(after) }
   }, [doc, direction, current])
 
   const index = pages.findIndex((p) => p.id === current)
@@ -569,8 +576,7 @@ export function StageOverlay({ editor, pageId, direct: directAtOpen = false, onC
   // Another page: a slider's write still waiting goes to the page it was made on, and nothing is selected.
   useEffect(() => { edits.flush(); setSelected(null) }, [current])
 
-  // "Staging…" while directing: only when a re-stage takes a while.
-  const [slow, setSlow] = useState(false)
+  // "Staging…" while directing: only when a re-stage takes a while (a new set is known before: see above).
   useEffect(() => {
     if (!busy || !direct) { setSlow(false); return }
     const t = setTimeout(() => setSlow(true), SLOW_MS)
