@@ -60,20 +60,21 @@ const MARKER_COLOR = 0xe8590c; // the app's accent
 /** Is `o` drawn: it and each parent up to `root` visible? */
 const drawn = (o, root) => { for (let x = o; x; x = x.parent) { if (!x.visible) return false; if (x === root) break; } return true; };
 /**
- * A step of whole hundredths [i, j] (x and z) that points at `angle` (radians, as atan2(x, z))
- * within 0.1°, as long as `length` (hundredths) or as near it as that allows; else the one that
- * points closest. How a view straight down keeps its turn when it is written to 0.01 (see
- * Director.viewOf): its tilt changes by a fraction of a degree at most.
+ * How a view straight down keeps its turn when it is written to 0.01 (see Director.viewOf): the
+ * step of whole hundredths [i, j] (x and z) from its target to its lens that changes the picture
+ * least, for a lens `step` ([x, z], hundredths) from the target and `height` (hundredths) above
+ * it, pointing at `angle` (radians, as atan2(x, z)). The picture turns by the step's error in
+ * direction, and tilts by how far the lens moves over its height: both count.
  */
-function turnStep(angle, length = 0) {
+function turnStep(angle, step, height) {
   let best = null;
   for (let i = -60; i <= 60; i++) {
     for (let j = -60; j <= 60; j++) {
       if (!i && !j) continue;
       const d = Math.atan2(i, j) - angle;
-      const off = Math.abs(Math.atan2(Math.sin(d), Math.cos(d)));
-      const gap = Math.abs(Math.hypot(i, j) - length), ok = off <= 0.1 * D2R;
-      if (!best || (ok ? !best.ok || gap < best.gap - 1e-9 || (Math.abs(gap - best.gap) <= 1e-9 && off < best.off) : !best.ok && (off < best.off - 1e-12 || (Math.abs(off - best.off) <= 1e-12 && gap < best.gap)))) best = { i, j, off, gap, ok };
+      const turn = Math.atan2(Math.sin(d), Math.cos(d));
+      const change = Math.hypot(turn, Math.atan(Math.hypot(i - step[0], j - step[1]) / height));
+      if (!best || change < best.change) best = { i, j, change };
     }
   }
   return [best.i, best.j];
@@ -1694,9 +1695,10 @@ export class Director {
   /**
    * A camera as the direction writes a shot's exact framing: x and z local, y world height, all to
    * 0.01, the lens to 0.1°. Looking (almost) straight down, the small step from the target to the
-   * lens is all that turns the picture, and 0.01 would round it away: it is written as the shortest
-   * step in 0.01s that points the same way within 0.1° (`quat`, the camera's turn, says which way
-   * when the step is too small to tell), so the view comes back the same way round.
+   * lens is all that turns the picture, and 0.01 would round it away: it is written as the step in
+   * 0.01s that changes the picture least, its turn and its tilt together (`quat`, the camera's
+   * turn, says which way when the step is too small to tell), so the view comes back the same way
+   * round.
    */
   viewOf(pos, target, fov, quat = null) {
     const lp = this.toLocal([pos.x, pos.z]), lt = this.toLocal([target.x, target.z]);
@@ -1710,7 +1712,9 @@ export class Director {
         const a = this.toLocal([pos.x - up.x, pos.z - up.z]), b = this.toLocal([pos.x, pos.z]);
         [dx, dz] = [a[0] - b[0], a[1] - b[1]];
       }
-      const [i, j] = turnStep(Math.atan2(dx, dz), Math.hypot(lp[0] - lt[0], lp[1] - lt[1]) * 100);
+      // The lens as it is, from the target as written: what the step should come closest to.
+      const step = [(lp[0] - t[0]) * 100, (lp[1] - t[1]) * 100];
+      const [i, j] = turnStep(Math.atan2(dx, dz), step, Math.max(1, (pos.y - target.y) * 100));
       p = [round(t[0] + i / 100, 100), round(t[1] + j / 100, 100)];
     }
     return { pos: [p[0], r2(pos.y), p[1]], target: [t[0], r2(target.y), t[1]], fov: round(fov, 10) };
