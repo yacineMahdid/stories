@@ -1,16 +1,21 @@
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 /**
- * Load a .gltf whose buffer is embedded as a data: URI. Pages with a strict content security
- * policy (like published artifacts) can't fetch data: URIs, so the buffer is decoded here and
- * the model is handed to the loader as an in-memory binary glTF instead.
+ * Load a glTF model: a binary .glb, or a .gltf whose buffer may be embedded as a data: URI.
+ * The bytes decide which: a file that starts with 'glTF' is binary, whatever it was served as.
+ * Pages with a strict content security policy (like published artifacts) can't fetch data: URIs,
+ * so an embedded buffer is decoded here and handed to the loader as an in-memory binary glTF.
  */
 export async function loadGLTF(url) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-  const json = await res.json();
+  const data = await res.arrayBuffer();
+  const base = new URL('.', url).href;
+  const magic = new Uint8Array(data, 0, Math.min(4, data.byteLength));
+  if (String.fromCharCode(...magic) === 'glTF') return new GLTFLoader().parseAsync(data, base);
+  const json = JSON.parse(new TextDecoder().decode(data));
   const uri = json.buffers?.[0]?.uri ?? '';
-  if (!uri.startsWith('data:')) return new GLTFLoader().parseAsync(JSON.stringify(json), new URL('.', url).href);
+  if (!uri.startsWith('data:')) return new GLTFLoader().parseAsync(JSON.stringify(json), base);
   const bin = Uint8Array.from(atob(uri.slice(uri.indexOf(',') + 1)), (c) => c.charCodeAt(0));
   delete json.buffers[0].uri;
   return new GLTFLoader().parseAsync(packGLB(json, bin), '');

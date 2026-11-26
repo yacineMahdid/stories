@@ -1,7 +1,7 @@
 import { Stage } from './engine/stage.js';
 import { createCharacter } from './engine/character.js';
 import { EMOTIONS } from './engine/emotions.js';
-import { HAIR_STYLES, HAIR_COLORS } from './engine/hair.js';
+import { HAIR_STYLES, HAIR_COLORS, HAIR_TEXTURES, hairTexture } from './engine/hair.js';
 import { EYE_STYLES, EYE_COLORS } from './engine/eyes.js';
 import { MOUTH_STYLES, NOSE_STYLES } from './engine/face-parts.js';
 import { BODY_TYPES } from './engine/body.js';
@@ -110,9 +110,27 @@ try {
   // Re-fit the camera when the character's size changes (species, body type).
   const reframe = () => character.ready.then(() => stage.frame(character.root, true));
   const rows = {};
+
+  // The texture chips list the style's own textures, natural first. A picked texture stays while
+  // the next style offers it; the natural one is never stored (as in the app's staging.json).
+  const textureLabels = Object.fromEntries(HAIR_TEXTURES.map((t) => [t.id, t.label]));
+  const syncTextures = () => {
+    const textures = HAIR_STYLES.find((h) => h.id === look.hair.style)?.textures ?? [];
+    if (textures.indexOf(look.hair.texture) < 1) delete look.hair.texture;
+    $('hair-texture-row').hidden = textures.length < 2;
+    $('hair-textures').replaceChildren();
+    rows.hairTextures = chipRow($('hair-textures'), textures.map((t) => textureLabels[t]), (i) => {
+      if (i > 0) look.hair.texture = textures[i];
+      else delete look.hair.texture;
+      refresh();
+    });
+    press(rows.hairTextures, textures.indexOf(hairTexture(look.hair.style, look.hair.texture)));
+  };
+
   const sync = () => {
     press(rows.skins, SKINS.findIndex((c) => c.value === look.skin));
     press(rows.hair, hairStyles.findIndex((h) => h.id === look.hair.style));
+    syncTextures();
     press(rows.eyes, eyeIds.indexOf(look.eyes));
     press(rows.eyeColors, EYE_COLORS.findIndex((c) => c.value === look.eyeColor));
     press(rows.mouths, mouthIds.indexOf(look.mouth));
@@ -136,7 +154,7 @@ try {
   });
   rows.outfits = chipRow($('outfits'), OUTFITS.map((o) => o.label), (i) => { look.outfit = i; refresh(); });
   rows.skins = swatchRow($('skins'), SKINS, (c) => { look.skin = c; refresh(); });
-  rows.hair = chipRow($('hair'), hairStyles.map((h) => h.label), (i) => { look.hair.style = hairStyles[i].id; refresh(); });
+  rows.hair = chipRow($('hair'), hairStyles.map((h) => h.label), (i) => { look.hair.style = hairStyles[i].id; syncTextures(); refresh(); });
   rows.hairColors = swatchRow($('hair-colors'), HAIR_COLORS, (c) => { look.hair.color = c; refresh(); });
   rows.eyes = chipRow($('eyes'), eyeIds.map((id) => EYE_STYLES[id].label), (i) => { look.eyes = eyeIds[i]; refresh(); });
   rows.eyeColors = swatchRow($('eye-colors'), EYE_COLORS, (c) => { look.eyeColor = c; refresh(); });
