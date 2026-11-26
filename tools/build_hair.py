@@ -13,8 +13,8 @@ or swept. The hair is cut into locks along that flow: a few broad locks of irreg
 between creases of varied depth (some deep, some shallow and starting lower down), rounded on
 top, a little uneven, ending in rounded tips where the hair ends (bangs, nape). Curly and coily
 hair adds curl clumps (lumps) and a scalloped edge made of them; volume styles grow out of the
-hairline to an envelope. Thin hair (buzz cut, fade) lies on the skin where it ends, shaded like
-the skin, so it meets the skin without a ledge. Each vertex also carries
+hairline to an envelope. Thin hair (buzz cut, fade, cornrows, the updo's nape) lies on the skin
+where it ends, shaded like the skin, so it meets the skin without a ledge. Each vertex also carries
   TEXCOORD_0  u across the strands and v along them, in units of the strand texture's tile
               (TILE_U x TILE_V world units, see hair.js); u wraps around without a seam. Curly
               and coily surfaces use a conformal chart, so their tiles stay round; its two poles
@@ -54,6 +54,10 @@ HEAD = POS['Head']                      # Head bone rest position (output is rel
 N_AZ, N_POL, POL_MAX = 288, 150, 0.80 * math.pi
 MAP_R = 0.22                            # arc-length scale used to measure distances to the hairline
 SINK = 0.012                            # how far the shell dips under the skin outside the hairline
+FILM = 0.002                            # how far over the skin hair lies where it lies on the skin
+CLEAR = 0.0025                          # how far over the skin thin hair stays well inside its hairline
+# (FILM and CLEAR are more than the depth step a story shot has 35 m away, so the hair never
+# fights the skin for depth there.)
 OFFSET = 0.002                          # how far out of the (smoothed) skin the shell's base surface lies
 EDGE = 0.018                            # width of the rounded edge at the hairline
 TILE_U, TILE_V = 0.24, 0.48             # world size of one tile of the strand textures (hair.js)
@@ -397,13 +401,17 @@ class Region:
             g = smoothstep(0.08, 0.45, theta) * smoothstep(0.08, 0.45, math.pi - theta)
         return u, v, g
 
-    def setup_locks(self, legacy, rng, even=False, alternate=False, back=None):
+    def setup_locks(self, legacy, rng, even=False, alternate=False, back=None, seen=None):
         # hair-soft drew its per-lock values from the style's main stream; they are still drawn
         # (and dropped), so the extras that draw after the shell (tails, buns) come out as before.
         n_old = len(lock_bounds(self.locks, self.anchors, legacy))
         for _ in range(3):
             legacy.uniform(-1, 1, n_old)
-        self.bounds, self.strength, self.start = shell_creases(self.locks, self.anchors, rng, even)
+        if seen is not None:                   # locks pulled to a tie: a few broad, unequal chunks
+            assert not self.anchors
+            self.bounds, self.strength, self.start = tie_creases(self.locks, rng, seen)
+        else:
+            self.bounds, self.strength, self.start = shell_creases(self.locks, self.anchors, rng, even)
         if back is not None:
             self.deepen_back(*back)
         n = len(self.bounds)
@@ -492,6 +500,78 @@ def shell_creases(n, anchors, rng, even=False):
     start = np.where(shallow, rng.uniform(0.15, 0.45, k), rng.uniform(0.0, 0.12, k))
     strength[anchor] = 1.15; start[anchor] = 0.0
     return pos, strength, start
+
+
+def back_seen(reg, D, s, mine):
+    """How much of each flow angle of a region shows from behind (72 bins of 5 degrees, 1 = the
+    most): the area of its hair on the back of the head (azimuth 115-245 degrees, from under the
+    nape to over the crown), away from the tie where the locks merge."""
+    th, f = reg.flow_phi(D)
+    area = np.sqrt(np.maximum(1 - D[:, 1] ** 2, 1e-6))        # the grid's cells shrink toward its pole
+    az = np.degrees(np.abs(az_of(D)))
+    ok = mine & (s > 0.01) & (az >= 115) & (D[:, 1] > -0.65) & (D[:, 1] < 0.82) & (th > 0.5)
+    w = np.zeros(72)
+    np.add.at(w, ((np.degrees(f[ok]) + 180) // 5).astype(int) % 72, area[ok])
+    w = (np.roll(w, 1) + 2 * w + np.roll(w, -1)) / 4
+    return w / max(w.max(), 1e-12)
+
+
+def tie_creases(n, rng, seen):
+    """The creases of locks pulled to a tie (buns, tails, the quiff, the updo): fewer and broader
+    than the nominal count n. A few deep creases bound broad chunks of irregular widths; the
+    broadest chunks are each split by one shallow crease that starts lower down (never two
+    shallow creases side by side). `seen` (back_seen) says which flow angles show from behind:
+    the seeded draw is repeated until the part that shows has 3 or 4 deep creases (2 or 3 where
+    only a narrow part shows, as on pigtails) at clearly unequal spacings, so a pulled-back head
+    reads as a few broad chunks, never as an even fan of ribs. A deep crease between broad chunks
+    is deeper, so a broad chunk keeps a clear groove. Returns (angles, depth factors, starts)."""
+    k = max(5, round(n * RHYTHM))
+    n_sh = round(0.4 * k)
+    n_dp = k - n_sh
+    shows = np.asarray(seen) > 0.3
+    # the part that shows: the longest run of bins that show (wrapping), as [lo, lo + span)
+    run, best = 0, (0, 0)
+    for i in range(144):
+        run = run + 1 if shows[i % 72] else 0
+        if run > best[0]:
+            best = (min(run, 72), i - run + 1)
+    span = math.radians(best[0] * 5.0)
+    lo = math.radians(best[1] * 5.0) - math.pi
+    need = (3, 4) if math.degrees(span) >= 130 else (2, 3)
+
+    def seen_order(a):
+        x = (a - lo) % (2 * math.pi)
+        return np.sort(x[x < span])
+
+    def irregular(g, ratio):
+        return all(max(a, b) / max(min(a, b), 1e-9) >= ratio for a, b in zip(g[:-1], g[1:]))
+
+    for _ in range(400):
+        w = np.clip(np.exp(rng.normal(0.0, 0.6, n_dp)), 0.4, 2.6)
+        gaps = w / w.sum() * 2 * math.pi
+        deep = wrap(rng.uniform(-math.pi, math.pi) + np.concatenate([[0], np.cumsum(gaps)[:-1]]))
+        split = np.argsort(-gaps, kind='stable')[:n_sh]
+        shallow = wrap(deep[split] + gaps[split] * rng.uniform(0.38, 0.62, n_sh))
+        vd = seen_order(deep)
+        if not need[0] <= len(vd) <= need[1] or not irregular(np.diff(vd), 1.5):
+            continue
+        if vd[-1] - vd[0] < 0.4 * span:
+            continue          # the deep creases that show spread over the part that shows
+        va = seen_order(np.concatenate([deep, shallow]))
+        g = np.diff(va)
+        if len(g) >= 2 and g.std() / g.mean() < 0.4:
+            continue
+        if any(max(g[i:i + 3]) / min(g[i:i + 3]) <= 1.25 for i in range(len(g) - 2)):
+            continue          # three gaps in a row within about 20% of each other read as a fan
+        break
+    pos = np.concatenate([deep, shallow])
+    # a deep crease is as deep as the chunks beside it are broad
+    side = (gaps + np.roll(gaps, 1)) / 2
+    scale = np.clip(np.sqrt(side / gaps.mean()), 0.8, 1.5)
+    strength = np.r_[rng.uniform(1.15, 1.35, n_dp) * scale, rng.uniform(0.25, 0.45, n_sh)]
+    start = np.r_[rng.uniform(0.0, 0.1, n_dp), rng.uniform(0.15, 0.4, n_sh)]
+    order = np.argsort(pos)
+    return pos[order], strength[order], start[order]
 
 
 def lock_coords(phi, bounds):
@@ -660,6 +740,22 @@ NATURAL_ROUND = mirrored([(0, 0.915), (14, 0.912), (30, 0.902), (42, 0.885), (50
 LINEUP = mirrored([(0, 0.89), (38, 0.888), (46, 0.885), (48, 0.845), (50, 0.795), (52.5, 0.762), (55.5, 0.746), (59, 0.741),
                    (75, 0.74), (80, 0.757), (112, 0.757), (122, 0.665), (135, 0.648), (180, 0.645)])
 
+
+def rounded_end(az, y_bot, y_top, r_top, r_bot, n=5):
+    """The front end of a band of hair (Balding's sideburn) in the (azimuth, height) map: an upright
+    edge at azimuth `az` from y_bot to y_top whose corners are rounded (radii in metres of MAP_R arc).
+    Returns the points of its upper edge and of its lower edge, front first; the two meet half way
+    up the front edge (a hair's breadth in front of it), so nothing grows in front of `az`."""
+    deg = lambda m: math.degrees(m / MAP_R)
+    mid = (y_bot + y_top) / 2
+    ph = np.radians(np.linspace(0, 90, n))
+    upper = [(az - 0.1, mid)] + [(round(az + deg(r_top) * (1 - math.cos(p)), 2), round(y_top - r_top * (1 - math.sin(p)), 4)) for p in ph]
+    lower = [(az - 0.1, mid)] + [(round(az + deg(r_bot) * (1 - math.cos(p)), 2), round(y_bot + r_bot * (1 - math.sin(p)), 4)) for p in ph]
+    return upper, lower
+
+
+BALD_END = rounded_end(70.5, 0.705, 0.805, 0.03, 0.028)
+
 # Bangs of the pigtail and ponytail styles: a cap on the forehead combed forward from the crown.
 BANGS_N, BANGS_C = unit((0, 1.0, 2.06)), 0.716
 EARS = {'az': 97.0, 'y': 0.685, 'w': 0.38, 'h': 0.065}          # where hair puffs out over the ears
@@ -675,6 +771,11 @@ def side_of(D):
 
 def az_of(D):
     return np.arctan2(D[..., 0], D[..., 2])
+
+
+def fade_sides(c):
+    """How much of the skin shows on a fade's sides: most of it below the band, none on the top."""
+    return 0.82 * (1 - smoothstep(0.79, 0.86, c.y))
 
 
 def center_part(depth, width, skin=0.0, reach=(0.2, 0.55)):
@@ -718,7 +819,7 @@ STYLES = {
         # linear light, where a fifth of a light skin turned black hair light brown). It thins out
         # toward the hairline and its last stretch lies on the skin, all skin at the edge.
         'edge': NATURAL_ROUND, 'top': 0.009, 'side': 0.006, 'lock_bump': 0.0,
-        'lay': {'width': (0.02, [(-50, 50, 0.01)]), 'ramp': (0.05, [(-45, 45, 0.03)]), 'eps': 0.0008}, 'smooth_normals': True,
+        'lay': {'width': (0.02, [(-50, 50, 0.01)]), 'ramp': (0.05, [(-45, 45, 0.03)]), 'eps': FILM}, 'smooth_normals': True,
         'flow': [bipolar((0, -44), (0, -62), locks=26)], 'conformal': True, 'depth': 0.0, 'tips': [],
         'skin': lambda c: np.maximum(0.08 + 0.62 * (1 - smoothstep(0.0, 0.03, c.s_vis)), 1 - smoothstep(0.004, 0.022, c.s_vis)),
         'strand': 0.5,
@@ -726,14 +827,16 @@ STYLES = {
     'fade': {
         'label': 'Fade', 'textures': ['coily', 'straight'],
         # a short rounded top over sides that fade into the skin, with a crisp line-up at the
-        # forehead. The faded sides lie on the skin like skin, and are all skin at their edge.
+        # forehead. The faded sides lie on the skin like skin: a faint tint of the hair that fades
+        # out over the last 4-5 cm to bare skin at their edge, so they never end in an outline.
         'edge': LINEUP, 'top': 0.044, 'side': 0.0035, 'band': (0.85, 0.97), 'lock_bump': 0.0,
-        'lay': {'width': (0.02, [(-44, 44, 0.003)]), 'ramp': (0.05, [(-44, 44, 0.015)]), 'eps': 0.0008,
-                'sides': lambda c: smoothstep(0.55, 0.75, 0.82 * (1 - smoothstep(0.79, 0.86, c.y)))},
+        'lay': {'width': (0.02, [(-44, 44, 0.003)]), 'ramp': (0.05, [(-44, 44, 0.015)]), 'eps': FILM,
+                'sides': lambda c: smoothstep(0.55, 0.75, fade_sides(c))},
         'smooth_normals': True,
         'flow': [bipolar((0, -44), (0, -68), locks=20)], 'conformal': True, 'depth': 0.0, 'tips': [],
         'lumps': [(320, 0.09, 0.006)], 'lump_band': True, 'lump_occ': 0.12,
-        'skin': lambda c: np.maximum(0.82 * (1 - smoothstep(0.79, 0.86, c.y)), 1 - smoothstep(0.004, 0.028, c.s_vis)) * (c.y < 0.88),
+        'skin': lambda c: (fade_sides(c) + (1 - fade_sides(c)) * (1 - smoothstep(0.004, 0.045, c.s_vis))
+                           * smoothstep(0.3, 0.8, fade_sides(c) / 0.82)) * (c.y < 0.88),
     },
     'quiff': {
         'label': 'Quiff', 'textures': ['straight'],
@@ -763,13 +866,15 @@ STYLES = {
     'balding': {
         'label': 'Balding', 'textures': ['straight'],
         # a bare dome, a horseshoe of hair round the back and fluffy tufts above the ears; it starts
-        # behind the temple, a short rounded sideburn just in front of the ear
-        'edge': mirrored([(0, 0.70), (55, 0.70), (68, 0.70), (74, 0.695), (79, 0.70), (83, 0.745), (112, 0.745), (122, 0.64), (135, 0.625), (180, 0.625)]),
-        'upper': mirrored([(0, 0.66), (55, 0.66), (68, 0.66), (69.5, 0.76), (71.5, 0.80), (78, 0.815), (90, 0.835), (130, 0.85), (180, 0.86)]),
-        'top': 0.026, 'side': 0.02, 'ears': 0.014, 'ears_at': {'az': 98, 'y': 0.78, 'w': 0.5, 'h': 0.08},
-        'edge_w': (0.04, [(62, 84, 0.055), (-84, -62, 0.055)]),
+        # behind the temple: in front of the ear it ends in a short sideburn with an upright front
+        # edge and rounded corners (BALD_END), lying flatter than the tufts, so it is never a point
+        'edge': mirrored([(0, 0.80), (60, 0.80), (68, 0.80)] + BALD_END[1] + [(80, 0.706), (82.5, 0.72), (84.5, 0.745), (112, 0.745),
+                                                                              (122, 0.64), (135, 0.625), (180, 0.625)]),
+        'upper': mirrored([(0, 0.70), (60, 0.70), (68, 0.70)] + BALD_END[0] + [(84, 0.813), (90, 0.835), (130, 0.85), (180, 0.86)]),
+        'top': 0.026, 'side': 0.02, 'ears': 0.014, 'ears_at': {'az': 98, 'y': 0.78, 'w': 0.5, 'h': 0.08}, 'taper': (72, 96, 0.55),
+        'edge_w': (0.04, [(62, 84, 0.03), (-84, -62, 0.03)]),
         'flow': [crown(10, locks=18)], 'conformal': True, 'depth': 0.006, 'tips': [],
-        'lumps': [(130, 0.26, 0.012)], 'scallop': 0.016, 'lump_occ': 0.12,
+        'lumps': [(130, 0.26, 0.012)], 'scallop': (0.016, [(-80, 80, 0.0)]), 'lump_occ': 0.12,
         'skin': lambda c: 0.3 * (1 - smoothstep(0.0, 0.03, c.s_upper)),     # thinning toward the top
     },
     'bob': {
@@ -782,11 +887,12 @@ STYLES = {
     'afro': {
         'label': 'Afro', 'textures': ['coily', 'curly'],
         # a big round cloud with a soft lumpy outline and a clean rounded hairline; it grows out of
-        # the hairline, hugging the head at the sideburns and the nape, its underside rolling in
+        # the hairline, hugging the head at the sideburns, over the ears and at the nape (a centimetre
+        # out at a centimetre in), its underside rolling in, and is full size a hand's width in
         'edge': mirrored([(0, 0.895), (30, 0.89), (45, 0.875), (52, 0.845), (57, 0.76), (64, 0.70), (78, 0.67), (110, 0.655),
                           (125, 0.645), (140, 0.64), (180, 0.635)]),
-        'top': 0.026, 'side': 0.024, 'outer': ((0, 0.84, -0.03), (0.33, 0.32, 0.325)), 'outer_grow': (0.14, [(-45, 45, 0.10)]),
-        'edge_w': 0.035, 'lock_bump': 0.0,
+        'top': 0.026, 'side': 0.006, 'outer': ((0, 0.845, -0.05), (0.355, 0.34, 0.33)),
+        'outer_grow': (0.25, [(-50, 50, 0.11), (140, 200, 0.30), (-200, -140, 0.30)]), 'edge_w': 0.05, 'lump_edge': 0.05, 'lock_bump': 0.0,
         'flow': [bipolar((0, -28), (0, -83), locks=16)], 'conformal': True, 'depth': 0.0, 'tips': [],
         'lumps': [(90, 0.30, 0.018), (500, 0.10, 0.004)], 'lump_occ': 0.14,
     },
@@ -849,9 +955,12 @@ STYLES = {
         'label': 'Cornrows', 'textures': ['coily'],
         # raised braided rows from the forehead back to the nape, scalp lines between them,
         # short braid ends at the nape
-        'edge': NATURAL, 'top': 0.02, 'side': 0.017, 'edge_w': 0.010, 'smooth_normals': True,
+        # The rows lie close to the scalp: a thin shell whose rows start flush with the skin at the
+        # hairline (its last centimetre lies on the skin) and rise over the next two.
+        'edge': NATURAL_ROUND, 'top': 0.012, 'side': 0.009, 'smooth_normals': True,
+        'lay': {'width': 0.01, 'ramp': 0.02, 'eps': FILM}, 'min_clear': CLEAR,
         'flow': [rows_between((0, 0.74, 0.22), (0, 0.635, -0.17), locks=14)], 'even': True,
-        'depth': 0.018, 'tips': [], 'profile': 1.5, 'rows': 0.026, 'lock_bump': 0.0,
+        'depth': 0.012, 'tips': [], 'profile': 1.5, 'rows': 0.026, 'lock_bump': 0.0,
         'skin': lambda c: 0.85 * (1 - c.h) ** 5,
         'extras': ['cornrows'],
     },
@@ -860,8 +969,11 @@ STYLES = {
         # rope-like locs from a sectioned scalp, the front ones swept aside, rounded ends at the shoulders
         'edge': mirrored([(0, 0.89), (35, 0.885), (48, 0.87), (54, 0.80), (60, 0.75), (75, 0.745), (80, 0.757), (112, 0.757),
                           (122, 0.66), (135, 0.64), (180, 0.635)]),
-        'top': 0.014, 'side': 0.012, 'flow': [crown(10, locks=18)], 'depth': 0.012, 'profile': 1.3, 'tips': [], 'smooth_normals': True,
-        'min_clear': 0.0015,
+        # the sections run out from the crown; the coils tile follows a chart whose poles are under the
+        # chin and on the neck (as on the buzz cut), so the crown shows no smooth disc
+        'top': 0.014, 'side': 0.012, 'flow': [crown(10, locks=18)], 'uv_flow': [bipolar((0, -44), (0, -62), locks=18)], 'conformal': True,
+        'depth': 0.012, 'profile': 1.3, 'tips': [], 'smooth_normals': True,
+        'min_clear': CLEAR,
         'skin': lambda c: 0.6 * (1 - c.h) ** 5 * c.grow,          # fine section lines; they merge at the crown
         'extras': ['locs'],
     },
@@ -885,13 +997,20 @@ STYLES = {
     'updo': {
         'label': 'Updo', 'textures': ['coily', 'straight'],
         # swept up from the nape, sides and forehead into a tall crown of rolled twists
-        'edge': mirrored([(0, 0.905), (30, 0.90), (46, 0.89), (52, 0.865), (56, 0.78), (75, 0.775), (80, 0.785), (112, 0.785),
-                          (122, 0.74), (150, 0.736), (180, 0.736)]),
-        'top': 0.03, 'side': 0.024, 'band': (0.78, 1.0), 'edge_w': (EDGE, [(110, 180, 0.03), (-180, -110, 0.03)]),
+        'edge': mirrored([(0, 0.905), (30, 0.90), (46, 0.89), (52, 0.865), (56, 0.78), (72, 0.79), (78, 0.775), (110, 0.775),
+                          (125, 0.745), (150, 0.736), (180, 0.736)]),
+        'top': 0.03, 'side': 0.008, 'band': (0.78, 1.0),
+        # Swept up from the nape: the last few centimetres at the back lie flat on the skin and the
+        # hair rises out of them toward the crown, so the back is no hem or hat brim.
+        'lay': {'width': (0.004, [(110, 200, 0.025), (-200, -110, 0.025)]), 'ramp': (0.02, [(110, 200, 0.05), (-200, -110, 0.05)]),
+                'eps': FILM},
+        'rim_back': 0.3,
+        # and the hair thins out into the skin over the last centimetre there (fine nape hair)
+        'skin': lambda c: (1 - smoothstep(0.0, 0.012, c.s_vis)) * smoothstep(100.0, 120.0, np.degrees(np.abs(c.Az))),
         # swept up: the hairline is a smooth line, the ridges start a little above it
         'flow': [tie((0, 1.0, -0.15), locks=12, seam=(0, -0.2, -1))], 'depth': 0.02, 'profile': 1.3, 'tips': [], 'edge_calm': 0.04,
-        'min_clear': 0.0015,
-        'bumps': [((0, 0.75, -0.66), 0.55, 0.03)],
+        'min_clear': CLEAR,
+        'bumps': [((0, 0.95, -0.3), 0.55, 0.03)],
         'extras': ['updo'],
     },
 }
@@ -914,7 +1033,8 @@ VARIANTS = {
         'lumps': [(140, 0.24, 0.018), (400, 0.11, 0.004)], 'lump_stretch': 1.4, 'scallop': 0.026, 'lump_occ': 0.16,
         'extras': ['ringlets']}),
     # curly: the same cloud made of curls, its outline and hairline scalloped
-    'afro-curly': ('afro', ('curly',), {'lumps': [(130, 0.22, 0.028), (420, 0.11, 0.006)], 'lump_stretch': 1.2, 'scallop': 0.03, 'lump_occ': 0.18}),
+    'afro-curly': ('afro', ('curly',), {'lumps': [(130, 0.22, 0.028), (420, 0.11, 0.006)], 'lump_stretch': 1.2, 'lump_occ': 0.18,
+                                        'edge_curls': (700, 0.085, 0.014, (0.012, 0.03)), 'scallop': 0.015}),
     # coily: a short rounded crop of fine coils with a clean hairline, no curls tumbling over the edge
     'curls-coily': ('curls', ('coily',), {
         'edge': mirrored([(0, 0.872), (30, 0.87), (46, 0.862), (52, 0.82), (58, 0.755), (75, 0.745), (80, 0.757), (112, 0.757),
@@ -924,10 +1044,10 @@ VARIANTS = {
     # straight: a crew cut, short brushed-up strands on top instead of the coily sponge
     'fade-straight': ('fade', ('straight',), {
         'top': 0.03, 'flow': [crown(15, locks=18)], 'conformal': False, 'depth': 0.006, 'lock_bump': LOCK_BUMP, 'crease_band': True,
-        'min_clear': 0.0015, 'lumps': [], 'lump_band': False, 'bumps': [((0, 0.62, 0.78), 0.42, 0.008)],
+        'min_clear': CLEAR, 'lumps': [], 'lump_band': False, 'bumps': [((0, 0.62, 0.78), 0.42, 0.008)],
         'lay': {**STYLES['fade']['lay'], 'ramp': (0.05, [(-44, 44, 0.03)])}}),
-    # curly and coily: no fringe, a centre part and a low lumpy cap pulled back to the plaits
-    'braids-coily': ('braids', ('coily', 'curly'), {
+    # coily: no fringe, a centre part and a low lumpy cap pulled back to the plaits
+    'braids-coily': ('braids', ('coily',), {
         'edge': mirrored([(0, 0.89), (35, 0.885), (48, 0.87), (54, 0.80), (60, 0.75), (75, 0.745), (80, 0.757), (112, 0.757),
                           (122, 0.66), (135, 0.64), (180, 0.635)]),
         'top': 0.026, 'side': 0.022, 'conformal': True, 'depth': 0.004, 'lock_bump': 0.0, 'tips': [],
@@ -937,8 +1057,23 @@ VARIANTS = {
         'lumps': [(130, 0.22, 0.014), (420, 0.11, 0.004)], 'lump_stretch': 1.0, 'scallop': 0.012, 'lump_occ': 0.14}),
     # straight: a smooth updo, the hair combed up into a wound bun and smooth rolls
     'updo-straight': ('updo', ('straight',), {'depth': 0.012, 'profile': 2.4, 'extras': ['updo_smooth']}),
-    'bun-puff': ('bun', ('curly', 'coily'), {'extras': ['bun_puff']}),
-    'buns-puff': ('buns', ('curly', 'coily'), {'extras': ['buns_puff']}),
+    # curly: the same plaits under a fuller cap of bigger curl clumps, curls over the hairline
+    'braids-curly': ('braids', ('curly',), {
+        'edge': mirrored([(0, 0.875), (35, 0.872), (48, 0.86), (54, 0.79), (60, 0.745), (75, 0.74), (80, 0.752), (112, 0.752),
+                          (122, 0.655), (135, 0.635), (180, 0.63)]),
+        'top': 0.032, 'side': 0.026, 'conformal': True, 'depth': 0.003, 'lock_bump': 0.0, 'tips': [],
+        'flow': [tie((0.17, 0.70, -0.13), locks=12, where=side_of, seam=(0, -1, 0)), tie((-0.17, 0.70, -0.13), locks=12, seam=(0, -1, 0))],
+        'parts': [{'dist': lambda D: np.abs(D[..., 0]) * R_FLOW, 'mask': lambda D: np.ones(D.shape[:-1]), 'depth': 0.007, 'width': 0.005,
+                   'skin': 0.5}],
+        'lumps': [(110, 0.25, 0.022), (380, 0.11, 0.005)], 'lump_stretch': 1.25, 'scallop': 0.024, 'lump_occ': 0.16}),
+    # coily: a dense high puff; curly: a looser puff of big curl clumps (both in the wound bun's place),
+    # each over a cap whose tile stays round
+    'bun-puff': ('bun', ('coily',), {'extras': ['bun_puff'], 'conformal': True}),
+    'bun-curly': ('bun', ('curly',), {'extras': ['bun_curly'], 'conformal': True, 'lumps': [(110, 0.24, 0.010)], 'scallop': 0.012,
+                                      'lump_occ': 0.12}),
+    'buns-puff': ('buns', ('coily',), {'extras': ['buns_puff'], 'conformal': True}),
+    'buns-curly': ('buns', ('curly',), {'extras': ['buns_curly'], 'conformal': True, 'lumps': [(110, 0.24, 0.010)], 'scallop': 0.012,
+                                        'lump_occ': 0.12}),
 }
 # Which file draws each texture of a style besides its natural one (<style>.glb). A style offers a
 # texture only where it changes the look, so every other texture it offers has a mesh of its own.
@@ -948,16 +1083,13 @@ for _sid, _files in FILES.items():
     assert sorted(_files) == sorted(STYLES[_sid]['textures'][1:]), f'{_sid}: textures {STYLES[_sid]["textures"][1:]}, meshes for {sorted(_files)}'
 
 
-# hair-soft's styles keep its grid; every newer mesh thins out the rows near the grid's pole.
-HAIR_SOFT = ('spiky', 'swept', 'bob', 'long', 'ponytail', 'pigtails', 'bun')
-
-
 def look(name):
-    """(style id, texture, style) of an output file name: a style id or a texture mesh."""
+    """(style id, texture, style) of an output file name: a style id or a texture mesh. Every shell
+    thins out the rows near its grid's pole (lod): none is finer around there than at its widest."""
     if name in VARIANTS:
         sid, textures, changes = VARIANTS[name]
         return sid, textures[0], {**STYLES[sid], 'lod': True, **changes}
-    return name, STYLES[name]['textures'][0], {**STYLES[name], 'lod': name not in HAIR_SOFT}
+    return name, STYLES[name]['textures'][0], {**STYLES[name], 'lod': True}
 
 
 # ---------------------------------------------------------------------------
@@ -1035,6 +1167,9 @@ def shell(name, style, A, d, r, top_r, rng):
             thick = np.maximum(thick, env)
     for direction, radius, height in style.get('bumps', []):
         thick = thick + height * np.exp(-(np.arccos(np.clip(D @ unit(direction), -1, 1)) / radius) ** 2)
+    if style.get('taper'):                     # thinner toward the front (a sideburn lies flatter than a tuft)
+        a0, a1, f = style['taper']
+        thick = thick * (f + (1 - f) * smoothstep(a0, a1, np.abs(az_deg)))
     base = thick.copy()
 
     # Flow regions: the first whose `where` is positive, else the last one.
@@ -1043,7 +1178,12 @@ def shell(name, style, A, d, r, top_r, rng):
     chart = np.full(n, len(regions) - 1)
     for k in range(len(regions) - 2, -1, -1):
         chart[regions[k].where(D) > 0] = k
-    for k, reg in enumerate(regions):
+    # The tile can follow charts of its own (`uv_flow`, one per flow region), the locks and their
+    # creases still following `flow`: the locs' sections run out from the crown, their coils tile
+    # follows a chart without a pole on the head.
+    uv_regions = [Region({**spec, **shared}, rng_for(name, 'uv', k)) for k, spec in enumerate(style['uv_flow'])] \
+        if style.get('uv_flow') else regions
+    for k, reg in enumerate(uv_regions):
         if reg.bipolar is not None:
             m = (chart == k) & (s > 0)
             reg.fit_tiles(D[m], (Rh + thick)[m])
@@ -1066,7 +1206,8 @@ def shell(name, style, A, d, r, top_r, rng):
     for k, reg in enumerate(regions):
         m = owner == k
         back = (Db[m], 2 if m.mean() > 0.6 else 1) if reg.kind == 'crown' and m.sum() >= 10 and not style.get('even') else None
-        reg.setup_locks(rng, rng_for(name, 'locks', k), style.get('even', False), style.get('alternate', False), back)
+        seen = back_seen(reg, D, s, chart == k) if reg.tie and not style.get('even') else None
+        reg.setup_locks(rng, rng_for(name, 'locks', k), style.get('even', False), style.get('alternate', False), back, seen)
 
     e = np.zeros(n); lid = np.zeros(n, int); near = np.zeros(n, int); theta = np.zeros(n); tint = np.ones(n)
     bump = np.zeros(n); tipx = np.zeros(n); cs = np.ones(n); cst = np.zeros(n); wph = np.zeros(n)
@@ -1109,12 +1250,20 @@ def shell(name, style, A, d, r, top_r, rng):
 
     # Curl clumps (curly and coily): round lumps, drawn out where the hair hangs.
     lump = np.zeros(n)
+    # (a volume that grows out of its hairline keeps its lumps off the last stretch, where it hugs the head)
+    lump_in = smoothstep(0.0, style['lump_edge'], s) if style.get('lump_edge') else 1.0
     for i, (count, radius, height) in enumerate(style.get('lumps', [])):
         hang = 1 - smoothstep(0.2, 0.7, D[:, 1])
         lf = lump_field(D, count, radius, rng_for(name, 'lumps', i), 1 + (style.get('lump_stretch', 1.0) - 1) * hang)
-        thick = thick + height * (lf - 0.5) * (upper if style.get('lump_band') else 1.0)
+        thick = thick + height * (lf - 0.5) * (upper if style.get('lump_band') else 1.0) * lump_in
         if i == 0:
             lump = lf
+    if style.get('edge_curls'):
+        # Curl ends along the hairline: small round curls on the rim, where the hair comes out of
+        # the skin, so the edge reads as a row of C-shaped curls (the big clumps scallop it gently).
+        count, radius, height, (b0, b1) = style['edge_curls']
+        thick = thick + height * lump_field(D, count, radius, rng_for(name, 'edge_curls')) * smoothstep(b0 - 0.008, b0, s) \
+            * (1 - smoothstep(b1, b1 + 0.015, s))
     rows = None
     # Where an axis chart's rows gather (the nape end) the tile and the rows would be drawn ever
     # smaller and shimmer: both fade out where they would be more than about three times too small.
@@ -1133,7 +1282,7 @@ def shell(name, style, A, d, r, top_r, rng):
     tip = ranges(az_deg, style.get('tips', []))
     s_tip = s - tip * (1 - h) * np.minimum(cs, 1.0) - style.get('chop', 0.4) * tip * tipx
     if style.get('scallop'):                      # the edge is made of curls
-        s_tip = s_tip + style['scallop'] * (lump - 0.5)
+        s_tip = s_tip + az_value(az_deg, style['scallop']) * (lump - 0.5)
     edge_w = az_value(az_deg, style.get('edge_w', EDGE))
     skin_at = skin_field()
     Rs = np.concatenate([[skin_at['top']], skin_at['r'].ravel()])               # the skin itself
@@ -1141,11 +1290,12 @@ def shell(name, style, A, d, r, top_r, rng):
     lay = style.get('lay')
     N_out = None
     if lay:
-        # Thin hair (buzz cut, fade) lies on the skin where it ends: its last stretch before the
-        # hairline (`lay` width), and with the fade its faded sides, are a film `eps` over the
-        # skin itself, with the skin's own normals (set in build_look), skin colour and no
-        # occlusion, so hair and skin meet without a ledge or a line. Further in, the hair eases
-        # up to its thickness over `ramp`; outside the hairline the film dives under the skin.
+        # Thin hair (buzz cut, fade, cornrows, the updo's nape) lies on the skin where it ends:
+        # its last stretch before the hairline (`lay` width), and with the fade its faded sides,
+        # are a film `eps` over the skin itself, with the skin's own normals (here or in
+        # build_look) and no occlusion, so hair and skin meet without a ledge. Further in, the
+        # hair eases up to its thickness over `ramp`; outside the hairline the film dives under
+        # the skin.
         s_vis = s_tip
         x = np.clip(s_tip / az_value(az_deg, lay['ramp']), 0.0, 1.0)
         t_cap = thick * (1 - (1 - x) ** 2)
@@ -1154,7 +1304,8 @@ def shell(name, style, A, d, r, top_r, rng):
         if lay.get('sides'):                                                     # the fade's faded sides
             L = np.maximum(L, lay['sides'](ctx0))
         R_in = (Rh + t_cap) * (1 - L) + (Rs + lay['eps']) * L
-        R = np.where(s_tip >= 0, R_in, np.maximum(Rs + lay['eps'] + s_tip, Rs - SINK))
+        # (it dives steeply, so its edge never lies within a far shot's depth step of the skin for long)
+        R = np.where(s_tip >= 0, R_in, np.maximum(Rs + lay['eps'] + 4 * s_tip, Rs - SINK))
         t = R - Rh
         if style.get('smooth_normals'):
             N_cap = unit(Ns - sphere_gradient(t_cap, D) / R[:, None])
@@ -1199,9 +1350,9 @@ def shell(name, style, A, d, r, top_r, rng):
     strand = style.get('strand', 1.0)
 
     def uvg(ids, k):
-        u, v, g = regions[k].uvg(D[used][ids])
+        u, v, g = uv_regions[k].uvg(D[used][ids])
         return u, v, g * strand * fine[used][ids]
-    uvg.period = lambda k: regions[k].tiles
+    uvg.period = lambda k: uv_regions[k].tiles
 
     # What the shell occludes (for the extras): the head plus the hair's smooth thickness.
     hair_r = Grid(top_r + style['top'], (r + np.maximum(base[1:].reshape(r.shape), 0) * (t[1:].reshape(r.shape) > 0)))
@@ -1215,6 +1366,11 @@ def shell(name, style, A, d, r, top_r, rng):
         return ~below & (dist < np.maximum(hair_r(dirs), head(dirs)))
 
     part = Part(V[used], F, chart[used], uvg, occ[used], tint[used], occupancy, skin=skin[used])
+    if lay and N_out is None:
+        # where it lies on the skin it takes the skin's drawn normals; elsewhere its own
+        N_mesh = vertex_normals(V[used], F)
+        N_out = np.zeros_like(V)
+        N_out[used] = unit(N_mesh * (1 - L[used])[:, None] + Ns[used] * L[used][:, None])
     part.normals = None if N_out is None else N_out[used]
     part.lay = L[used]
     part.ao_origin = (CENTER + D * (Rh + np.maximum(t, 0.0015))[:, None])[used]   # tucked-in edge: from the skin
@@ -1653,9 +1809,10 @@ def merge_parts(parts, self_occlude=True):
     return part
 
 
-def puff(center, radii, rng, pole, lumps=((40, 0.5, 0.018), (220, 0.18, 0.005)), lat=44, lon=88):
-    """A soft round puff of curly or coily hair: a lumpy ellipsoid. Its conformal chart has its
-    pole on `pole`'s side (sunk into the head) and the opposite pole on the far side."""
+def puff(center, radii, rng, pole, lumps=((40, 0.5, 0.018), (220, 0.18, 0.005)), lat=44, lon=88, spread=40.0):
+    """A soft round puff of curly or coily hair: a lumpy ellipsoid sunk into the head on `pole`'s
+    side. Its tile follows a conformal chart with both its poles on that buried side, `spread`
+    degrees either side of `pole` (like the shell's bipolar charts), so no pole shows on the puff."""
     c = np.array(center, float); rad = np.array(radii, float)
     q = unit(pole)
     e1 = unit(np.cross(q, [0.0, 0, 1]) if abs(q[2]) < 0.9 else np.cross(q, [1.0, 0, 0]))
@@ -1672,11 +1829,25 @@ def puff(center, radii, rng, pole, lumps=((40, 0.5, 0.018), (220, 0.18, 0.005)),
             big = f
     k = 1 + lf / rad.mean()
     V = c + dirs * rad * k[:, None]
-    tiles = max(1, round(2 * math.pi * float(rad.mean()) / TILE_U))
-    thc = np.clip(TH.ravel(), 0.02, math.pi - 0.02)
-    U = PH.ravel() / (2 * math.pi) * tiles
-    Vv = tiles / (4 * math.pi) * np.log(np.tan(thc / 2))
-    G = smoothstep(0.05, 0.2, TH.ravel()) * smoothstep(0.05, 0.2, math.pi - TH.ravel())
+    # In the puff's own frame `pole` points straight down; the chart's poles F and N lean `spread`
+    # degrees off it to either side, and u wraps on the short arc between them (buried too).
+    loc = np.stack([dirs @ e1, -(dirs @ q), dirs @ e2], -1)
+    Fp, Np = dir_from(0, spread - 90), dir_from(180, spread - 90)
+    zF, zN = stereo(Fp), stereo(Np)
+    p_ = loc[:, 0] + 1j * loc[:, 2]; s_ = 1 + loc[:, 1]                     # stereo(loc) = p_ / s_
+    num, den = p_ - zF * s_, p_ - zN * s_
+    w = np.where(np.abs(den) > 1e-12, num / np.where(np.abs(den) > 1e-12, den, 1), 1.0)
+    w = np.where(np.abs(num) + np.abs(den) < 1e-12, 1.0, w)                 # `pole` itself: w = 1
+    theta = 2 * np.arctan(np.abs(w))                                        # 90 degrees on top (|w| = 1)
+    chord = lambda a: np.linalg.norm(loc - a, axis=1)
+    size = float(rad.mean()) * chord(Fp) * chord(Np) / np.linalg.norm(Fp - Np)   # world length per radian of u
+    tiles = max(1, round(2 * math.pi * float(np.median(size[TH.ravel() > math.radians(spread + 30)])) / TILE_U))
+    U = wrap(np.angle(w) + math.pi) / (2 * math.pi) * tiles
+    Vv = tiles / (4 * math.pi) * np.log(np.tan(np.clip(theta, 0.02, math.pi - 0.02) / 2))
+    # The tile fades out toward the chart's poles and the buried stretch between them, where it is
+    # drawn ever smaller (all of it under the hair the puff sits in).
+    near = np.minimum(np.arccos(np.clip(loc @ Fp, -1, 1)), np.arccos(np.clip(loc @ Np, -1, 1)))     # to the nearer pole
+    G = smoothstep(0.7, 1.4, TH.ravel() / math.radians(spread)) * smoothstep(math.radians(5), math.radians(14), near)
     F = sphere_grid(lat, lon)
     weld = np.arange(len(V)); weld[:lon] = 0; weld[lat * lon:] = lat * lon
     occ = 1 - 0.14 * (1 - smoothstep(0.1, 0.7, big))
@@ -1703,8 +1874,14 @@ def extra_bun(rng, ctx):
 
 
 def extra_bun_puff(rng, ctx):
-    # a soft round high puff in the wound bun's place
-    return [puff((0, 1.05, -0.045), (0.11, 0.10, 0.11), rng, pole=(0, -0.55, 0.85))]
+    # coily: a soft round high puff in the wound bun's place, dense, with low lumps
+    return [puff((0, 1.05, -0.045), (0.11, 0.10, 0.11), rng, pole=(0, -1.0, 0.07))]
+
+
+def extra_bun_curly(rng, ctx):
+    # curly: a looser, slightly bigger puff of big round curl clumps, its outline scalloped by them
+    return [puff((0, 1.052, -0.045), (0.115, 0.105, 0.115), rng, pole=(0, -1.0, 0.07),
+                 lumps=((60, 0.42, 0.028), (260, 0.16, 0.007)), lat=48, lon=96)]
 
 
 def extra_ponytail(rng, ctx):
@@ -1712,8 +1889,8 @@ def extra_ponytail(rng, ctx):
     # and comes out of the hair at the tie, so there is no gap or open end at the root. It swings
     # out to one side and a little up, so it shows past the head from the front.
     # Its end drops, so from behind it hangs rather than hooking out sideways.
-    return [tube([(0, 0.937, -0.10), (0, 0.93, -0.17), (0.03, 0.965, -0.27), (0.12, 0.90, -0.33), (0.20, 0.80, -0.31),
-                  (0.25, 0.70, -0.265), (0.275, 0.615, -0.225)],
+    return [tube([(0, 0.937, -0.10), (0, 0.93, -0.17), (0.03, 0.965, -0.27), (0.12, 0.90, -0.33), (0.24, 0.80, -0.31),
+                  (0.30, 0.70, -0.265), (0.33, 0.615, -0.225)],
                  [0.045, 0.05, 0.06, 0.064, 0.056, 0.04, 0.012], rng, root=1)]
 
 
@@ -1747,11 +1924,12 @@ def extra_braids(rng, ctx):
 
 
 def extra_cornrows(rng, ctx):
-    # short braid ends at the nape, where the rows are gathered
+    # short braid ends at the nape, where the rows are gathered; they come out of the thin rows
+    # there, sunk into them at the root
     out = []
     for az in (-160, -173, 173, 160):
-        root = head_point(az, 0.69, ctx, out=-0.002)
-        top = head_point(az, 0.665, ctx, out=0.012)
+        root = head_point(az, 0.69, ctx, out=-0.004)
+        top = head_point(az, 0.665, ctx, out=0.0085)
         o = unit(np.array([top[0], 0, top[2]]))
         path = [root, top, top + o * 0.006 + np.array([0, -0.06, 0]), top + o * 0.004 + np.array([0, -0.125, 0]),
                 top + np.array([0, -0.16, 0])]
@@ -1782,8 +1960,9 @@ def extra_locs(rng, ctx):
             pts.insert(0, pts[0] - t0 * 0.03 - unit(pts[0] - CENTER) * 0.045)       # the root, under the scalp
             last = pts[-1]
             o = unit(np.array([last[0], 0, last[2]]))
-            front = math.cos(math.radians(az + sweep)) > 0.3
-            bottom = (0.535 if front else 0.50) + rng.uniform(-0.03, 0.03)
+            # the ones in front of the shoulders end above them (a waving forearm passes there)
+            front = math.cos(math.radians(az + sweep)) > 0.26
+            bottom = 0.572 + rng.uniform(-0.012, 0.012) if front else 0.50 + rng.uniform(-0.03, 0.03)
             L = 0.76 - bottom
             sw = np.cross([0, 1.0, 0], o) * rng.uniform(-0.02, 0.02)
             pts += [last + o * 0.012 + np.array([0, -0.06, 0]), last + o * 0.016 + sw * 0.5 + np.array([0, -0.5 * L, 0]),
@@ -1799,8 +1978,15 @@ def extra_buns(rng, ctx):
 
 
 def extra_buns_puff(rng, ctx):
-    return [puff((s * 0.16, 1.05, -0.02), (0.10, 0.095, 0.10), rng, pole=(-s * 0.5, -0.55, 0.65),
+    # coily: two soft round puffs, sunk into the hair enough that the chart's poles are hidden
+    return [puff((s * 0.15, 1.03, -0.02), (0.10, 0.095, 0.10), rng, pole=(-s * 0.37, -0.93, 0.04), spread=18.0,
                  lumps=((36, 0.5, 0.016), (200, 0.18, 0.005)), lat=40, lon=80) for s in (1, -1)]
+
+
+def extra_buns_curly(rng, ctx):
+    # curly: two looser puffs of big round curl clumps
+    return [puff((s * 0.15, 1.032, -0.02), (0.104, 0.099, 0.104), rng, pole=(-s * 0.37, -0.93, 0.04), spread=18.0,
+                 lumps=((52, 0.44, 0.026), (230, 0.16, 0.007)), lat=44, lon=88) for s in (1, -1)]
 
 
 def slerp_dirs(a, b, n):
@@ -1814,7 +2000,7 @@ def extra_updo(rng, ctx):
     toward the back; each roll starts under the hairline and ends tucked into the crown."""
     head = Grid(ctx.top_r, ctx.r)
     mound = np.array([0, 1.0, -0.15])
-    out = [puff(mound, (0.125, 0.115, 0.12), rng, pole=(0, -0.6, 0.8), lumps=((26, 0.6, 0.016), (160, 0.2, 0.004)), lat=36, lon=72)]
+    out = [puff(mound, (0.125, 0.115, 0.12), rng, pole=(0, -0.92, 0.38), lumps=((26, 0.6, 0.016), (160, 0.2, 0.004)), lat=36, lon=72)]
     for az in (-46, -16, 16, 46):
         # each roll swells out of the hair just behind the hairline and rises toward the crown
         start = dir_from(az * 1.05, 36)
@@ -1849,23 +2035,31 @@ def extra_updo_smooth(rng, ctx):
 
 
 def extra_ringlets(rng, ctx):
-    """Corkscrew ringlets hanging from under the cap's edge round the back and sides: two
-    overlapping layers of uneven ones (thickness, coil, turns and length all vary), each a smooth
-    corkscrew, so together they read as a soft mass of springy curls, not a row of springs."""
+    """Corkscrew ringlets hanging round the back and sides: two overlapping layers from under the
+    cap's edge, and a third that comes out of the cap higher up, from under its lowest curls, so
+    the cap and the ringlets have no seam between them. Thickness, coil, turns and length all vary
+    from one to the next, each a smooth corkscrew, so together they read as a soft mass of springy
+    curls, not a row of springs."""
     out = []
-    for layer, (n, az0, az1, ring, lift, scale) in enumerate([(13, 64, 296, 0.229, 0.0, 1.0), (11, 76, 284, 0.216, 0.012, 0.88)]):
+    surface = ctx.shell.surface
+    layers = [(13, 64, 296, 0.229, 0.0, 1.0), (11, 76, 284, 0.216, 0.012, 0.88), (8, 96, 264, None, 0.055, 0.92)]
+    for layer, (n, az0, az1, ring, lift, scale) in enumerate(layers):
         for k in range(n):
             az = az0 + (az1 - az0) * k / (n - 1) + rng.uniform(-4, 4)
             a = math.radians(az)
-            top = np.array([math.sin(a) * ring, 0.705 + lift + rng.uniform(-0.012, 0.012), math.cos(a) * ring - 0.01])
+            o = unit(np.array([math.sin(a), 0, math.cos(a)]))
+            y0 = 0.705 + lift + rng.uniform(-0.012, 0.012)
             # the ones beside the face stay above the shoulders; the ones at the back hang longer
-            length = scale * rng.uniform(0.19, 0.27) * (1 - 0.32 * smoothstep(-0.2, 0.42, math.cos(a)))
-            turns, coil, m = rng.uniform(3.0, 4.6), rng.uniform(0.013, 0.02), 24
+            length = scale * rng.uniform(0.17, 0.29) * (1 - 0.32 * smoothstep(-0.2, 0.42, math.cos(a)))
+            turns, coil, m = rng.uniform(2.8, 4.8), rng.uniform(0.013, 0.02), 24
             r0 = rng.uniform(0.02, 0.027)
             ph0 = rng.uniform(0, 2 * math.pi)
-            o = unit(np.array([math.sin(a), 0, math.cos(a)]))
+            if ring is None:          # out of the cap's surface, half sunk into it
+                top = surface_point(surface, az, y0, -0.35 * r0) - o * 0.006
+            else:
+                top = np.array([math.sin(a) * ring, y0, math.cos(a) * ring - 0.01])
             side = np.cross([0, 1.0, 0], o)
-            pts = [top + np.array([0, 0.05, 0]) - o * 0.012]          # the root, deep in the cap
+            pts = [top + np.array([0, 0.05, 0]) - o * 0.012 * (1 if ring else 2.5)]          # the root, deep in the cap
             for i in range(m):
                 t = i / (m - 1)
                 ang = ph0 + 2 * math.pi * turns * t
@@ -1874,6 +2068,19 @@ def extra_ringlets(rng, ctx):
             rr = [0.7 * r0] + [r0 * (1 - 0.35 * (i / (m - 1)) ** 2) for i in range(m)]
             out.append(tube(pts, rr, rng, around=9, lobes=2, depth=0.05, twist=0.6, root=1, per=2, end='round', fold=0.7))
     return [merge_parts(out)]
+
+
+def surface_point(grid, az_deg, y, out=0.0):
+    """The point of a surface around CENTER (a Grid of radii, e.g. a shell's outside) at an azimuth
+    and height, pushed out along the direction from CENTER by `out`."""
+    pol = np.linspace(0.0, POL_MAX, 600)
+    a = math.radians(az_deg)
+    D = np.stack([np.sin(pol) * math.sin(a), np.cos(pol), np.sin(pol) * math.cos(a)], -1)
+    ys = CENTER[1] + D[:, 1] * grid(D)
+    k = int(np.clip(np.searchsorted(-ys, -y), 1, len(ys) - 1))
+    t = (ys[k - 1] - y) / (ys[k - 1] - ys[k])
+    p = unit(D[k - 1] * (1 - t) + D[k] * t)
+    return CENTER + p * (grid(p[None])[0] + out)
 
 
 def extra_long(rng, ctx, style):
@@ -1885,9 +2092,10 @@ def extra_long(rng, ctx, style):
 
 
 EXTRAS = {
-    'bun': extra_bun, 'bun_puff': extra_bun_puff, 'ponytail': extra_ponytail, 'pigtails': extra_pigtails,
-    'braids': extra_braids, 'cornrows': extra_cornrows, 'locs': extra_locs, 'buns': extra_buns,
-    'buns_puff': extra_buns_puff, 'updo': extra_updo, 'updo_smooth': extra_updo_smooth, 'ringlets': extra_ringlets,
+    'bun': extra_bun, 'bun_puff': extra_bun_puff, 'bun_curly': extra_bun_curly, 'ponytail': extra_ponytail,
+    'pigtails': extra_pigtails, 'braids': extra_braids, 'cornrows': extra_cornrows, 'locs': extra_locs, 'buns': extra_buns,
+    'buns_puff': extra_buns_puff, 'buns_curly': extra_buns_curly, 'updo': extra_updo, 'updo_smooth': extra_updo_smooth,
+    'ringlets': extra_ringlets,
 }
 
 

@@ -111,14 +111,16 @@ try {
   const reframe = () => character.ready.then(() => stage.frame(character.root, true));
   const rows = {};
 
-  // The texture chips list the style's own textures, natural first. A picked texture is the
-  // person's: it shows on every style that offers it (and comes back after a style that draws it
-  // naturally); the natural one is never stored (as in the app's staging.json).
+  // The texture chips list the style's own textures, natural first. The texture is the person's:
+  // on a new style it is the one stored, else a picked one (it comes back after a style that draws
+  // it naturally), else the one the last style drew (an afro's coils make coily puffs), whichever
+  // the new style offers; the natural one is never stored (as in the app's staging.json).
   const textureLabels = Object.fromEntries(HAIR_TEXTURES.map((t) => [t.id, t.label]));
   let picked = null;
-  const syncTextures = () => {
+  const syncTextures = (drawnBefore) => {
     const textures = HAIR_STYLES.find((h) => h.id === look.hair.style)?.textures ?? [];
-    if (textures.indexOf(picked) > 0) look.hair.texture = picked;
+    const texture = [look.hair.texture, picked, drawnBefore].find((t) => t && textures.includes(t));
+    if (textures.indexOf(texture) > 0) look.hair.texture = texture;
     else delete look.hair.texture;
     $('hair-texture-row').hidden = textures.length < 2;
     $('hair-textures').replaceChildren();
@@ -158,7 +160,12 @@ try {
   });
   rows.outfits = chipRow($('outfits'), OUTFITS.map((o) => o.label), (i) => { look.outfit = i; refresh(); });
   rows.skins = swatchRow($('skins'), SKINS, (c) => { look.skin = c; refresh(); });
-  rows.hair = chipRow($('hair'), hairStyles.map((h) => h.label), (i) => { look.hair.style = hairStyles[i].id; syncTextures(); refresh(); });
+  rows.hair = chipRow($('hair'), hairStyles.map((h) => h.label), (i) => {
+    const drawnBefore = look.hair.style ? hairTexture(look.hair.style, look.hair.texture) : undefined;
+    look.hair.style = hairStyles[i].id;
+    syncTextures(drawnBefore);
+    refresh();
+  });
   rows.hairColors = swatchRow($('hair-colors'), HAIR_COLORS, (c) => { look.hair.color = c; refresh(); });
   rows.eyes = chipRow($('eyes'), eyeIds.map((id) => EYE_STYLES[id].label), (i) => { look.eyes = eyeIds[i]; refresh(); });
   rows.eyeColors = swatchRow($('eye-colors'), EYE_COLORS, (c) => { look.eyeColor = c; refresh(); });

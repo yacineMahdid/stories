@@ -204,6 +204,9 @@ export function CharacterLook({ editor, shape, onPortrait }: { editor: Editor; s
   const lastTexture = useRef<{ id: string; texture?: string }>({ id: shape.id })
   if (lastTexture.current.id !== shape.id) lastTexture.current = { id: shape.id }
   if (look.hair?.texture && !oddTexture) lastTexture.current.texture = look.hair.texture
+  // A remembered pick this style offers (not as its natural one) that the file no longer has was
+  // taken back (Undo, or an edit elsewhere): forget it.
+  if (!look.hair?.texture && hairTextures.indexOf(lastTexture.current.texture ?? '') > 0) lastTexture.current.texture = undefined
 
   return (
     <div className="three-panel">
@@ -219,9 +222,13 @@ export function CharacterLook({ editor, shape, onPortrait }: { editor: Editor; s
         </label>
         <label>Hair
           <select value={look.hair?.style ?? ''} onChange={(e) => {
-            // The texture stays when the new style offers it and it isn't that style's natural one (never written).
-            const style = e.target.value, texture = look.hair?.texture ?? lastTexture.current.texture
-            const keep = (lookOptions.hair.find((h) => h.id === style)?.textures ?? []).indexOf(texture) > 0
+            // The person's texture goes along: the one in the file, else a remembered pick, else the
+            // one drawn now (a natural one too: an afro's coils make coily puffs). It is written only
+            // when it isn't the new style's natural one.
+            const style = e.target.value, offered = lookOptions.hair.find((h) => h.id === style)?.textures ?? []
+            const drawnNow = look.hair?.style ? (look.hair.texture && hairTextures.includes(look.hair.texture) ? look.hair.texture : hairTextures[0]) : undefined
+            const texture = [look.hair?.texture, lastTexture.current.texture, drawnNow].find((t) => t && offered.includes(t))
+            const keep = offered.indexOf(texture ?? '') > 0
             save({ ...look, hair: style ? { color: look.hair?.color ?? '#4a2f22', style, ...(keep ? { texture } : {}) } : undefined }, 'hair')
           }}>
             <Options value={look.hair?.style ?? ''} note={note} list={lookOptions.hair.map((h) => [h.id, h.label])} />
@@ -238,7 +245,11 @@ export function CharacterLook({ editor, shape, onPortrait }: { editor: Editor; s
             if (natural) lastTexture.current.texture = undefined
             setGroup('hair', { texture: natural ? undefined : e.target.value })
           }}>
-            {oddTexture && <option value={oddTexture}>{`${oddTexture} (not offered: drawn ${textureLabel(hairTextures[0])})`}</option>}
+            {oddTexture && (
+              <option value={oddTexture} title={`${textureLabel(oddTexture)} isn't offered for this style: it is drawn ${textureLabel(hairTextures[0])}. Pick a texture to clear it.`}>
+                {`${textureLabel(oddTexture)}: drawn ${textureLabel(hairTextures[0])}`}
+              </option>
+            )}
             <Options value={oddTexture ? '' : look.hair?.texture ?? hairTextures[0] ?? ''} note={note} list={hairTextures.map((t) => [t, textureLabel(t)])} />
           </select>
         </label>

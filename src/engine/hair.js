@@ -8,9 +8,9 @@ import { loadGLTF } from './loader.js';
 //
 // A look is a style plus a texture. Each style lists the textures it can be drawn with, natural
 // first, and offers one only where it changes the look: every texture but the natural one has a
-// mesh of its own (`files`, e.g. the curly bob; curly and coily share one where only the tile
-// differs). Straight and wavy are drawn with the strand tile, curly and coily with curls and coils
-// (see setHairTexture).
+// mesh of its own (`files`, e.g. the curly bob, or the coily and the curly puff of a top bun).
+// Straight and wavy are drawn with the strand tile, curly and coily with curls and coils (see
+// setHairTexture).
 export const HAIR_TEXTURES = [
   { id: 'straight', label: 'Straight' },
   { id: 'wavy', label: 'Wavy' },
@@ -34,11 +34,11 @@ export const HAIR_STYLES = [
   { id: 'parted', label: 'Center part', textures: ['straight'] },
   { id: 'ponytail', label: 'Ponytail', textures: ['straight'] },
   { id: 'pigtails', label: 'Pigtails', textures: ['straight'] },
-  { id: 'braids', label: 'Braids', textures: ['straight', 'curly', 'coily'], files: { curly: 'braids-coily', coily: 'braids-coily' } },
+  { id: 'braids', label: 'Braids', textures: ['straight', 'curly', 'coily'], files: { curly: 'braids-curly', coily: 'braids-coily' } },
   { id: 'cornrows', label: 'Cornrows', textures: ['coily'] },
   { id: 'locs', label: 'Locs', textures: ['coily'] },
-  { id: 'bun', label: 'Top bun', textures: ['straight', 'curly', 'coily'], files: { curly: 'bun-puff', coily: 'bun-puff' } },
-  { id: 'buns', label: 'Two buns', textures: ['straight', 'curly', 'coily'], files: { curly: 'buns-puff', coily: 'buns-puff' } },
+  { id: 'bun', label: 'Top bun', textures: ['straight', 'curly', 'coily'], files: { curly: 'bun-curly', coily: 'bun-puff' } },
+  { id: 'buns', label: 'Two buns', textures: ['straight', 'curly', 'coily'], files: { curly: 'buns-curly', coily: 'buns-puff' } },
   { id: 'updo', label: 'Updo', textures: ['coily', 'straight'], files: { straight: 'updo-straight' } },
 ];
 
@@ -380,6 +380,7 @@ export function createHairMaterial() {
   const uniforms = {
     hairSkin: { value: new THREE.Color(DEFAULT_SKIN) },
     hairLight: { value: 0 },
+    hairScalp: { value: 1 },
   };
   Object.assign(material.userData, { uniforms, sheen: 1, normalScale: 0.85, skin: DEFAULT_SKIN });
   material.onBeforeCompile = (shader) => {
@@ -395,6 +396,7 @@ export function createHairMaterial() {
 varying vec4 vHair;
 uniform vec3 hairSkin;
 uniform float hairLight;
+uniform float hairScalp;
 // Light hair bounces light into its own creases, so they are shallower and keep the hair's hue
 // instead of going gray (the multi-bounce occlusion fit of Jimenez et al. 2016).
 vec3 hairBounce( float v, vec3 albedo ) {
@@ -403,23 +405,24 @@ vec3 hairBounce( float v, vec3 albedo ) {
 	vec3 c = 2.7552 * albedo + 0.6903;
 	return max( vec3( v ), ( ( v * a + b ) * v + c ) * v );
 }`)
-      // the skin shows through where the hair thins out
-      .replace('vec4 diffuseColor = vec4( diffuse, opacity );', 'vec4 diffuseColor = vec4( mix( diffuse, hairSkin, vHair.g ), opacity );')
+      // the skin shows through where the hair thins out (more of it under hair lighter than the skin)
+      .replace('vec4 diffuseColor = vec4( diffuse, opacity );',
+        'float hairMix = min( 1.0, vHair.g * hairScalp );\nvec4 diffuseColor = vec4( mix( diffuse, hairSkin, hairMix ), opacity );')
       // the strands fade out where they converge (crown, ties, tips)
       .replace('#include <map_fragment>', chunk('map_fragment', ['diffuseColor *= sampledDiffuseColor;',
         'diffuseColor.rgb *= mix( vec3( 1.0 ), sampledDiffuseColor.rgb, vHair.a );']))
       .replace('#include <color_fragment>', `float hairSoft = 1.0 - ( 1.0 - vHair.r ) * ( 1.0 - 0.3 * hairLight );
 vec3 hairOcc = mix( vec3( vHair.r ), hairBounce( hairSoft, diffuseColor.rgb ), hairLight );
 diffuseColor.rgb *= hairOcc;`)
-      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>\nroughnessFactor = mix( roughnessFactor, ${f2(SKIN_ROUGHNESS)}, vHair.g );`)
+      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>\nroughnessFactor = mix( roughnessFactor, ${f2(SKIN_ROUGHNESS)}, hairMix );`)
       .replace('#include <normal_fragment_maps>', chunk('normal_fragment_maps', ['mapN.xy *= normalScale;', 'mapN.xy *= normalScale * vHair.a;']))
       // the sheen follows the shading: none deep in a crease; on the skin, sheen and specular are the body's
       .replace('#include <lights_physical_fragment>', chunk('lights_physical_fragment',
-        ['material.sheenColor = sheenColor;', `material.sheenColor = mix( sheenColor, vec3( ${f2(SKIN_SHEEN)} ), vHair.g ) * hairOcc;`],
-        ['clamp( sheenRoughness, 0.0001, 1.0 )', `clamp( mix( sheenRoughness, ${f2(SKIN_SHEEN_ROUGHNESS)}, vHair.g ), 0.0001, 1.0 )`],
-        ['float specularIntensityFactor = specularIntensity;', `float specularIntensityFactor = mix( specularIntensity, ${f2(SKIN_SPECULAR)}, vHair.g );`]));
+        ['material.sheenColor = sheenColor;', `material.sheenColor = mix( sheenColor, vec3( ${f2(SKIN_SHEEN)} ), hairMix ) * hairOcc;`],
+        ['clamp( sheenRoughness, 0.0001, 1.0 )', `clamp( mix( sheenRoughness, ${f2(SKIN_SHEEN_ROUGHNESS)}, hairMix ), 0.0001, 1.0 )`],
+        ['float specularIntensityFactor = specularIntensity;', `float specularIntensityFactor = mix( specularIntensity, ${f2(SKIN_SPECULAR)}, hairMix );`]));
   };
-  material.customProgramCacheKey = () => 'hair-soft-2';
+  material.customProgramCacheKey = () => 'hair-soft-3';
   return material;
 }
 
@@ -480,4 +483,10 @@ function updateLook(material) {
   uniforms.hairLight.value = smoothstep(lum, 0.3, 0.45);
   // Where the skin shows through (COLOR_0 g) the hair is the skin, with the body's response.
   uniforms.hairSkin.value.set(skin);
+  // A little skin in the mix reads as scalp under dark hair, but under hair much lighter than the
+  // skin (gray or blonde stubble on deep skin) it is lost: there up to four times as much shows,
+  // so a buzz cut reads as shorn hair over the scalp, not as a light cap.
+  const s = uniforms.hairSkin.value;
+  const skinLum = 0.2126 * s.r + 0.7152 * s.g + 0.0722 * s.b;
+  uniforms.hairScalp.value = 1 + 3 * smoothstep((lum - skinLum) / (lum + skinLum + 1e-4), 0.1, 0.6);
 }
