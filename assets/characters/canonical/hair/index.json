@@ -19,8 +19,7 @@
   "id": "buzz",
   "label": "Buzz cut",
   "textures": [
-   "straight",
-   "coily"
+   "straight"
   ],
   "files": {}
  },
@@ -31,7 +30,9 @@
    "coily",
    "straight"
   ],
-  "files": {}
+  "files": {
+   "straight": "fade-straight"
+  }
  },
  {
   "id": "quiff",
@@ -48,7 +49,9 @@
    "curly",
    "coily"
   ],
-  "files": {}
+  "files": {
+   "coily": "curls-coily"
+  }
  },
  {
   "id": "shaggy",
@@ -62,9 +65,7 @@
   "id": "balding",
   "label": "Balding",
   "textures": [
-   "straight",
-   "curly",
-   "coily"
+   "straight"
   ],
   "files": {}
  },
@@ -88,7 +89,9 @@
    "coily",
    "curly"
   ],
-  "files": {}
+  "files": {
+   "curly": "afro-curly"
+  }
  },
  {
   "id": "long",
@@ -135,7 +138,10 @@
    "curly",
    "coily"
   ],
-  "files": {}
+  "files": {
+   "curly": "braids-coily",
+   "coily": "braids-coily"
+  }
  },
  {
   "id": "cornrows",
@@ -186,6 +192,8 @@
    "coily",
    "straight"
   ],
-  "files": {}
+  "files": {
+   "straight": "updo-straight"
+  }
  }
 ]

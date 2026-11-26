@@ -111,15 +111,19 @@ try {
   const reframe = () => character.ready.then(() => stage.frame(character.root, true));
   const rows = {};
 
-  // The texture chips list the style's own textures, natural first. A picked texture stays while
-  // the next style offers it; the natural one is never stored (as in the app's staging.json).
+  // The texture chips list the style's own textures, natural first. A picked texture is the
+  // person's: it shows on every style that offers it (and comes back after a style that draws it
+  // naturally); the natural one is never stored (as in the app's staging.json).
   const textureLabels = Object.fromEntries(HAIR_TEXTURES.map((t) => [t.id, t.label]));
+  let picked = null;
   const syncTextures = () => {
     const textures = HAIR_STYLES.find((h) => h.id === look.hair.style)?.textures ?? [];
-    if (textures.indexOf(look.hair.texture) < 1) delete look.hair.texture;
+    if (textures.indexOf(picked) > 0) look.hair.texture = picked;
+    else delete look.hair.texture;
     $('hair-texture-row').hidden = textures.length < 2;
     $('hair-textures').replaceChildren();
     rows.hairTextures = chipRow($('hair-textures'), textures.map((t) => textureLabels[t]), (i) => {
+      picked = i > 0 ? textures[i] : null;
       if (i > 0) look.hair.texture = textures[i];
       else delete look.hair.texture;
       refresh();

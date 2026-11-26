@@ -7,9 +7,10 @@ import { loadGLTF } from './loader.js';
 // and COLOR_0 = (baked occlusion, skin mix, unused, strand strength).
 //
 // A look is a style plus a texture. Each style lists the textures it can be drawn with, natural
-// first. A texture either has its own mesh (`files`, e.g. the curly bob) or reuses the style's mesh
-// with that texture's tile; straight and wavy share the strand tile, curly and coily get curls and
-// coils (see setHairTexture).
+// first, and offers one only where it changes the look: every texture but the natural one has a
+// mesh of its own (`files`, e.g. the curly bob; curly and coily share one where only the tile
+// differs). Straight and wavy are drawn with the strand tile, curly and coily with curls and coils
+// (see setHairTexture).
 export const HAIR_TEXTURES = [
   { id: 'straight', label: 'Straight' },
   { id: 'wavy', label: 'Wavy' },
@@ -21,24 +22,24 @@ export const HAIR_TEXTURES = [
 export const HAIR_STYLES = [
   { id: 'spiky', label: 'Spiky', textures: ['straight'] },
   { id: 'swept', label: 'Side part', textures: ['straight'] },
-  { id: 'buzz', label: 'Buzz cut', textures: ['straight', 'coily'] },
-  { id: 'fade', label: 'Fade', textures: ['coily', 'straight'] },
+  { id: 'buzz', label: 'Buzz cut', textures: ['straight'] },
+  { id: 'fade', label: 'Fade', textures: ['coily', 'straight'], files: { straight: 'fade-straight' } },
   { id: 'quiff', label: 'Quiff', textures: ['straight'] },
-  { id: 'curls', label: 'Short curls', textures: ['curly', 'coily'] },
+  { id: 'curls', label: 'Short curls', textures: ['curly', 'coily'], files: { coily: 'curls-coily' } },
   { id: 'shaggy', label: 'Shaggy', textures: ['straight'] },
-  { id: 'balding', label: 'Balding', textures: ['straight', 'curly', 'coily'] },
+  { id: 'balding', label: 'Balding', textures: ['straight'] },
   { id: 'bob', label: 'Bob', textures: ['straight', 'wavy', 'curly'], files: { wavy: 'bob-wavy', curly: 'bob-curly' } },
-  { id: 'afro', label: 'Afro', textures: ['coily', 'curly'] },
+  { id: 'afro', label: 'Afro', textures: ['coily', 'curly'], files: { curly: 'afro-curly' } },
   { id: 'long', label: 'Long', textures: ['straight', 'wavy', 'curly'], files: { wavy: 'long-wavy', curly: 'long-curly' } },
   { id: 'parted', label: 'Center part', textures: ['straight'] },
   { id: 'ponytail', label: 'Ponytail', textures: ['straight'] },
   { id: 'pigtails', label: 'Pigtails', textures: ['straight'] },
-  { id: 'braids', label: 'Braids', textures: ['straight', 'curly', 'coily'] },
+  { id: 'braids', label: 'Braids', textures: ['straight', 'curly', 'coily'], files: { curly: 'braids-coily', coily: 'braids-coily' } },
   { id: 'cornrows', label: 'Cornrows', textures: ['coily'] },
   { id: 'locs', label: 'Locs', textures: ['coily'] },
   { id: 'bun', label: 'Top bun', textures: ['straight', 'curly', 'coily'], files: { curly: 'bun-puff', coily: 'bun-puff' } },
   { id: 'buns', label: 'Two buns', textures: ['straight', 'curly', 'coily'], files: { curly: 'buns-puff', coily: 'buns-puff' } },
-  { id: 'updo', label: 'Updo', textures: ['coily', 'straight'] },
+  { id: 'updo', label: 'Updo', textures: ['coily', 'straight'], files: { straight: 'updo-straight' } },
 ];
 
 export const HAIR_COLORS = [
@@ -89,6 +90,7 @@ export function loadHairGeometry(style, texture) {
     const url = new URL(`../../assets/characters/canonical/hair/${file}.glb`, import.meta.url).href;
     geometries.set(file, loadGLTF(url).then(hairGeometry).catch((err) => {
       warnOnce(file, `Couldn't load hair "${file}" (${err.message}): drawing no hair.`);
+      geometries.delete(file);   // a later look tries again (a network hiccup isn't for good)
       return null;
     }));
   }

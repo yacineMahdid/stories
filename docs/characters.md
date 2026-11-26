@@ -84,34 +84,38 @@ Each style offers only the textures that change its look, natural first. A textu
 missing, unknown or not offered draws the style's natural one (`hairTexture(style, texture)`),
 so `{ style: 'spiky', texture: 'curly' }` is plain Spiky and every saved `{ style, color }`
 keeps working. (The seven styles that came first keep their outlines and hairlines; their locks
-are now broader and less even, and Ponytail's tail swings out.) The Look panel's *Hair texture*
-select and the lab's chips list only the style's textures; they write `texture` only when it
-isn't the style's natural one, and a style change keeps it only while the new style offers it
-(and it isn't that style's natural one). A style the engine doesn't know, say from a newer
-`staging.json`, draws no hair and logs one warning; the character still loads.
+are now broader and less even, Ponytail's tail swings out to one side, and Long's lower layer
+comes out flush with the top one.) The Look panel's *Hair texture* select and the lab's chips list
+only the style's textures; they write `texture` only when it isn't the style's natural one. A
+picked texture is the person's: a style change keeps it while the new style offers it (unless
+it is that style's natural one, which isn't written), and it comes back on a later style that
+offers it. A texture in the file that the style doesn't offer shows in the select as "curly (not
+offered: drawn Straight)", so it can be cleared. A style the engine doesn't know, say from a
+newer `staging.json`, draws no hair and logs one warning; the character still loads, and a file
+that failed to load is fetched again by the next look that needs it.
 
 | Style | `style` | Textures, natural first | Own meshes (`files`) | Look |
 |---|---|---|---|---|
 | Spiky | `spiky` | straight | | short, ears out, a zigzag fringe of pointed tips |
 | Side part | `swept` | straight | | short back and sides, one lock swept across from a part; pixie cuts too |
-| Buzz cut | `buzz` | straight, coily | | a close cap that follows the skull, a little scalp showing |
-| Fade | `fade` | coily, straight | | a short rounded top over sides that fade into the skin; straight is a crew cut |
+| Buzz cut | `buzz` | straight | | a close cap that follows the skull, a little scalp showing |
+| Fade | `fade` | coily, straight | `fade-straight` | a short rounded top over sides that fade into the skin; straight is a crew cut |
 | Quiff | `quiff` | straight | | a tall front lock rolling back over short sides; pompadour, slicked back |
-| Short curls | `curls` | curly, coily | | a rounded cap of chunky curls over the forehead and ears |
+| Short curls | `curls` | curly, coily | `curls-coily` | a rounded cap of chunky curls over the forehead and ears; coily is a short rounded crop with a clean hairline |
 | Shaggy | `shaggy` | straight | | a choppy mop between Spiky and Bob; bowl and mop-top cuts |
-| Balding | `balding` | straight, curly, coily | | a bare dome, a band round the back, tufts above the ears |
+| Balding | `balding` | straight | | a bare dome, a band round the back from short sideburns, tufts above the ears |
 | Bob | `bob` | straight, wavy, curly | `bob-wavy`, `bob-curly` | a blunt fringe, sides to the jaw |
-| Afro | `afro` | coily, curly | | a big round cloud with a soft outline and a rounded hairline |
+| Afro | `afro` | coily, curly | `afro-curly` | a big round cloud growing out of a soft hairline; curly makes its outline and hairline of curls |
 | Long | `long` | straight, wavy, curly | `long-wavy`, `long-curly` | past the shoulders, with a fringe |
 | Center part | `parted` | straight | | long, parted in the middle, the forehead open |
 | Ponytail | `ponytail` | straight | | a tail that swings out to one side |
 | Pigtails | `pigtails` | straight | | a center part, bangs, two smooth bunches |
-| Braids | `braids` | straight, curly, coily | | two three-strand plaits beside the face |
+| Braids | `braids` | straight, curly, coily | `braids-coily` (curly and coily) | two three-strand plaits beside the face; curly and coily have no fringe, a center part and a lumpy cap |
 | Cornrows | `cornrows` | coily | | raised braided rows back to the nape, short braid ends |
 | Locs | `locs` | coily | | rope-like locs to the shoulders from a sectioned scalp; twists and box braids too |
 | Top bun | `bun` | straight, curly, coily | `bun-puff` (curly and coily) | a wound bun on top; a soft round puff when curly or coily |
 | Two buns | `buns` | straight, curly, coily | `buns-puff` (curly and coily) | two buns high on the head; two afro puffs when curly or coily |
-| Updo | `updo` | coily, straight | | swept up into a tall crown of rolled twists, nape and ears bare |
+| Updo | `updo` | coily, straight | `updo-straight` | swept up into a tall crown of rolled twists, nape and ears bare; straight has a smooth bun and rolls |
 
 ### Textures
 
@@ -122,13 +126,16 @@ isn't the style's natural one, and a style change keeps it only while the new st
 - **Coily**: big soft rounded forms (a cloud, puffs, rolls, rows) with low lumps and a fine,
   felted tile of tiny rings; the most matte, with the faintest sheen.
 
-A texture is drawn one of two ways. Where it has to change the shape, it has its own mesh,
-listed in the style's `files`: wavy and curly Bob and Long, and a round puff that curly and coily
-share for each bun style. Otherwise the style's own mesh is drawn with that texture's tile:
-straight and wavy use the strands tile, curly the curls tile and coily the coils tile. A style
-lists a texture only where one of the two changes its look. The tiles are drawn once per page,
-on first use, as canvas textures shared by every character (`setHairTexture`); a texture change
-swaps the tiles and the material's normal strength, roughness and sheen, never the shader.
+Every texture a style offers besides its natural one has a mesh of its own, listed in the style's
+`files`: wavy and curly Bob and Long, the curly Afro, the coily Short curls, the straight Fade
+(a crew cut) and Updo (smooth rolls), and three that curly and coily share, where the shape
+is the same and only the tile differs: the Braids' lumpy cap and the puffs of Top bun and Two
+buns. A texture that would only swap the tile on the natural mesh (a coily buzz cut, a curly
+balding band) is not offered: it would not change the look. Each mesh is drawn with its
+texture's tile: straight and wavy use the strands tile, curly the curls tile and coily the
+coils tile. The tiles are drawn once per page, on first use, as canvas textures shared by every
+character (`setHairTexture`); a texture change swaps the tiles and the material's normal
+strength, roughness and sheen, never the shader.
 
 ### Sculpting
 
@@ -151,12 +158,22 @@ space. The hair is sculpted, not a smooth helmet:
   tied.
 - **Hairline:** the shell dips under the skin along the style's hairline, measured exactly to
   its segments, so edges come out as smooth curves with a rounded edge. Hair only millimetres
-  thick (the buzz cut, the fade's sides) instead grows out of the skin at a shallow angle, so
-  its hairline shows no ledge.
+  thick (the buzz cut, the fade) instead lies on the skin where it ends: its last centimetres,
+  and the fade's faded sides, are a film under a millimetre over the skin, with the skin's own
+  normals, no occlusion and, right at the edge, the skin's colour, so hair and skin meet with no
+  ledge or line. Thin shells (buzz cut, fade, cornrows, the locs' cap) take the skin's normals
+  tilted by their own relief, so the low-poly skull's facets never show through them.
+- **Volumes** (the afro's cloud) grow out of the hairline: close to the head at the sideburns
+  and the nape, out to their full size a hand's width from the edge, so the underside rolls in
+  and the front curves into the hairline.
+- **Motion:** hair is rigid on the `Head` bone, so hanging hair doesn't swing with the body.
+  Front pieces end above the shoulders or behind them, and the clips keep the hands out of the
+  hair: *Wave* raises the arm out to the side and waves at shoulder height, clear of hair that
+  hangs beside the cheeks (long hair, locs, a bob).
 
 ### Files
 
-`assets/characters/canonical/hair/<file>.glb`: 26 files, the 20 styles plus the 6 texture
+`assets/characters/canonical/hair/<file>.glb`: 31 files, the 20 styles plus the 11 texture
 meshes. Each is a quantized binary glTF (`KHR_mesh_quantization`) with one mesh and no node
 transform:
 
@@ -165,7 +182,10 @@ transform:
 - `NORMAL`: int8, normalized.
 - `TEXCOORD_0`: int16, normalized, storing uv / 16 (`UV_SCALE`, shared with `hair.js`, whose
   tiles repeat 16 times). u runs across the strands and v along them, root to tip, in units of
-  a tile, which covers 0.24 × 0.48 m of hair.
+  a tile, which covers 0.24 × 0.48 m of hair. The buzz cut, the fade, short curls, the afro
+  and the curly bob and long hair use a conformal chart whose two poles both lie where there is
+  no hair (under the chin, on the neck), so curls and coils stay round and no pole pinches the
+  tile anywhere it shows.
 - `COLOR_0`: uint8, normalized, four channels:
   - r: baked occlusion (creases, the hairline, under buns, tails and rolls, inside long hair);
   - g: skin mix, how much the skin shows through (faded sides, the buzz cut's scalp, partings,
@@ -177,8 +197,10 @@ transform:
 - `extras`: `{ attachTo: 'Head', style, texture, tile: [0.24, 0.48], uvScale: 16 }`.
 
 `index.json` lists `[{ id, label, textures, files }]`; nothing reads it. A page fetches only the
-files its looks use. The 26 files take 28.9 MB in all, from 0.27 MB (Balding) to 1.5 MB (Locs),
-or 0.19 to 0.94 MB gzipped; each has between 8,592 (Balding) and 47,370 (Locs) vertices.
+files its looks use. The 31 files take 29.9 MB in all, from 0.26 MB (Balding) to 1.4 MB (Long),
+or 0.17 to 0.87 MB gzipped; each has between 8,179 (Balding) and 44,013 (Long) vertices. The
+styles that came after hair-soft's seven thin out the shell's grid near its pole, where its rows
+are finer around than anywhere else, so they take about a sixth less than they otherwise would.
 
 ### Material
 
@@ -199,25 +221,33 @@ A character with no look in `staging.json` gets one guessed from its card's appe
 something is changed there.
 
 - **Style words**, the first match in this order: balding, cornrows, updo, locs, two buns, afro,
-  braids, pigtails, ponytail, top bun, quiff, fade, buzz cut, short curls, shaggy, spiky, side
-  part, center part, bob, long. Every braid or plait word gives Braids, except box, micro,
-  knotless and goddess braids (Locs) and cornrows, feed-in and stitch braids (Cornrows).
-  Dreadlocks, sisterlocks, two-strand, Senegalese or passion twists and hair in twists give
-  Locs. A bob needs a word before it ("a bob", "her curly bob"), so "Bob is her uncle" is no
-  haircut; Two buns needs two, space or double buns, or hair in buns, so "a tray of buns" is no
-  hairstyle. "Her smile fades", "high-top sneakers", "he dreads Mondays" and "to and fro" name
+  braids, pigtails, ponytail, top bun, bob, center part, long, quiff, fade, buzz cut, short
+  curls, shaggy, spiky, side part. A named length comes before a parting or a combed-back word,
+  so long hair with a side part is Long and a bob with curtain bangs is a Bob; a middle parting
+  on short hair isn't Center part. Every braid or plait word gives Braids, except box, micro,
+  knotless and goddess braids (Locs), cornrows, feed-in and stitch braids (Cornrows), and braids
+  pinned, piled or swept up (Updo). Dreadlocks, sisterlocks, dreads (with, in or wearing
+  dreads), two-strand, Senegalese, passion or chunky twists and a person with or in twists give
+  Locs. Hair pulled or tied back into a bun, even "a neat bun", is a Top bun, not a Ponytail. A
+  bob needs a word before it ("a bob", "her curly bob"), so "Bob is her uncle" and "her Bob" (a
+  person, written with a capital) are no haircut; Two buns needs two, space or double buns, or
+  hair in buns, so "a tray of buns" is no hairstyle, and buns to eat ("a baker who bakes two
+  buns", "a boy eating a bun") are no hairstyle unless hair words are there too. "Her smile
+  fades", "high-top sneakers", "he dreads Mondays", "a mystery with twists" and "to and fro" name
   no style.
 - **Texture words that come with a style:** afro puffs and two puffs give Two buns, coily; a
   high or afro puff, a pineapple updo or hair in a pineapple, Top bun, coily; a crew cut, flat
   top, short back and sides, high and tight or military haircut, Fade, straight; tight curls, a
-  short afro or a TWA, Short curls, coily; ringlets and long curls, Long, curly; long or beach
-  waves, Long, wavy; flat twists, Updo, coily.
+  short, small, tiny or teeny afro or a TWA, Short curls, coily; ringlets and long curls, Long,
+  curly; long or beach waves, Long, wavy; flat twists, Updo, coily. A hi-top or high-top fade is
+  a Fade.
 - **Other texture words** count only where the style offers that texture: coily (coily, coils,
   kinky, tight curls, afro-textured), curly (curly, curls but not "lip curls" or "curls up",
   ringlets, corkscrews, frizzy, permed), wavy (wavy, loose, soft, beachy or gentle waves) and
   straight (straight or sleek hair).
-- **No hair** for bald, bald-headed, a shaved or shaven head and hairless, unless balding words
-  say otherwise ("going bald", "a bald patch", "bald on top" give Balding).
+- **No hair** for bald, bald-headed, a shaved or shaven head (also "shaved-head", "his head
+  shaved", "shaves his head"), no hair and hairless, unless balding words say otherwise ("going
+  bald", "a bald patch", "bald on top" give Balding).
 - **No style word:** a style from a pool for who the character is. Older men: balding, side
   part, buzz cut, quiff, short curls. Men and boys: spiky, side part, buzz cut, fade, quiff, short
   curls, shaggy, afro, locs. Older women: top bun, short curls, bob, updo, side part. Everyone
