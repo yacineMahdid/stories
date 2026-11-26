@@ -74,8 +74,16 @@ export class Face {
     this.talkTimer = 0;
     this.talkTarget = 0;
     this.lastKey = '';
+    this.muzzle = null;
+    this.browRidge = false;
     this.draw();
   }
+
+  /** A snout that carries the mouth (see muzzle() in parts.js), or null to draw it on the face. */
+  setMuzzle(muzzle) { this.muzzle = muzzle; this.lastKey = ''; }
+
+  /** A 3D brow ridge (see parts.js) shows the brows, so none are drawn under it. */
+  setBrowRidge(on) { this.browRidge = on; this.lastKey = ''; }
 
   setParams(params) { this.params = { ...DEFAULT_FACE, ...params }; this.lastKey = ''; }
 
@@ -135,16 +143,35 @@ export class Face {
     const glow = this.eyeMode === 'glow';
     if (!glow) for (const [x, side] of eyes) this.eye(x, eyeY, side);
     const brows = e.brows ?? (p.brows ? 'soft' : null);
-    if (brows) for (const [x, side] of eyes) drawBrow(g, x, eyeY - 82 * k, side, brows, p);
+    if (brows && !this.browRidge) for (const [x, side] of eyes) drawBrow(g, x, eyeY - 82 * k, side, brows, p);
     if (e.shade) drawShade(g, e.shade, layout);
     if (glow) for (const [x, side] of eyes) EYE_MODES.glow(g, x, eyeY, side, k, p, t, e);
     if (e.tears) drawTears(g, e.tears, layout, k, t);
 
     if (p.whiskers) this.whiskers(p.whiskers, noseY);
     this.nose(SIZE / 2, noseY);
-    if (this.talking && this.mouthOpen > 0.08) this.talkMouth(SIZE / 2, mouthY);
-    else (MOUTHS[e.mouth ?? p.mouth] ?? MOUTHS.smile)(g, SIZE / 2, mouthY, p, t);
+    if (this.muzzle) this.drawMuzzle(p, e, t);
+    else this.mouth(g, SIZE / 2, mouthY, p, e, t);
     this.texture.needsUpdate = true;
+  }
+
+  mouth(g, x, y, p, e, t) {
+    if (this.talking && this.mouthOpen > 0.08) this.talkMouth(g, x, y);
+    else (MOUTHS[e.mouth ?? p.mouth] ?? MOUTHS.smile)(g, x, y, p, t);
+  }
+
+  /** The mouth on the snout: the canvas is projected onto it from the front, so one face pixel
+   *  there is as wide as on the face (times the snout's mouth scale). */
+  drawMuzzle(p, e, t) {
+    const m = this.muzzle, g = m.ctx, W = m.size, perUnit = SIZE / 0.46;
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.fillStyle = m.color;
+    g.fillRect(0, 0, W, W);
+    g.setTransform(m.scale * W / (2 * perUnit * m.radii[0]), 0, 0, m.scale * W / (2 * perUnit * m.radii[1]), W / 2, (0.5 - m.mouthY / 2) * W);
+    g.lineCap = 'round';
+    g.lineJoin = 'round';
+    this.mouth(g, 0, 0, p, e, t);
+    m.texture.needsUpdate = true;
   }
 
   mask({ color, shape = 'heart' }, eyes, eyeY, mouthY) {
@@ -218,8 +245,8 @@ export class Face {
     (NOSES[this.params.nose] ?? NOSES.triangle)(this.ctx, x, y, this.params);
   }
 
-  talkMouth(x, y) {
-    const g = this.ctx, h = 8 + 30 * this.mouthOpen, w = 34;
+  talkMouth(g, x, y) {
+    const h = 8 + 30 * this.mouthOpen, w = 34;
     g.fillStyle = '#7a2a2e';
     g.beginPath();
     g.moveTo(x - w, y - 4); g.quadraticCurveTo(x, y - 10, x + w, y - 4);

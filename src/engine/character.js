@@ -10,7 +10,7 @@ import { EMOTIONS } from './emotions.js';
 import { Symbols } from './symbols.js';
 import { applyBody } from './body.js';
 import { EAR_STYLES, buildEars } from './ears.js';
-import { buildParts } from './parts.js';
+import { buildParts, poseBrowRidge } from './parts.js';
 
 // A character is the canonical base + a spec. Everything that makes characters differ
 // lives in the spec; the mesh, skeleton and animations are shared.
@@ -139,9 +139,20 @@ export class Character {
   setParts(parts = []) {
     for (const { object } of this.partObjects ?? []) {
       object.removeFromParent();
-      object.traverse((m) => { if (m.isMesh) { m.geometry.dispose(); m.material.dispose(); } });
+      object.traverse((m) => { if (m.isMesh) { m.geometry.dispose(); m.material.map?.dispose(); m.material.dispose(); } });
     }
     this.partObjects = buildParts(parts).map((part) => { this.bones[part.bone].add(part.object); return part; });
+    // A snout carries the mouth, so the face draws it there (see Face.setMuzzle); a brow ridge
+    // takes the place of drawn brows and moves with the emotion.
+    this.face.setMuzzle(this.partObjects.find((part) => part.muzzle)?.muzzle ?? null);
+    this.face.setBrowRidge(this.partObjects.some((part) => part.ridge));
+    this.poseParts();
+  }
+
+  /** Parts that follow the emotion: a brow ridge frowns, lifts and worries like drawn brows. */
+  poseParts() {
+    const brows = EMOTIONS[this.face.emotionId]?.brows ?? null;
+    for (const part of this.partObjects ?? []) if (part.ridge) poseBrowRidge(part.ridge, brows);
   }
 
   /** Swap the ears (see ears.js). Animal ears take the hair color, or the fur color. */
@@ -220,6 +231,7 @@ export class Character {
   /** Show an emotion (see emotions.js): face, floating symbols and a small body motion. */
   setEmotion(id) {
     this.face.setEmotion(id);
+    this.poseParts();
     const emotion = EMOTIONS[this.face.emotionId];
     this.symbols.set(emotion.symbols ?? []);
     this.nextMotion = emotion.motion ?? null;

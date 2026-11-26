@@ -64,6 +64,11 @@ cow, dog, cat, horse, frog), all on the same rig and animations.
   and eye shade on the face canvas, floats symbols around the head (`symbols.js`: sweat
   drops, anger veins, steam, !, ?, Zzz, hearts, dizzy stars, gloom lines, menacing ゴ...) and
   can add a body motion (tremble, bounce, sway, slump...).
+- Emotions work the same on every species. On a snout (dog, horse, cow, baboon, gorilla) the
+  mouth, resting, talking or the emotion's, is drawn on the snout under the nose: the snout
+  has its own canvas, projected from the front (`muzzle()` in `parts.js`). The gorilla's
+  brow ridge is two halves that frown, lift and worry with the emotion's brows
+  (`poseBrowRidge`), and no brows are drawn under it.
 
 ```js
 const hero = await createCharacter(SPECIES.dog.spec);

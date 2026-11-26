@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { BROWS } from './face-parts.js';
 
 // Extra 3D parts for animal characters: snouts, noses, horns, manes, brow ridges, eye domes and
 // tails. Positions are in the space of the bone each part rides on: Head (y up from the neck,
@@ -53,18 +54,39 @@ const at = (obj, x, y, z, rx = 0, ry = 0, rz = 0) => { obj.position.set(x, y, z)
 // --- builders, each returning [{ bone, object, wag? }] -----------------------------------------
 
 const SNOUTS = {
-  // [center, radii] in Head space
-  dog: [[0, 0.105, 0.2], [0.085, 0.062, 0.078]],
-  horse: [[0, 0.085, 0.215], [0.096, 0.076, 0.12]],
-  cow: [[0, 0.078, 0.2], [0.13, 0.075, 0.08]],
-  baboon: [[0, 0.1, 0.225], [0.072, 0.066, 0.135]],
-  gorilla: [[0, 0.075, 0.175], [0.12, 0.066, 0.06]],
+  // [center, radii, mouth] in Head space. The mouth is drawn on the snout, under the nose:
+  // [height on the snout's front (1 top, -1 bottom), size relative to a mouth on the face].
+  dog: [[0, 0.105, 0.2], [0.085, 0.062, 0.078], [-0.15, 0.8]],
+  horse: [[0, 0.085, 0.215], [0.096, 0.076, 0.12], [-0.25, 0.9]],
+  cow: [[0, 0.078, 0.2], [0.13, 0.075, 0.08], [-0.25, 0.9]],
+  baboon: [[0, 0.1, 0.225], [0.072, 0.066, 0.135], [-0.25, 0.75]],
+  gorilla: [[0, 0.075, 0.175], [0.12, 0.066, 0.06], [-0.05, 0.8]],
 };
+
+/**
+ * A snout that carries the mouth: the face draws its mouth (resting, emotion or talking) on this
+ * canvas, which is projected onto the snout from the front, so it reads like the face's own mouth.
+ */
+function muzzle(r, color, [mouthY, scale]) {
+  const size = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 4;
+  const mesh = ellipsoid(r, color);
+  const pos = mesh.geometry.attributes.position, uv = mesh.geometry.attributes.uv;
+  for (let i = 0; i < pos.count; i++) uv.setXY(i, 0.5 + pos.getX(i) / 2, 0.5 + pos.getY(i) / 2);
+  mesh.material.color.set(0xffffff); // the canvas carries the snout's color
+  mesh.material.map = texture;
+  return { mesh, muzzle: { ctx: canvas.getContext('2d'), texture, size, radii: r, color, mouthY, scale } };
+}
 
 export const PART_BUILDERS = {
   snout({ shape = 'dog', color, nose = '#2a2224', nostrils = '#4a2c30' }) {
-    const [c, r] = SNOUTS[shape];
-    const out = [{ bone: 'Head', object: at(ellipsoid(r, color), ...c) }];
+    const [c, r, mouth] = SNOUTS[shape];
+    const { mesh, muzzle: m } = muzzle(r, color, mouth);
+    const out = [{ bone: 'Head', object: at(mesh, ...c), muzzle: m }];
     const front = c[2] + r[2];
     if (shape === 'dog') {
       out.push({ bone: 'Head', object: at(ellipsoid([0.032, 0.024, 0.026], nose, { roughness: 0.35 }), 0, c[1] + r[1] * 0.45, front - 0.008) });
@@ -76,8 +98,9 @@ export const PART_BUILDERS = {
     }
     return out;
   },
-  brow({ color }) {
-    return [{ bone: 'Head', object: at(ellipsoid([0.13, 0.034, 0.03], color), 0, 0.226, 0.152) }];
+  brow({ color }) { // two halves, so the ridge can frown, lift and worry with the emotion's brows
+    const halves = [-1, 1].map((s) => at(ellipsoid([0.075, 0.034, 0.03], color), s * 0.056, BROW_Y, 0.152));
+    return [{ bone: 'Head', object: group(...halves), ridge: halves }];
   },
   horns({ color = '#efe6d2' }) {
     return [-1, 1].map((s) => ({
@@ -123,6 +146,19 @@ export const PART_BUILDERS = {
     return [{ bone: 'Tail', object: g, wag: T.wag }];
   },
 };
+
+const BROW_Y = 0.226;
+
+/** Pose a brow ridge like the face would draw the brows (see BROWS in face-parts.js); null rests it. */
+export function poseBrowRidge(halves, name) {
+  halves.forEach((half, i) => {
+    const side = i ? 1 : -1;
+    let d = BROWS[name] ?? BROWS.soft;
+    if (d.asym) d = side < 0 ? { tilt: -0.1, lift: -26 } : { tilt: 0.22, lift: 4 };
+    half.rotation.z = side * d.tilt * 0.8;
+    half.position.y = BROW_Y - d.lift * (0.46 / 512) * 0.8;
+  });
+}
 
 /** Build all parts of a spec: parts = [{ type: 'snout', shape: 'dog', color }, ...]. */
 export function buildParts(parts = []) {

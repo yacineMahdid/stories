@@ -15,7 +15,7 @@ export const SPECIES = {
     label: 'Baboon',
     spec: {
       skin: '#9a8c6a', fur: { second: '#cfc39e', belly: true, paws: '#4a4038' }, ears: 'small', body: 'stocky',
-      face: { mask: { color: '#5b4b46', shape: 'heart' }, eyes: 'sharp', eyeColor: '#8a6a3a', eyeLine: '#2a201c', nose: 'none', mouth: 'flat', mouthY: 50, brows: true, browColor: '#2f2622' },
+      face: { mask: { color: '#5b4b46', shape: 'heart' }, eyes: 'sharp', eyeColor: '#8a6a3a', eyeLine: '#2a201c', nose: 'none', mouth: 'flat', mouthY: 50, mouthColor: '#1f1514', brows: true, browColor: '#2f2622' },
       parts: [{ type: 'snout', shape: 'baboon', color: '#5b4b46', nostrils: '#241b1a' }, { type: 'ruff', color: '#b8ab84' }, { type: 'tail', shape: 'baboon', color: '#9a8c6a' }],
     },
   },
