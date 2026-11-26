@@ -5,8 +5,8 @@ import { coverPreviews, directionKey, effectiveSpec, getStudio, getPreview, gues
 import { getStaging, STAGING_FILE, useStaging, useStagingStatus, type Direction, type Op } from '../lib/staging'
 import { edit3d } from '../lib/staging-history'
 import { uploadFile } from '../lib/persistence'
-import { resizeKeepingOrder } from '../lib/structure'
-import { sceneEntryKey } from '../lib/direct'
+import { fileFrom, putStill, removeStill, takeStill } from '../lib/stills'
+import { isExact, isLocked, sceneEntry, sceneEntryKey } from '../lib/direct'
 import { createDirectEdits, DirectPanel, useDirectKeys, useDirectPointer } from './DirectPanel'
 
 /* ───────────── shared ───────────── */
@@ -42,10 +42,6 @@ function useLiveDocument(editor: Editor, delay: number) {
   }, [editor, delay])
   const now = useCallback(() => setDoc(getSnapshot(editor.store).document), [editor])
   return [doc, now] as const
-}
-
-function fileFrom(blob: Blob, name: string) {
-  return new File([blob], name.replace(/[^a-z0-9-]+/gi, '-').toLowerCase() + '.png', { type: 'image/png' })
 }
 
 function Busy({ on, children }: { on: boolean; children: ReactNode }) {
@@ -350,35 +346,22 @@ export function PagePreview({ editor, shape }: { editor: Editor; shape: SceneSha
     return () => { live = false; clearTimeout(t) }
   }, [doc, direction, shape.id])
 
-  // The still goes on the page card itself, so the Story canvas reads like a storyboard.
-  // The card grows to make room for the picture; what sits below it moves down so the reading
-  // order stays, and the card remembers by how much it grew, so removing the still gives it back.
+  // The still goes on the page card itself, so the Story canvas reads like a storyboard (see
+  // app/src/lib/stills.ts: the card grows for it, and gives it back when the still goes).
   const addStill = async () => {
     setSaving(true)
     setProblem('')
     try {
-      const blob = await view.still(960, 540)
-      const url = await uploadFile(fileFrom(blob, `${shape.props.title || 'page'}-still`))
-      const current = editor.getShape(shape.id) as SceneShape
-      const want = Math.max(current.props.h, Math.round(current.props.w * 9 / 16 * 0.92) + 250)
-      const grown = Number(current.meta?.stillGrow ?? 0) + (want - current.props.h)
+      const url = await takeStill(view, shape.props.title)
       editor.markHistoryStoppingPoint('put still')
-      editor.run(() => {
-        editor.updateShape({ id: shape.id, type: 'scene', props: { still: url }, meta: { ...current.meta, stillGrow: grown } })
-        resizeKeepingOrder(editor, editor.getShape(shape.id) as SceneShape, want)
-      })
+      putStill(editor, shape.id, url)
     } catch (e) {
       setProblem(`The still could not be saved: ${e instanceof Error ? e.message : e}`)
     } finally { setSaving(false) }
   }
-  const removeStill = () => {
-    const current = editor.getShape(shape.id) as SceneShape
-    const grown = Number(current.meta?.stillGrow ?? 0)
+  const takeOffStill = () => {
     editor.markHistoryStoppingPoint('remove still')
-    editor.run(() => {
-      editor.updateShape({ id: shape.id, type: 'scene', props: { still: '' }, meta: { ...current.meta, stillGrow: 0 } })
-      if (grown > 0) resizeKeepingOrder(editor, editor.getShape(shape.id) as SceneShape, Math.max(260, current.props.h - grown))
-    })
+    removeStill(editor, shape.id)
   }
 
   return (
@@ -403,7 +386,7 @@ export function PagePreview({ editor, shape }: { editor: Editor; shape: SceneSha
         <button className="primary" onClick={() => openStage(shape.id)}>Open 3D stage</button>
         <button onClick={() => openStage(shape.id, { direct: true })} title="Open the 3D stage at this page in Direct mode: place the cast and props, and save it to the page">Direct in 3D</button>
         <button disabled={saving || busy} onClick={addStill}><Busy on={saving}>{shape.props.still ? 'Replace the card’s still' : 'Put this shot on the card'}</Busy></button>
-        {shape.props.still && <button onClick={removeStill}>Remove still</button>}
+        {shape.props.still && <button onClick={takeOffStill}>Remove still</button>}
       </div>
       {problem && <small className="three-error">{problem}</small>}
     </div>
@@ -444,7 +427,10 @@ export function StageOverlay({ editor, pageId, direct: directAtOpen = false, onC
   const [playing, setPlaying] = useState(false)
   const shownRef = useRef<string | null>(null)
   const [slow, setSlow] = useState(false) // directing: a re-stage that takes a while shows "Staging…"
+  const [framed, setFramed] = useState(0) // goes up each time a shot frames the camera (the panel's lens follows)
   const sync = () => { setState(view.state ? { ...view.state } : null); setShot(view.shotIndex) }
+  /** Frame shot i (its chip in the dock, or an edit of the camera that asks for it). */
+  const frame = (i: number) => { view.shot(i); setShot(view.shotIndex); setFramed((n) => n + 1) }
 
   // Direct mode: what is selected (a cast member or a prop of the page), and every edit.
   const [selected, setSelected] = useState<Picked | null>(null)
@@ -452,9 +438,14 @@ export function StageOverlay({ editor, pageId, direct: directAtOpen = false, onC
   selectedRef.current = selected
   const stagedRef = useRef<{ id: string; title: string } | null>(null)
   stagedRef.current = state ? { id: state.page.id, title: state.page.title } : null
-  const edits = useMemo(() => createDirectEdits(editor, view, { page: () => stagedRef.current, canvasChanged: docNow }), [editor, view])
+  const frameRef = useRef(frame)
+  frameRef.current = frame
+  const edits = useMemo(() => createDirectEdits(editor, view, { page: () => stagedRef.current, canvasChanged: docNow, goShot: (i) => frameRef.current(i) }), [editor, view])
   const { editable } = useStagingStatus()
-  const canStage = editable && !state?.locked
+  // A locked page (as the file says now): no dragging or keys that change staging; nor while a lock is on its way.
+  const own = state ? sceneEntry(direction, state.page.id, state.page.title) : {}
+  const locked = isLocked(own)
+  const canStage = () => editable && !locked && !edits.locking
 
   useEffect(() => {
     coverPreviews(true)
@@ -599,13 +590,13 @@ export function StageOverlay({ editor, pageId, direct: directAtOpen = false, onC
   }, [direct])
 
   useDirectPointer(view, direct, {
-    canStage: () => canStage,
+    canStage,
     select: setSelected,
     moved: (p, what) => (p.kind === 'cast' ? edits.moved(p.id, what) : edits.propMoved(p.id, what)),
   })
   useDirectKeys(direct, {
     selected: () => selectedRef.current,
-    canStage: () => canStage,
+    canStage,
     deselect: () => setSelected(null),
     close: onClose,
     page: (step) => { edits.flush(); go(index + step) },
@@ -649,13 +640,21 @@ export function StageOverlay({ editor, pageId, direct: directAtOpen = false, onC
       {direct && state && (
         <aside className="direct-panel" aria-label="Direction">
           <ThreeBoundary>
-            <DirectPanel editor={editor} view={view} state={state} selected={selected} onSelect={setSelected} edits={edits} retime={retime} />
+            <DirectPanel editor={editor} view={view} state={state} shot={shot} framed={framed} selected={selected} onSelect={setSelected} edits={edits} retime={retime} />
           </ThreeBoundary>
         </aside>
       )}
       <footer className="stage-dock" ref={dockRef}>
         <div className="three-chips">
-          {view.shots.map((s, i) => <button key={i} className={i === shot ? 'on' : ''} onClick={() => { view.shot(i); setShot(i) }}>{s.label ?? s.shot ?? `Shot ${i + 1}`}</button>)}
+          {view.shots.map((s, i) => {
+            // Directing, a shot with exact framing has a marker, and so has the picture of a locked page.
+            const exact = direct && isExact(s), picture = direct && locked && own.picture === i
+            const tip = [picture && 'The page\'s picture', exact && 'Exact framing (your view)'].filter(Boolean).join(', ')
+            return (
+              <button key={i} className={[i === shot && 'on', exact && 'exact', picture && 'picture'].filter(Boolean).join(' ')} title={tip || undefined}
+                onClick={() => (direct ? frame(i) : (view.shot(i), setShot(i)))}>{s.label ?? s.shot ?? `Shot ${i + 1}`}</button>
+            )
+          })}
         </div>
         {/* Directing, the moment is the page's own and lives in the panel (Moment); here it is the viewer's. */}
         {state && !direct && (

@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useValue, type Editor } from 'tldraw'
 import type { SceneShape } from '../shapes/types'
-import { directOptions, weathers, type CastInfo, type Picked, type StageState, type WorldView } from '../three/bridge.js'
+import { directOptions, weathers, type CastInfo, type Feedback, type Picked, type Shot, type StageState, type WorldView } from '../three/bridge.js'
 import { getStaging, STAGING_FILE, useStaging, useStagingStatus } from '../lib/staging'
 import { edit3d } from '../lib/staging-history'
+import { putStill, takeStill } from '../lib/stills'
 import { getCharacters } from '../lib/world'
 import {
-  castOps, castToEdit, dressingOps, facingChoice, heldChoice, memberIndex, momentHint, momentOps, movedFields, newMember, newThing, newThingId,
-  ownDressing, refersTo, sceneEntry, sceneKey, slugOf, stepKey, withMember, withoutMember, wordsOf, yawToward, type CastEntry, type Listed, type MomentField,
+  brief, cameraOps, cameraToEdit, castOps, castToEdit, dressingOps, exactShot, facingChoice, feedbackOps, framedShot, framingOf, FRAMINGS, heldChoice, isExact,
+  isLocked, lockedCamera, lockOps, memberIndex, momentHint, momentOps, movedFields, newMember, newNote, newShotAt, newThing, newThingId, noteIndex, noteShot,
+  ownDressing, ownFeedback, ownsCamera, refersTo, roundFov, sceneEntry, sceneEntryKey, sceneKey, shotName, shotSubjects, slugOf, stepKey, toggledDone, unlockOps,
+  withMember, withoutMember, withSubject, wordsOf, yawToward, type CastEntry, type Listed, type MomentField,
 } from '../lib/direct'
 
 /*
@@ -15,9 +18,9 @@ import {
  * Direction panel. Every edit goes through DirectEdits (one place that reads the stage and the file
  * and builds the ops, with app/src/lib/direct.ts), and is one Undo (edit3d).
  *
- * The panel, top to bottom: 1 header (page, Undo/Redo; the lock goes there too), 2 cast,
- * 3 selected character, 4 props on this page, 5 moment, then 6 camera and 7 notes for Claude
- * (see the spot marked below); 8, the lock, shows in the header.
+ * The panel, top to bottom: 1 header (page, Undo/Redo, and the lock: Lock page, or Locked with
+ * Unlock and Retake picture), 2 cast, 3 selected character, 4 props on this page, 5 moment,
+ * 6 camera (the shot on screen; the shot chips stay in the dock), 7 notes for Claude.
  */
 
 const SEASONS = ['spring', 'summer', 'autumn', 'winter']
@@ -33,6 +36,8 @@ export interface DirectContext {
   page(): { id: string; title: string } | null
   /** The canvas changed (a page's Who): show it on stage now, not after the canvas settles. */
   canvasChanged(): void
+  /** Frame shot i, as a click on its chip in the dock does. */
+  goShot(i: number): void
 }
 
 /**
@@ -45,11 +50,11 @@ export function createDirectEdits(editor: Editor, view: WorldView, ctx: DirectCo
   let closed = false
   let queue: Promise<void> = Promise.resolve()
   let waiting = 0
-  const run = (fn: () => void) => {
-    if (closed) return
+  const run = (fn: () => void, dropped?: () => void) => {
+    if (closed) return dropped?.()
     if (!waiting && !view.pending) return fn()
     waiting++
-    queue = queue.then(() => view.idle()).then(() => { waiting--; if (!closed) fn() }, () => { waiting-- })
+    queue = queue.then(() => view.idle()).then(() => { waiting--; if (!closed) fn(); else dropped?.() }, () => { waiting--; dropped?.() })
   }
 
   // A slider writes once it rests (or before anything else is edited), not at every step.
@@ -71,17 +76,17 @@ export function createDirectEdits(editor: Editor, view: WorldView, ctx: DirectCo
   /**
    * Run an edit of the page on stage: after any slider write waiting, and after a re-stage in
    * flight. It belongs to that page: when the stage has gone on to another page by then, it is
-   * dropped (it would read the other page's cast).
+   * dropped (it would read the other page's cast); `dropped` hears so.
    */
-  const now = (fn: (t: Target) => void) => {
+  const now = (fn: (t: Target) => void, dropped?: () => void) => {
     flush()
     const page = ctx.page()
-    if (!page) return
+    if (!page) return dropped?.()
     run(() => {
-      if (ctx.page()?.id !== page.id) return
+      if (ctx.page()?.id !== page.id) return dropped?.()
       const d = getStaging()
       fn({ page, key: sceneKey(d, page.id, page.title), entry: sceneEntry(d, page.id, page.title) })
-    })
+    }, dropped)
   }
   const sceneShape = (id: string) => editor.getShape(id as SceneShape['id']) as SceneShape | undefined
   const nameOf = (who: string) => getCharacters(editor).find((c) => c.id === who)?.props.name ?? view.castInfo().find((c) => c.who === who)?.name ?? ''
@@ -101,11 +106,43 @@ export function createDirectEdits(editor: Editor, view: WorldView, ctx: DirectCo
     if (s) editor.updateShape({ id: s.id, type: 'scene', props: { characterIds: ids } })
   }
 
+  /** The shot list a camera edit starts from: the page's own, or a copy of the shots the stage uses (copy on write). */
+  const shotsBase = (t: Target) => cameraToEdit(t.entry.camera, view.shots)
+  const writeCamera = (t: Target, list: Shot[], ...step: string[]) => edit3d(editor, cameraOps(t.key, list), stepKey(t.page.id, 'camera', ...step))
+  /**
+   * The camera where it is now, as exact framing, and held there: what is left of a hand orbit's
+   * glide stops, so what is saved is what stays on screen.
+   */
+  const steady = () => {
+    const v = view.cameraView()
+    if (v) view.setCameraView(v)
+    return v
+  }
+  /**
+   * `fn` once the stage shows the direction as it is now (the edit just made has been staged), for
+   * an edit that frames its shot again. Dropped when the stage has gone to another page or closed.
+   */
+  const staged = (pageId: string, fn: () => void) => {
+    const t0 = Date.now()
+    const tick = () => {
+      if (closed || ctx.page()?.id !== pageId || Date.now() - t0 > 120_000) return
+      if (view.upToDate(getStaging())) fn()
+      else setTimeout(tick, 40)
+    }
+    setTimeout(tick, 0)
+  }
+  /** The notes the page has now, and one changed (found again in the file, where it is now). */
+  const writeNotes = (t: Target, list: Feedback[], ...step: string[]) => edit3d(editor, feedbackOps(t.key, list), stepKey(t.page.id, 'note', ...step))
+  const noteStep = (note: Feedback, i: number) => (typeof note.added === 'string' && note.added ? note.added : String(i))
+  let locking = false
+
   const api = {
     flush,
     later,
     /** The stage closes: a slider's edit still waiting is saved; nothing after it. */
     close() { flush(); closed = true },
+    /** A lock is on its way (its picture is being made): nothing that changes staging meanwhile. */
+    get locking() { return locking },
 
     /** Change fields of a cast member's entry (undefined deletes one); `field` names the undo step. */
     member(who: string, patch: Partial<CastEntry>, field: string) {
@@ -206,6 +243,149 @@ export function createDirectEdits(editor: Editor, view: WorldView, ctx: DirectCo
     /** Save the hour (`time`), weather or season on the page; undefined resets it (deletes the key). */
     moment(field: MomentField, value: number | string | undefined) {
       now((t) => { edit3d(editor, momentOps(t.key, field, value), stepKey(t.page.id, field)) })
+    },
+
+    /* ── the camera: the shot on screen ── */
+
+    /** Use this view: the camera's pose now becomes the shot's exact framing (pos, target, fov). */
+    saveView() {
+      now((t) => {
+        const i = view.shotIndex
+        const list = shotsBase(t)
+        const v = steady()
+        if (!v || !list[i]) return
+        list[i] = exactShot(list[i], v)
+        writeCamera(t, list, String(i), 'view')
+      })
+    },
+    /** New shot from this view: added at the end with the view as its exact framing, and on screen. */
+    addShot() {
+      now((t) => {
+        const list = shotsBase(t)
+        const v = steady()
+        if (!v) return
+        list.push(newShotAt(list, v))
+        const i = list.length - 1
+        if (writeCamera(t, list, String(i), 'add')) staged(t.page.id, () => ctx.goShot(i))
+      })
+    },
+    /** Remove the shot on screen (never the last one); the one that takes its place is framed. */
+    removeShot() {
+      now((t) => {
+        const i = view.shotIndex
+        const list = shotsBase(t)
+        if (list.length < 2 || !list[i]) return
+        list.splice(i, 1)
+        if (writeCamera(t, list, String(i), 'remove')) staged(t.page.id, () => ctx.goShot(Math.min(i, list.length - 1)))
+      })
+    },
+    /** An automatic framing for the shot on screen (its exact framing goes), framed again by the director. */
+    setFraming(kind: string) {
+      now((t) => {
+        const i = view.shotIndex
+        const list = shotsBase(t)
+        if (!list[i]) return
+        list[i] = framedShot(list[i], kind)
+        if (writeCamera(t, list, String(i), 'framing')) staged(t.page.id, () => ctx.goShot(i))
+      })
+    },
+    /** Frame `who` in the shot on screen too (`on` true), or no longer, and frame it again. */
+    setSubject(who: string, on: boolean) {
+      now((t) => {
+        const i = view.shotIndex
+        const list = shotsBase(t)
+        if (!list[i]) return
+        const next = withSubject(list[i], view.castInfo().map((c) => ({ id: c.who, name: c.name })), who, on)
+        if (JSON.stringify(next) === JSON.stringify(list[i])) return
+        list[i] = next
+        if (writeCamera(t, list, String(i), 'on')) staged(t.page.id, () => ctx.goShot(i))
+      })
+    },
+
+    /* ── notes for Claude (the page's "feedback": they change nothing in 3D, also on a locked page) ── */
+
+    /** A note, with the camera now, the shot on screen and what is selected (`about`). */
+    addNote(text: string, about: string | null) {
+      now((t) => {
+        const i = view.shotIndex
+        const note = newNote({ text, view: view.cameraView(), shot: view.shots[i] ? noteShot(view.shots[i], i) : null, about, added: new Date().toISOString() })
+        writeNotes(t, [...ownFeedback(t.entry), note], note.added!, 'add')
+      })
+    },
+    /** Mark a note done, or open again. `hint`: where it was in the list. */
+    noteDone(note: Feedback, hint: number) {
+      now((t) => {
+        const list = ownFeedback(t.entry)
+        const i = noteIndex(list, note, hint)
+        if (i < 0) return
+        list[i] = toggledDone(list[i])
+        writeNotes(t, list, noteStep(note, i), 'done')
+      })
+    },
+    /** Delete a note. */
+    removeNote(note: Feedback, hint: number) {
+      now((t) => {
+        const list = ownFeedback(t.entry)
+        const i = noteIndex(list, note, hint)
+        if (i < 0) return
+        list.splice(i, 1)
+        writeNotes(t, list, noteStep(note, i), 'remove')
+      })
+    },
+
+    /* ── the lock ── */
+
+    /**
+     * Lock the page: exactly what is on screen. The view becomes the shot's exact framing (a camera
+     * moved by hand too), every other shot is framed exactly where the director puts it, the cast
+     * is written with everyone's at and facing, the moment and place as shown, "locked" and the
+     * shot on screen as "picture". The 960×540 still of the view is made and uploaded first; then
+     * the direction and the card's picture change in one go, one undo step. `done` hears how it went.
+     */
+    lock(done: (problem?: string) => void) {
+      now((t) => {
+        const st = view.state
+        if (locking || isLocked(t.entry)) return done()
+        if (!st || st.page.id !== t.page.id) return done('The page is not on stage yet.')
+        const i = view.shotIndex
+        const v = steady()
+        if (!v) return done('The page is not on stage yet.')
+        // The pin it stands at (not the stand-in a world with no pins gets).
+        const place = st.place?.id && editor.getShape(st.place.id as SceneShape['id'])?.type === 'pin' ? st.place.id : null
+        const ops = lockOps(t.key, t.entry, {
+          place, time: st.hour, season: st.season, weather: st.weather, ambient: st.ambient,
+          cast: view.castMarks(), camera: lockedCamera(view.shots, i, v, (k) => view.shotView(k)), picture: i,
+        })
+        const was = JSON.stringify(t.entry)
+        locking = true
+        takeStill(view, t.page.title).then((url) => {
+          locking = false
+          if (closed) return done()
+          // Nothing else changed the page meanwhile (its controls are off while it locks).
+          if (JSON.stringify(sceneEntry(getStaging(), t.page.id, t.page.title)) !== was) return done('The page changed while it was being locked. Try again.')
+          if (!edit3d(editor, ops, stepKey(t.page.id, 'lock'))) return done('The direction can\'t be edited now.')
+          putStill(editor, t.page.id as SceneShape['id'], url) // the same undo step
+          done()
+        }, (e) => {
+          locking = false
+          done(`The picture could not be made: ${e instanceof Error ? e.message : e}`)
+        })
+      }, () => done())
+    },
+    /** Unlock: "locked" goes; the rest of the direction, the picture shot and the card's still stay. */
+    unlock() {
+      now((t) => { if (isLocked(t.entry)) edit3d(editor, unlockOps(t.key), stepKey(t.page.id, 'unlock')) })
+    },
+    /** Retake picture: a new still of the picture shot on the card (after a look changed, say). */
+    retake(done: (problem?: string) => void) {
+      now((t) => {
+        const picture = typeof t.entry.picture === 'number' ? t.entry.picture : view.shotIndex
+        takeStill(view, t.page.title, { shot: picture }).then((url) => {
+          editor.markHistoryStoppingPoint('retake picture')
+          putStill(editor, t.page.id as SceneShape['id'], url)
+          done()
+        }, (e) => done(`The picture could not be made: ${e instanceof Error ? e.message : e}`))
+      }, () => done())
     },
   }
   return api
@@ -449,10 +629,23 @@ function useDragged(stage: number, key: unknown) {
   return [v ?? stage, setV] as const
 }
 
-export function DirectPanel({ editor, view, state, selected, onSelect, edits, retime }: {
+/** A small padlock, for a locked page. */
+export function LockGlyph() {
+  return (
+    <svg className="lock-glyph" width="9" height="11" viewBox="0 0 9 11" aria-hidden="true">
+      <path d="M2.1 5V3.6a2.4 2.4 0 0 1 4.8 0V5" fill="none" stroke="currentColor" strokeWidth="1.4" />
+      <rect x="0.5" y="4.8" width="8" height="5.7" rx="1.3" fill="currentColor" />
+    </svg>
+  )
+}
+
+export function DirectPanel({ editor, view, state, shot, framed, selected, onSelect, edits, retime }: {
   editor: Editor
   view: WorldView
   state: StageState
+  /** The shot on screen (its chip in the dock), and a count that goes up each time a shot is framed. */
+  shot: number
+  framed: number
   selected: Picked | null
   onSelect: (p: Picked | null) => void
   edits: DirectEdits
@@ -461,14 +654,22 @@ export function DirectPanel({ editor, view, state, selected, onSelect, edits, re
 }) {
   const direction = useStaging() // the panel follows every edit at once
   const { status, error, editable } = useStagingStatus()
-  // A locked page: nothing that changes staging (see the lock in the header).
-  const canStage = editable && !state.locked
+  const page = state.page
+  const own = sceneEntry(direction, page.id, page.title)
+  // Locking (its picture being made) or retaking the picture; and what went wrong, if anything.
+  const [working, setWorking] = useState<'' | 'lock' | 'retake'>('')
+  const [trouble, setTrouble] = useState('')
+  useEffect(() => setTrouble(''), [page.id])
+  // A note's View puts the camera somewhere else: the lens shows the camera's again.
+  const [viewed, setViewed] = useState(0)
+  // A locked page (as the file says now, ahead of the stage): nothing that changes staging. Notes
+  // stay open; nothing at all while a lock is on its way.
+  const locked = isLocked(own)
+  const canStage = editable && !locked && working !== 'lock'
+  const canNote = editable && working !== 'lock'
   const canUndo = useValue('can undo', () => editor.getCanUndo(), [editor])
   const canRedo = useValue('can redo', () => editor.getCanRedo(), [editor])
   const characters = useValue('characters', () => getCharacters(editor).map((c) => ({ id: c.id, name: c.props.name, color: c.props.color })), [editor])
-
-  const page = state.page
-  const own = sceneEntry(direction, page.id, page.title)
   const cast = view.castInfo()
   const onStage = new Set(cast.map((c) => c.who))
   const offStage = characters.filter((c) => !onStage.has(c.id))
@@ -495,24 +696,60 @@ export function DirectPanel({ editor, view, state, selected, onSelect, edits, re
   const saved = status === 'saving' ? 'Saving…' : status === 'saved' ? 'Saved' : ''
   const problem = status === 'error' ? error : !editable ? 'The direction can’t be edited until it has been read.' : ''
 
+  // The shots as the file has them now (ahead of the stage while it re-stages), and the one on screen.
+  const shots = cameraToEdit(own.camera, view.shots)
+  const shown = Math.min(shot, Math.max(0, shots.length - 1))
+  const picture = typeof own.picture === 'number' ? own.picture : null
+  const lockLine = picture == null || picture === shown ? 'Locked: this shot is the page\'s picture.'
+    : `Locked: the shot “${shotName(shots[picture], picture)}” is the page's picture.`
+
+  const lock = () => {
+    setWorking('lock')
+    setTrouble('')
+    edits.lock((p) => { setWorking(''); setTrouble(p ?? '') })
+  }
+  const retake = () => {
+    setWorking('retake')
+    setTrouble('')
+    edits.retake((p) => { setWorking(''); setTrouble(p ?? '') })
+  }
+
   return (
     <>
-      {/* 1. Header */}
+      {/* 1. Header: the page, Undo and Redo, and its lock (8) */}
       <header className="dp-head">
-        <div className="dp-title">
-          <small>{page.path || 'Loose page'}{saved && <span className="dp-saved" title={`In ${STAGING_FILE}`}> · {saved}</span>}</small>
-          <h2>{page.title || 'Untitled page'}</h2>
+        <div className="dp-top">
+          <div className="dp-title">
+            <small>{page.path || 'Loose page'}{saved && <span className="dp-saved" title={`In ${STAGING_FILE}`}> · {saved}</span>}</small>
+            <h2>{page.title || 'Untitled page'}</h2>
+          </div>
+          <div className="dp-tools">
+            <button onClick={() => { edits.flush(); editor.undo() }} disabled={!canUndo} aria-label="Undo" title="Undo (Ctrl+Z)">↶</button>
+            <button onClick={() => { edits.flush(); editor.redo() }} disabled={!canRedo} aria-label="Redo" title="Redo (Ctrl+Shift+Z)">↷</button>
+          </div>
         </div>
-        <div className="dp-tools">
-          <button onClick={() => { edits.flush(); editor.undo() }} disabled={!canUndo} aria-label="Undo" title="Undo (Ctrl+Z)">↶</button>
-          <button onClick={() => { edits.flush(); editor.redo() }} disabled={!canRedo} aria-label="Redo" title="Redo (Ctrl+Shift+Z)">↷</button>
-          {/* 8. Lock: the lock state and the Lock page button go here. */}
+        <div className="dp-lock">
+          {locked ? (
+            <>
+              <span className="dp-locked" title={`"locked": true in ${STAGING_FILE}: the direction is final, and the picture shot is on the page card`}><LockGlyph /> Locked</span>
+              <button disabled={!editable || !!working} onClick={() => edits.unlock()} title="Make the direction editable again (everything else stays)">Unlock</button>
+              <button disabled={!editable || !!working} onClick={retake} title="Render the picture shot onto the page card again, after a look changed, say">{working === 'retake' ? 'Taking the picture…' : 'Retake picture'}</button>
+            </>
+          ) : (
+            <button className="dp-lock-button" disabled={!canStage || !!working} onClick={lock}
+              title="Freeze the page's direction as you see it, and make the shot on screen the page's picture (a still on its card)">
+              <LockGlyph /> {working === 'lock' ? 'Locking…' : 'Lock page'}
+            </button>
+          )}
         </div>
       </header>
       {problem && <p className="dp-note three-error">{problem}</p>}
-      <p className="dp-note" title="With something selected: the arrows nudge it by the view (Shift: more), Q and E turn it, Delete removes a prop, Esc deselects.">
-        Click someone or a prop of this page, then drag it. Shift+drag turns it.
-      </p>
+      {trouble && <p className="dp-note three-error">{trouble}</p>}
+      {locked ? <p className="dp-note dp-locked-note">{lockLine}</p> : (
+        <p className="dp-note" title="With something selected: the arrows nudge it by the view (Shift: more), Q and E turn it, Delete removes a prop, Esc deselects.">
+          Click someone or a prop of this page, then drag it. Shift+drag turns it.
+        </p>
+      )}
 
       {/* 2. Cast */}
       <section className="dp-section" aria-label="Cast">
@@ -578,8 +815,193 @@ export function DirectPanel({ editor, view, state, selected, onSelect, edits, re
       {/* 5. Moment */}
       <MomentSection state={state} edits={edits} canStage={canStage} retime={retime} />
 
-      {/* 6. Camera and 7. Notes for Claude go here. */}
+      {/* 6. Camera */}
+      <CameraSection view={view} state={state} own={own} shots={shots} shot={shown} lensKey={`${shown}|${framed}|${viewed}`} cast={cast} edits={edits} canStage={canStage} />
+
+      {/* 7. Notes for Claude */}
+      <NotesSection page={page} own={own} shots={shots} shot={shown} selected={selected} edits={edits} canNote={canNote}
+        onView={(v) => { view.setCameraView(v); setViewed((n) => n + 1) }}
+        nameOf={(id) => characters.find((c) => c.id === id)?.name || cast.find((c) => c.who === id)?.name
+          || (view.thingMark(id) ? kindLabel(view.thingMark(id)!.kind) : null)
+          || (() => { const d = ownDressing(own).find((x) => x.id === id); return d ? kindLabel(d.kind) : null })()} />
     </>
+  )
+}
+
+/** A view to show: the camera's lens to 0.1°. */
+const lensOf = (view: WorldView, fallback = 35) => roundFov(view.cameraView()?.fov ?? fallback)
+
+function CameraSection({ view, state, own, shots, shot, lensKey, cast, edits, canStage }: {
+  view: WorldView
+  state: StageState
+  own: Record<string, any>
+  shots: Shot[]
+  shot: number
+  /** changes each time the camera is put somewhere (a shot framed, a note's view) */
+  lensKey: string
+  cast: CastInfo[]
+  edits: DirectEdits
+  canStage: boolean
+}) {
+  const cur = shots[shot]
+  const exact = isExact(cur)
+  const framing = framingOf(cur, cast.length > 0)
+  const listed: Listed[] = cast.map((c) => ({ id: c.who, name: c.name }))
+  const subjects = shotSubjects(cur, listed)
+  // The lens follows the camera: a shot framed, a note's view, the slider moved.
+  const [fov, setFov] = useDragged(lensOf(view, cur?.fov ?? 35), lensKey)
+  // Where the shots come from, until the page has its own (copy on write, like the cast).
+  const from = ownsCamera(own.camera) ? null : state.cameraFrom
+  const fromPage = from?.page ? view.pages().find((p) => p.id === from.page) : null
+  const fromName = fromPage?.title || fromPage?.path || 'another page'
+  const hint = !from || from.kind === 'own' ? null
+    : from.kind === 'inherit' ? `From “${fromName}” (this page continues it). Changing a shot here gives this page shots of its own.`
+    : from.kind === 'same' ? `The same shots as “${fromName}”. Changing one here gives this page shots of its own.`
+    : 'Framed automatically. Changing a shot here gives this page shots of its own.'
+  return (
+    <section className="dp-section" aria-label="Camera">
+      <h3>Camera</h3>
+      {hint && <p className="dp-hint">{hint}</p>}
+      <p className="dp-shot">
+        Shot {shot + 1} of {shots.length}: <b>{shotName(cur, shot)}</b>{exact && <small> · exact framing</small>}
+      </p>
+      <fieldset className="dp-fields" disabled={!canStage}>
+        <Row label="Framing" htmlFor="dp-framing">
+          <select id="dp-framing" value={framing} title="How the director frames this shot; Exact is where you put the camera (Use this view)"
+            onChange={(e) => { if (e.target.value !== 'exact') edits.setFraming(e.target.value) }}>
+            {exact && <option value="exact">Exact (your view)</option>}
+            <Choices value={exact ? '' : framing} list={FRAMINGS} />
+          </select>
+        </Row>
+        {!exact && framing !== 'establishing' && listed.length > 0 && (
+          <Row label="On" hint={subjects.others.length ? `Also frames ${subjects.others.map((x) => wordsOf(x.replace(/^shape:/, ''))).join(', ')}` : undefined}>
+            <div className="dp-on" role="group" aria-label="Frame these">
+              {listed.map((c) => {
+                const on = subjects.members.has(c.id)
+                const last = on && subjects.members.size === 1 && !subjects.others.length // a shot frames somebody
+                return (
+                  <label key={c.id} className="dp-check" title={last ? 'A shot frames at least one' : undefined}>
+                    <input type="checkbox" checked={on} disabled={last} onChange={(e) => edits.setSubject(c.id, e.target.checked)} />
+                    {c.name || 'Unnamed'}
+                  </label>
+                )
+              })}
+            </div>
+          </Row>
+        )}
+        <Row label="Lens" htmlFor="dp-lens">
+          <div className="dp-range">
+            <input id="dp-lens" type="range" min={20} max={65} step={0.1} value={fov} aria-label="Lens, field of view in degrees"
+              title="Wider or narrower, where the camera stands. Use this view saves it."
+              onChange={(e) => { const f = Number(e.target.value); setFov(f); view.setLens(f) }} />
+            <output htmlFor="dp-lens">{fov}°</output>
+          </div>
+        </Row>
+      </fieldset>
+      <div className="dp-actions">
+        <button disabled={!canStage} onClick={() => edits.saveView()} title="Save where the camera is now (and its lens) as this shot's exact framing">Use this view</button>
+        <button disabled={!canStage} onClick={() => edits.addShot()} title="Add a shot framed exactly where the camera is now">New shot from this view</button>
+        <button disabled={!canStage || shots.length < 2} onClick={() => edits.removeShot()} title="Remove the shot on screen">Remove shot</button>
+      </div>
+      <p className="dp-hint dp-after">The camera stays where you put it while you direct. A shot in the dock frames it again.</p>
+    </section>
+  )
+}
+
+/** When a note was written, short: "26 Nov, 14:02". */
+const whenOf = (iso: unknown) => {
+  const d = typeof iso === 'string' ? new Date(iso) : null
+  return d && !Number.isNaN(d.getTime()) ? d.toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''
+}
+
+function NotesSection({ page, own, shots, shot, selected, edits, canNote, onView, nameOf }: {
+  page: { id: string; title: string; path: string }
+  own: Record<string, any>
+  shots: Shot[]
+  shot: number
+  selected: Picked | null
+  edits: DirectEdits
+  canNote: boolean
+  /** put the camera at a note's view */
+  onView: (v: NonNullable<Feedback['view']>) => void
+  nameOf: (id: string) => string | null | undefined
+}) {
+  const notes = ownFeedback(own)
+  const [text, setText] = useState('')
+  const [copied, setCopied] = useState(false)
+  const [refused, setRefused] = useState<string | null>(null) // the brief, when the clipboard said no
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(() => () => clearTimeout(copiedTimer.current), [])
+  useEffect(() => { setRefused(null); setCopied(false) }, [page.id])
+  const about = selected?.id ?? null
+  const shotLabel = (s: string | number) => (typeof s === 'number' ? `shot ${s}` : `“${s}”`)
+  const add = () => {
+    const t = text.trim()
+    if (!t || !canNote) return
+    edits.addNote(t, about)
+    setText('')
+  }
+  const copy = async () => {
+    // The page's entry exactly as the file holds it now.
+    const d = getStaging()
+    const out = brief({
+      page, file: STAGING_FILE, key: sceneEntryKey(d, page.id, page.title), entry: sceneEntry(d, page.id, page.title),
+      notes: ownFeedback(sceneEntry(d, page.id, page.title)), nameOf: (id) => nameOf(id) ?? null,
+    })
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('no clipboard')
+      await navigator.clipboard.writeText(out)
+      setRefused(null)
+      setCopied(true)
+      clearTimeout(copiedTimer.current)
+      copiedTimer.current = setTimeout(() => setCopied(false), 2000)
+    } catch {
+      setCopied(false)
+      setRefused(out)
+    }
+  }
+  const aboutName = about ? nameOf(about) || wordsOf(about.replace(/^shape:/, '')) : ''
+  const aboutNow = shots[shot] ? `Saved with this view (${shotLabel(noteShot(shots[shot], shot))})${aboutName ? `, about ${aboutName}` : ''}.` : ''
+  return (
+    <section className="dp-section" aria-label="Notes for Claude">
+      <h3>Notes for Claude</h3>
+      <textarea className="dp-note-input" rows={3} value={text} disabled={!canNote} aria-label="New note for Claude"
+        placeholder="What should change? Claude reads these notes."
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); add() } }} />
+      {aboutNow && <small className="dp-source dp-about">{aboutNow}</small>}
+      <div className="dp-actions">
+        <button disabled={!canNote || !text.trim()} onClick={add} title="Save the note on this page (Ctrl+Enter)">Add note</button>
+        <button className="dp-copy" onClick={copy} title="Put a brief for Claude on the clipboard: this page, its open notes and its direction, to paste in the chat">{copied ? 'Copied' : 'Copy for Claude'}</button>
+      </div>
+      {refused != null && (
+        <div className="dp-refused">
+          <small>The clipboard is not available here. Select the text and copy it:</small>
+          <textarea readOnly value={refused} rows={6} aria-label="Brief for Claude" ref={(el) => { if (el && document.activeElement !== el) { el.focus(); el.select() } }} />
+          <button onClick={() => setRefused(null)}>Close</button>
+        </div>
+      )}
+      {notes.length > 0 ? (
+        <ol className="dp-notes">
+          {notes.map((n, i) => {
+            if (!n || typeof n !== 'object') return null
+            const line = [n.about && (nameOf(n.about) || wordsOf(String(n.about).replace(/^shape:/, ''))), n.shot != null && shotLabel(n.shot), whenOf(n.added)].filter(Boolean).join(' · ')
+            return (
+              <li key={`${i}|${n.added ?? ''}`} className={n.done ? 'done' : ''}>
+                <p className="dp-note-text">{String(n.text ?? '')}</p>
+                {line && <small className="dp-source">{line}</small>}
+                {n.reply && <p className="dp-reply"><b>Claude:</b> {String(n.reply)}</p>}
+                <div className="dp-note-tools">
+                  <button disabled={!n.view || !Array.isArray(n.view.pos)} onClick={() => { if (n.view) onView(n.view) }} title="Put the camera where it was for this note">View</button>
+                  <button aria-pressed={!!n.done} disabled={!canNote} onClick={() => edits.noteDone(n, i)} title={n.done ? 'Open it again' : 'Mark it done'}>Done</button>
+                  <button disabled={!canNote} onClick={() => edits.removeNote(n, i)} aria-label="Delete the note" title="Delete the note">✕</button>
+                </div>
+              </li>
+            )
+          })}
+        </ol>
+      ) : <p className="dp-hint dp-after">None yet. A note keeps the camera view and what is selected.</p>}
+    </section>
   )
 }
 

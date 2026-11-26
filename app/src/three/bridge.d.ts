@@ -228,6 +228,8 @@ export class WorldView {
   showPage(pageId: string, overrides?: { hour?: number; weather?: string; season?: string }, options?: { keepShot?: boolean; keepCamera?: boolean }): Promise<StageState | null>
   /** Already showing this page or place of the current world, unchanged? */
   showing(kind: 'page' | 'place', id: string, overrides?: Record<string, unknown>): boolean
+  /** Has the stage caught up with `direction` (pass getStaging()): given to setWorld and staged on screen, with nothing waiting? A direction that differs only in notes for Claude ("feedback") stages nothing. */
+  upToDate(direction: Direction): boolean
   showPlace(pinId: string, moment?: { hour?: number; weather?: string; season?: string }): Promise<StageState | null>
   shot(i: number): Shot | undefined
   readonly shots: Shot[]
@@ -281,6 +283,8 @@ export class WorldView {
   cameraView(): CameraView | null
   /** Put the camera at a view; it counts as a move by hand. */
   setCameraView(view: CameraView): boolean
+  /** Change the camera's lens (field of view, degrees) where it stands; it counts as a move by hand. */
+  setLens(fov: number): boolean
   /** The exact framing shot i gives (what the camera shows after shot(i)), without moving the camera. */
   shotView(i: number): CameraView | null
   /**

@@ -177,6 +177,15 @@ export function getStudio() {
 
 /* ───────────── world views (pages and places) ───────────── */
 
+/** The direction without the pages' notes for Claude ("feedback"), which change nothing in 3D: as text, to compare. */
+function stagedPart(direction) {
+  const scenes = direction?.scenes;
+  if (!scenes || typeof scenes !== 'object' || Array.isArray(scenes)) return JSON.stringify(direction ?? null);
+  const plain = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+  const kept = Object.fromEntries(Object.entries(scenes).map(([k, v]) => [k, plain(v) && 'feedback' in v ? Object.fromEntries(Object.entries(v).filter(([f]) => f !== 'feedback')) : v]));
+  return JSON.stringify({ ...direction, scenes: kept });
+}
+
 /** A 3D view of the live canvas: one page staged with its cast, or one map place on its own. */
 export class WorldView {
   constructor() {
@@ -204,8 +213,13 @@ export class WorldView {
     const canvas = readCanvas({ document });
     const sig = JSON.stringify([[...canvas.pins.values()], [...canvas.characters.values()], canvas.pages, canvas.stories]);
     if (this.world && sig === this.worldSig && direction === this.worldDirection) return this.world;
+    // Notes for Claude (a page's "feedback") change nothing in 3D: a direction that differs from the
+    // last one only in them keeps the world, and what is on stage stays as it is.
+    const staged = stagedPart(direction);
+    if (this.world && sig === this.worldSig && staged === this.worldStaged) { this.worldDirection = direction; return this.world; }
     this.worldSig = sig;
     this.worldDirection = direction;
+    this.worldStaged = staged;
     this.worldVersion = (this.worldVersion ?? 0) + 1;
     this.world = new World(canvas, direction ?? {});
     if (!this.director) {
@@ -219,6 +233,14 @@ export class WorldView {
   showing(kind, id, overrides) {
     const s = this.shown;
     return !!s && s.ticket === this.ticket && this.matches(s, kind, id, overrides);
+  }
+  /**
+   * Has the stage caught up with `direction` (the direction as it is now): given to setWorld, and
+   * what it stages on screen, with nothing waiting? After an edit, the stage shows it once this is so.
+   */
+  upToDate(direction) {
+    const s = this.shown;
+    return direction === this.worldDirection && !!s && s.ticket === this.ticket && s.version === this.worldVersion && !this.pending;
   }
   matches(s, kind, id, overrides) {
     return s.kind === kind && s.id === id && s.version === this.worldVersion && !Object.values(overrides ?? {}).some((v) => v != null);
@@ -326,6 +348,7 @@ export class WorldView {
   get selected() { return this.director?.selected ?? null; }
   cameraView() { return this.director?.cameraView() ?? null; }
   setCameraView(view) { return !!this.director?.setCameraView(view); }
+  setLens(fov) { return !!this.director?.setLens(fov); }
   shotView(i) { return this.director?.shotView(i) ?? null; }
   castMarks() { return this.director?.castMarks() ?? []; }
   castInfo() { return this.director?.castInfo() ?? []; }

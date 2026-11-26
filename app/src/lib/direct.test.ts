@@ -5,6 +5,8 @@ import {
   castOps, castToEdit, cameraOps, cameraToEdit, deg360, dressingOps, facingChoice, facingOf, heldChoice, localToWorld, memberIndex,
   momentHint, momentOps, movedFields, newMember, newThing, newThingId, ownDressing, refersTo, round2, roundFov, sceneEntry, sceneEntryKey,
   sceneKey, slugOf, stepKey, withMember, withoutMember, wordsOf, worldToLocal, yawOf, yawToward, type CastEntry, type Listed,
+  brief, exactShot, feedbackOps, framedShot, framingOf, FRAMINGS, isExact, isLocked, lockedCamera, lockOps, newNote, newShotAt, newShotLabel,
+  noteIndex, noteShot, ownFeedback, ownsCamera, shotName, shotSubjects, toggledDone, unlockOps, withSubject, type CameraView, type Feedback, type Shot,
 } from './direct.ts'
 import { patchText, parseDirection, applyOp, checkOps, type JsonOp, type Removed } from '../../server/json-style.ts'
 
@@ -214,6 +216,133 @@ test('the camera to edit: its own list or shot, else the shots in use, as writte
   assert.deepEqual(cameraToEdit({ same: 'shape:p1' }, own), own)
   assert.deepEqual(cameraToEdit(undefined, [{ shot: 'medium' }]), [{ shot: 'medium' }])
   assert.deepEqual(cameraOps('shape:p1', own)[0].path, ['scenes', 'shape:p1', 'camera'])
+  assert.ok(ownsCamera(own) && ownsCamera({ shot: 'wide' }) && !ownsCamera({ same: 'shape:p1' }) && !ownsCamera(undefined))
+})
+
+const view: CameraView = { pos: [3.71, 1.16, 5.92], target: [1.25, 0.55, 4.15], fov: 35 }
+test('Use this view: pos, target and fov; label, hold, move (and speed) kept; automatic framing goes', () => {
+  const s: Shot = { shot: 'medium', on: ['shape:mira'], from: 200, label: 'Hello', hold: 4, move: 'push', speed: 0.5, distance: 3, height: 1, turn: 10, fov: 30 }
+  const out = exactShot(s, view)
+  assert.deepEqual(out, { label: 'Hello', hold: 4, move: 'push', speed: 0.5, fov: 35, pos: [3.71, 1.16, 5.92], target: [1.25, 0.55, 4.15] })
+  assert.ok(isExact(out) && !isExact(s))
+  // A shot already exact keeps its keys where they are.
+  const again = exactShot({ label: 'A', pos: [0, 1, 2], target: [0, 1, 0], fov: 40, hold: 2 }, view)
+  assert.deepEqual(Object.keys(again), ['label', 'pos', 'target', 'fov', 'hold'])
+  assert.deepEqual(again.pos, view.pos)
+  assert.equal(s.shot, 'medium') // the shot given isn't changed
+  out.pos![0] = 99
+  assert.equal(view.pos[0], 3.71) // nor the view
+})
+test('New shot from this view: { label: "Shot n", pos, target, fov }, n free', () => {
+  assert.deepEqual(newShotAt([{ shot: 'wide' }, { shot: 'close' }], view), { label: 'Shot 3', ...view })
+  assert.deepEqual(Object.keys(newShotAt([], view)), ['label', 'pos', 'target', 'fov'])
+  assert.equal(newShotLabel([{ label: 'Shot 2' }]), 'Shot 3')
+  assert.equal(newShotLabel([{ label: 'Shot 3' }, { shot: 'wide' }]), 'Shot 4')
+})
+test('Framing: shot set, pos, target and fov gone; the rest stays', () => {
+  assert.deepEqual(framedShot({ label: 'Hello', hold: 4, move: 'push', pos: [1, 2, 3], target: [0, 1, 0], fov: 30 }, 'close'), { label: 'Hello', hold: 4, move: 'push', shot: 'close' })
+  assert.deepEqual(framedShot({ shot: 'wide', on: 'bridge', label: 'B' }, 'medium'), { shot: 'medium', on: 'bridge', label: 'B' })
+  assert.equal(framingOf({ pos: [1, 2, 3], target: [0, 0, 0] }, true), 'exact')
+  assert.equal(framingOf({ shot: 'low' }, true), 'low')
+  assert.equal(framingOf({ label: 'x' }, true), 'medium')
+  assert.equal(framingOf(undefined, false), 'wide')
+  assert.deepEqual(FRAMINGS.map(([id]) => id), ['establishing', 'wide', 'medium', 'two', 'close', 'over', 'low', 'high', 'top'])
+  assert.equal(shotName({ label: 'Hello', shot: 'medium' }, 1), 'Hello')
+  assert.equal(shotName({ shot: 'medium' }, 1), 'medium')
+  assert.equal(shotName({}, 1), 'Shot 2')
+})
+test('On: whom a shot frames, by card id or name; back to everyone, "on" goes; never nobody', () => {
+  const cast = [mira, biscuit, juniper]
+  assert.deepEqual([...shotSubjects({ shot: 'wide' }, cast).members], ['shape:mira', 'shape:biscuit', 'shape:juniper'])
+  const s = shotSubjects({ on: ['Mira', 'fountain'] }, cast)
+  assert.deepEqual([...s.members], ['shape:mira'])
+  assert.deepEqual(s.others, ['fountain'])
+  assert.deepEqual(withSubject({ shot: 'medium' }, cast, 'shape:juniper', false), { shot: 'medium', on: ['shape:mira', 'shape:biscuit'] })
+  assert.deepEqual(withSubject({ shot: 'medium', on: ['shape:mira', 'shape:biscuit'] }, cast, 'shape:juniper', true), { shot: 'medium' })
+  assert.deepEqual(withSubject({ on: 'shape:mira' }, cast, 'shape:biscuit', true), { on: ['shape:mira', 'shape:biscuit'] })
+  assert.deepEqual(withSubject({ on: ['shape:mira'] }, cast, 'shape:mira', false), { on: ['shape:mira'] }) // nobody: not done
+  assert.deepEqual(withSubject({ on: ['bridge', 'shape:mira'] }, cast, 'shape:mira', false), { on: ['bridge'] }) // things stay
+})
+test('Lock: the shot on screen as the camera is now, every other exact as the director frames it', () => {
+  const shots: Shot[] = doc.scenes['shape:p1'].camera
+  const views = [{ pos: [0, 10, 30], target: [0, 1, 0], fov: 40 }, { pos: [1, 1.5, 7], target: [1, 1, 4], fov: 33.4 }, { pos: [2, 1.4, 6], target: [0.6, 1.2, 5.2], fov: 30 }] as CameraView[]
+  const asked: number[] = []
+  const out = lockedCamera(shots, 1, view, (i) => { asked.push(i); return views[i] })
+  assert.deepEqual(asked, [0, 2])
+  assert.deepEqual(out, [
+    { label: 'The square', hold: 4, ...views[0] },
+    { label: 'Hello', hold: 4, ...view },
+    { label: 'Mira', hold: 3, ...views[2] },
+  ])
+  // A shot already exact stays as written (its lens filled in when it has none); a move stays.
+  const exact = lockedCamera([{ label: 'A', pos: [1, 2, 3], target: [0, 1, 0], move: 'orbit' }, { shot: 'wide' }], 1, view, () => ({ pos: [9, 9, 9], target: [0, 0, 0], fov: 50 }))
+  assert.deepEqual(exact, [{ label: 'A', pos: [1, 2, 3], target: [0, 1, 0], move: 'orbit', fov: 50 }, { ...view }])
+  assert.ok(out.every(isExact) && !shots.some(isExact))
+})
+
+/* ── notes for Claude ── */
+
+test('a note: text, view, shot, about and added, in that order; unknown ones left out', () => {
+  const n = newNote({ text: 'Closer to the fountain', view, shot: 'Hello', about: 'shape:mira', added: '2026-11-26T10:00:00.000Z' })
+  assert.deepEqual(Object.keys(n), ['text', 'view', 'shot', 'about', 'added'])
+  assert.deepEqual(n.view, view)
+  assert.deepEqual(newNote({ text: 'x', view: null, shot: null, about: null, added: 'a' }), { text: 'x', added: 'a' })
+  assert.equal(noteShot({ label: 'Hello' }, 1), 'Hello')
+  assert.equal(noteShot({ shot: 'wide' }, 1), 2) // no label: its number
+})
+test('notes: done and open again (the key goes), found where they are now', () => {
+  const a: Feedback = { text: 'a', added: '1' }, b: Feedback = { text: 'b', added: '2', reply: 'Done it' }
+  assert.deepEqual(toggledDone(b), { text: 'b', added: '2', reply: 'Done it', done: true })
+  assert.deepEqual(toggledDone(toggledDone(b)), b)
+  assert.equal(noteIndex([a, b], b, 1), 1)
+  assert.equal(noteIndex([b, a], b, 1), 0) // moved
+  assert.equal(noteIndex([a], b, 1), -1) // gone
+  assert.deepEqual(ownFeedback({ feedback: [a] }), [a])
+  assert.deepEqual(ownFeedback({ feedback: 'junk' }), [])
+  assert.deepEqual(feedbackOps('shape:p1', [a]), [{ op: 'set', path: ['scenes', 'shape:p1', 'feedback'], value: [a] }])
+  assert.deepEqual(feedbackOps('shape:p9', []), [{ op: 'delete', path: ['scenes', 'shape:p9', 'feedback'] }, { op: 'delete', path: ['scenes', 'shape:p9'], ifEmpty: true }])
+})
+test('Copy for Claude: the page, its open notes (view, shot, about by name) and its entry exactly, as pretty JSON', () => {
+  const entry = { ...doc.scenes['shape:p1'], feedback: [
+    { text: 'Mira should stand closer to the fountain,\nfacing Biscuit', view, shot: 'Hello', about: 'shape:mira', added: '2026-11-26T10:00:00.000Z' },
+    { text: 'Already done', added: '2026-11-26T10:01:00.000Z', done: true },
+    { text: 'The tent is too big', view: { pos: [1, 2, 3], target: [0, 1, 0], fov: 41.5 }, shot: 2, about: 'tent', added: '2026-11-26T10:02:00.000Z' },
+  ] }
+  const names: Record<string, string> = { 'shape:mira': 'Mira', tent: 'Tent' }
+  const text = brief({ page: { id: 'shape:p1', title: 'Morning in the square', path: 'Book 1 · Ch 1 · p. 1' }, file: 'data/staging.json', key: 'shape:p1', entry, notes: entry.feedback, nameOf: (id) => names[id] ?? null })
+  const lines = text.split('\n')
+  assert.ok(lines.includes('Page: Morning in the square') && lines.includes('Id: shape:p1') && lines.includes('Path: Book 1 · Ch 1 · p. 1'), text)
+  assert.ok(lines.includes('Open notes (2):'), 'only the open notes')
+  assert.ok(!text.split('Its entry in')[0].includes('Already done'), 'a done note is not among the open ones (only in the entry)')
+  assert.ok(lines.includes('1. Mira should stand closer to the fountain,') && lines.includes('   facing Biscuit'))
+  assert.ok(lines.includes('   About: Mira (shape:mira)') && lines.includes('   Shot: "Hello"') && lines.includes('   View: {"pos":[3.71,1.16,5.92],"target":[1.25,0.55,4.15],"fov":35}'))
+  assert.ok(lines.includes('2. The tent is too big') && lines.includes('   About: Tent (tent)') && lines.includes('   Shot: 2'))
+  assert.ok(text.includes('Its entry in data/staging.json, under "scenes" → "shape:p1":\n' + JSON.stringify(entry, null, 2) + '\n'), 'the entry, exactly, as pretty JSON')
+  const none = brief({ page: { id: 'shape:p9', title: '', path: '' }, file: 'data/staging.json', key: null, entry: {}, notes: [], nameOf: () => null })
+  assert.ok(none.includes('Page: Untitled page') && none.includes('No open notes.') && none.includes('The page has no entry in data/staging.json yet'), none)
+})
+
+/* ── the lock ── */
+
+test('lock: the full explicit direction, values the entry has already left alone; unlock deletes "locked"', () => {
+  const p1e = doc.scenes['shape:p1']
+  const cast = p1.map((e) => ({ ...e, at: typeof e.at === 'string' ? e.at : e.at, facing: e.facing ?? 156 }))
+  const camera = lockedCamera(p1e.camera, 1, view, () => view)
+  const ops = lockOps('shape:p1', p1e, { place: 'shape:square', time: 9.004, season: 'spring', weather: 'clear', ambient: 'petals', cast, camera, picture: 1 })
+  assert.deepEqual(ops.map((o) => o.path.at(-1)), ['place', 'time', 'season', 'weather', 'cast', 'camera', 'locked', 'picture']) // ambient is there already
+  const value = (k: string) => (ops.find((o) => o.path.at(-1) === k) as { value: unknown }).value
+  assert.equal(value('time'), 9)
+  assert.equal(value('locked'), true)
+  assert.equal(value('picture'), 1)
+  assert.ok((value('camera') as Shot[]).every(isExact))
+  // Locked again with the same values: only "locked" (and nothing else) is written.
+  const locked = { ...p1e, place: 'shape:square', time: 9, season: 'spring', weather: 'clear', cast, camera, picture: 1 }
+  assert.deepEqual(lockOps('shape:p1', locked, { place: 'shape:square', time: 9, season: 'spring', weather: 'clear', ambient: 'petals', cast, camera, picture: 1 }), [{ op: 'set', path: ['scenes', 'shape:p1', 'locked'], value: true }])
+  // No ambient, no place (a world with no pins): neither is written.
+  const bare = lockOps('shape:p9', {}, { place: null, time: 12, season: 'summer', weather: 'clear', ambient: null, cast: [], camera: [{ ...view }], picture: 0 })
+  assert.deepEqual(bare.map((o) => o.path.at(-1)), ['time', 'season', 'weather', 'cast', 'camera', 'locked', 'picture'])
+  assert.deepEqual(unlockOps('shape:p1'), [{ op: 'delete', path: ['scenes', 'shape:p1', 'locked'] }])
+  assert.ok(isLocked({ locked: true }) && !isLocked({ locked: 'yes' }) && !isLocked({}))
 })
 
 /* ── the file: each edit, its Undo and its Redo, byte for byte ── */
@@ -341,6 +470,71 @@ test('file: a hand-written title key gets the edit, in its place', () => {
   const after = parse(out).scenes
   assert.ok(!('shape:p8' in after))
   assert.equal(after['First snow at the pier'].cast[0].feel, 'sleepy')
+})
+
+test('file: the camera: Use this view, New shot, Remove shot, Framing and On go back exactly', () => {
+  const own: Shot[] = doc.scenes['shape:p1'].camera
+  trip(sample, [cameraOps('shape:p1', own.map((s, i) => (i === 1 ? exactShot(s, view) : s)))])
+  trip(sample, [cameraOps('shape:p1', [...own, newShotAt(own, view)])])
+  trip(sample, [cameraOps('shape:p1', own.filter((_, i) => i !== 2))])
+  trip(sample, [cameraOps('shape:p1', own.map((s, i) => (i === 0 ? framedShot(s, 'wide') : s)))])
+  trip(sample, [cameraOps('shape:p1', own.map((s, i) => (i === 1 ? withSubject(s, [mira, biscuit, juniper], 'shape:juniper', true) : s)))])
+  // An automatic camera (p2 without one): the first edit gives it its own; Undo takes it out.
+  const text = patchText(sample, [{ op: 'delete', path: ['scenes', 'shape:p2', 'camera'] }]).text
+  const out = trip(text, [cameraOps('shape:p2', [exactShot({ shot: 'medium' }, view)])])
+  assert.deepEqual(parse(out).scenes['shape:p2'].camera, [{ ...view }])
+  // Two views of the same shot in one step (it merges): back exactly.
+  trip(sample, [cameraOps('shape:p1', own.map((s, i) => (i === 1 ? exactShot(s, view) : s))), cameraOps('shape:p1', own.map((s, i) => (i === 1 ? exactShot(s, { ...view, fov: 30 }) : s)))])
+})
+test('file: notes added, done and deleted (also the last, on a page with no entry) go back exactly', () => {
+  const n1 = newNote({ text: 'Closer to the fountain', view, shot: 'Hello', about: 'shape:mira', added: '2026-11-26T10:00:00.000Z' })
+  const n2 = newNote({ text: 'Warmer light', view, shot: 1, added: '2026-11-26T10:05:00.000Z' })
+  const a = trip(sample, [feedbackOps('shape:p1', [n1])])
+  const b = trip(a, [feedbackOps('shape:p1', [n1, n2])])
+  trip(b, [feedbackOps('shape:p1', [toggledDone(n1), n2])])
+  trip(b, [feedbackOps('shape:p1', [n2])])
+  assert.deepEqual(parse(b).scenes['shape:p1'].feedback, [n1, n2])
+  // A page with no entry: the note makes one, deleting it takes the entry away again.
+  const made = trip(sample, [feedbackOps('shape:p9', [n1])])
+  assert.equal(trip(made, [feedbackOps('shape:p9', [])]), sample)
+  // A note on a locked page changes nothing else.
+  const locked = patchText(sample, [{ op: 'set', path: ['scenes', 'shape:p8', 'locked'], value: true }]).text
+  const noted = trip(locked, [feedbackOps('shape:p8', [n2])])
+  const d = parse(noted).scenes['shape:p8']
+  assert.equal(d.locked, true)
+  assert.deepEqual({ ...d, feedback: undefined }, { ...parse(locked).scenes['shape:p8'], feedback: undefined })
+})
+test('file: the lock is one step and goes back exactly; unlock, and a page locked under its title', () => {
+  const p1e = doc.scenes['shape:p1']
+  const cast = p1.map((e) => ({ ...e, facing: e.facing ?? 156 }))
+  const camera = lockedCamera(p1e.camera, 2, view, () => ({ pos: [0, 8, 20], target: [0, 1, 0], fov: 40 }))
+  const ops = lockOps('shape:p1', p1e, { place: 'shape:square', time: 9, season: 'spring', weather: 'clear', ambient: 'petals', cast, camera, picture: 2 })
+  const out = trip(sample, [ops])
+  const e = parse(out).scenes['shape:p1']
+  assert.equal(e.locked, true)
+  assert.equal(e.picture, 2)
+  assert.deepEqual(e.cast, cast)
+  assert.deepEqual(e.camera, camera)
+  assert.equal(e.ambient, 'petals')
+  assert.deepEqual(parse(out).scenes['shape:p2'], doc.scenes['shape:p2'])
+  // Its dressing, changes and continues stay as they are (p4 continues p3; p3 has changes and dressing).
+  for (const k of ['shape:p3', 'shape:p4']) {
+    const en = doc.scenes[k]
+    const lk = trip(sample, [lockOps(k, en, { place: 'shape:mill', time: 7, season: 'spring', weather: 'fog', ambient: null, cast: en.cast, camera: lockedCamera(en.camera, 0, view, () => view), picture: 0 })])
+    const after = parse(lk).scenes[k]
+    for (const f of ['dressing', 'changes', 'continues', 'feedback']) assert.deepEqual(after[f], en[f], `${k} ${f}`)
+  }
+  const unlocked = trip(out, [unlockOps('shape:p1')])
+  const u = parse(unlocked).scenes['shape:p1']
+  assert.ok(!('locked' in u) && u.picture === 2 && JSON.stringify(u.camera) === JSON.stringify(camera))
+  // A page with no entry at all: the lock makes it whole; Undo takes it away.
+  trip(sample, [lockOps('shape:p9', {}, { place: 'shape:square', time: 12, season: 'summer', weather: 'clear', ambient: null, cast: [newMember('shape:mira', [0, 1.5], 0)], camera: [{ ...view }], picture: 0 })])
+  // Keyed by a title written by hand: the lock goes there.
+  const titled = patchText(sample, [{ op: 'rename', path: ['scenes', 'shape:p8'], to: 'First snow at the pier' }]).text
+  const td = parse(titled)
+  const key = sceneKey(td, 'shape:p8', 'First Snow at the Pier')
+  const lt = trip(titled, [lockOps(key, td.scenes[key], { place: 'shape:pier', time: 15.5, season: 'winter', weather: 'snow', ambient: null, cast: td.scenes[key].cast, camera: lockedCamera(td.scenes[key].camera, 0, view, () => view), picture: 0 })])
+  assert.ok(parse(lt).scenes['First snow at the pier'].locked === true && !('shape:p8' in parse(lt).scenes))
 })
 
 if (failures) { console.log(`${failures} failed`); process.exit(1) }

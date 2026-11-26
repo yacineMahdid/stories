@@ -11,11 +11,13 @@
  *   continues, another page's camera through { "same" }) gets its own whole list at the first
  *   edit, taken from what the stage shows, so nobody else moves.
  * - Units: positions to 0.01, facings in whole place degrees (0–359), a lens to 0.1°.
+ * - Notes for Claude ("feedback") change nothing in 3D, also on a locked page. The lock writes the
+ *   page's full, explicit direction (lockOps).
  */
 import type { Direction, Op } from './staging'
-import type { CastEntry, Local, Shot, ThingEntry } from '../three/bridge.js'
+import type { CameraView, CastEntry, Feedback, Local, Shot, ThingEntry } from '../three/bridge.js'
 
-export type { CastEntry, Local, Shot, ThingEntry }
+export type { CameraView, CastEntry, Feedback, Local, Shot, ThingEntry }
 
 export const isPlain = (v: unknown): v is Record<string, any> => !!v && typeof v === 'object' && !Array.isArray(v)
 const clone = <T,>(v: T): T => (v === undefined ? v : structuredClone(v))
@@ -229,7 +231,7 @@ export function momentHint(field: MomentField, from: MomentSource): string {
   return 'Default'
 }
 
-/* ───────────── the camera (for the camera section) ───────────── */
+/* ───────────── the camera ───────────── */
 
 /**
  * The shot list an edit of the camera starts from: the page's own "camera" as the file has it (a
@@ -242,5 +244,217 @@ export function cameraToEdit(own: unknown, shots: Shot[]): Shot[] {
   return clone(shots)
 }
 
+/** Does the page have a camera of its own (not automatic, inherited or another page's through { "same" })? */
+export const ownsCamera = (own: unknown) => Array.isArray(own) || (isPlain(own) && !('same' in own))
+
 /** Writing a page's camera: the whole list. */
 export const cameraOps = (key: string, list: Shot[]): Op[] => [{ op: 'set', path: ['scenes', key, 'camera'], value: list }]
+
+/** The automatic framings a shot can have (docs/scenes.md, Camera), as the Framing select lists them. */
+export const FRAMINGS: [string, string][] = [
+  ['establishing', 'Establishing'], ['wide', 'Wide'], ['medium', 'Medium'], ['two', 'Two shot'], ['close', 'Close-up'],
+  ['over', 'Over the shoulder'], ['low', 'Low angle'], ['high', 'High angle'], ['top', 'Straight down'],
+]
+
+/** A shot with exact framing: it says where the camera is (`pos`) and what it looks at (`target`). */
+export const isExact = (s: Shot | undefined) => !!s && Array.isArray(s.pos) && Array.isArray(s.target)
+
+/** What a shot is called: its label, else its framing, else its number (as the shot chips show it). */
+export const shotName = (s: Shot | undefined, i: number) => (typeof s?.label === 'string' && s.label) || (typeof s?.shot === 'string' && s.shot) || `Shot ${i + 1}`
+
+/** The framing a shot gets from the director: its `shot`, else medium (wide with nobody on stage). */
+export const framingOf = (s: Shot | undefined, anyone: boolean) => (isExact(s) ? 'exact' : typeof s?.shot === 'string' ? s.shot : anyone ? 'medium' : 'wide')
+
+/** A copy without some keys (the others in their order). */
+const omit = <T extends Record<string, any>>(o: T, keys: string[]): T => clone(Object.fromEntries(Object.entries(o).filter(([k]) => !keys.includes(k))) as T)
+
+/**
+ * A shot made exact framing at a view (Use this view): `pos`, `target` and `fov`, keeping its
+ * label, hold, move (and anything else written), without what only automatic framing reads.
+ */
+export const exactShot = (s: Shot, v: CameraView): Shot => ({ ...omit(s, ['shot', 'on', 'from', 'distance', 'height', 'turn']), pos: [...v.pos], target: [...v.target], fov: v.fov })
+
+/** An automatic framing for a shot: `shot` set, its exact framing (`pos`, `target`, `fov`) gone. */
+export const framedShot = (s: Shot, kind: string): Shot => ({ ...omit(s, ['pos', 'target', 'fov']), shot: kind })
+
+/** "Shot n" for a new shot: the number it gets, or the next one no other shot is called. */
+export function newShotLabel(list: Shot[]): string {
+  const taken = new Set(list.map((s) => s?.label))
+  let n = list.length + 1
+  while (taken.has(`Shot ${n}`)) n++
+  return `Shot ${n}`
+}
+
+/** A new shot at a view (New shot from this view), to add to `list`. */
+export const newShotAt = (list: Shot[], v: CameraView): Shot => ({ label: newShotLabel(list), pos: [...v.pos], target: [...v.target], fov: v.fov })
+
+/**
+ * Whom a shot frames (its `on`) as the On checkboxes show it: which cast members it names (all of
+ * them when it names nobody: the default is the whole cast), and the other subjects it names
+ * (things), as written.
+ */
+export function shotSubjects(s: Shot | undefined, cast: Listed[]): { members: Set<string>; others: string[] } {
+  const on = s?.on == null ? null : Array.isArray(s.on) ? s.on : [s.on]
+  if (!on) return { members: new Set(cast.map((c) => c.id)), others: [] }
+  const members = new Set<string>()
+  const others: string[] = []
+  for (const ref of on) {
+    const c = cast.find((m) => refersTo(ref, m.id, m.name))
+    if (c) members.add(c.id)
+    else others.push(String(ref))
+  }
+  return { members, others }
+}
+
+/**
+ * A shot that frames `who` too (`on` true) or no longer (false). Back to the whole cast and
+ * nothing else, `on` goes (that is the default); a shot never ends up framing nobody.
+ */
+export function withSubject(s: Shot, cast: Listed[], who: string, on: boolean): Shot {
+  const { members, others } = shotSubjects(s, cast)
+  if (on) members.add(who)
+  else members.delete(who)
+  const out = clone(s)
+  const list = [...cast.filter((c) => members.has(c.id)).map((c) => c.id), ...others]
+  if (!list.length) return out
+  if (!others.length && cast.every((c) => members.has(c.id))) delete out.on
+  else out.on = list
+  return out
+}
+
+/* ───────────── notes for Claude (the page's "feedback") ───────────── */
+
+/** The page's own notes as the file has them now ([] when none). */
+export const ownFeedback = (entry: Record<string, any>): Feedback[] => (Array.isArray(entry.feedback) ? clone(entry.feedback) : [])
+
+/** A note: its text, and the camera, the shot and what was selected when it was written. Keys left out when unknown. */
+export function newNote(n: { text: string; view?: CameraView | null; shot?: string | number | null; about?: string | null; added: string }): Feedback {
+  const note: Feedback = { text: n.text }
+  if (n.view) note.view = { pos: [...n.view.pos], target: [...n.view.target], fov: n.view.fov }
+  if (n.shot != null && n.shot !== '') note.shot = n.shot
+  if (n.about) note.about = n.about
+  note.added = n.added
+  return note
+}
+
+/** What a note records as its shot: the shot's label, or its number. */
+export const noteShot = (s: Shot | undefined, i: number): string | number => (typeof s?.label === 'string' && s.label ? s.label : i + 1)
+
+/** Where a note is in the list now: at `hint` when it is still there, else wherever it moved (-1: gone). */
+export function noteIndex(list: unknown[], note: unknown, hint = -1): number {
+  const same = (x: unknown) => JSON.stringify(x) === JSON.stringify(note)
+  if (hint >= 0 && hint < list.length && same(list[hint])) return hint
+  return list.findIndex(same)
+}
+
+/** A note marked done, or open again (the key goes). */
+export function toggledDone(note: Feedback): Feedback {
+  const out = clone(note)
+  if (out.done) delete out.done
+  else out.done = true
+  return out
+}
+
+/**
+ * Writing a page's notes: the whole list, or no "feedback" at all once it is empty (and no entry,
+ * when nothing else is left in it).
+ */
+export function feedbackOps(key: string, list: Feedback[]): Op[] {
+  if (list.length) return [{ op: 'set', path: ['scenes', key, 'feedback'], value: list }]
+  return [{ op: 'delete', path: ['scenes', key, 'feedback'] }, { op: 'delete', path: ['scenes', key], ifEmpty: true }]
+}
+
+/** A view as one line: {"pos":[…],"target":[…],"fov":35}. */
+const viewLine = (v: CameraView) => JSON.stringify({ pos: v.pos, target: v.target, fov: v.fov })
+
+/**
+ * The brief "Copy for Claude" puts on the clipboard: the page (title, id, path), its open notes,
+ * each with its view, shot and what it is about (by name), and the page's entry exactly as the
+ * direction file holds it (pretty JSON).
+ */
+export function brief(b: {
+  page: { id: string; title: string; path: string }
+  file: string
+  /** the page's entry key in "scenes" (null: it has none) */
+  key: string | null
+  entry: unknown
+  notes: Feedback[]
+  /** a note's `about` (a card id or a thing id) by name, e.g. "Mira" or "Barrel" */
+  nameOf: (id: string) => string | null
+}): string {
+  const out: string[] = []
+  out.push(`Notes for Claude on a page of my story (Story Canvas, 3D direction).`, '')
+  out.push(`Page: ${b.page.title || 'Untitled page'}`, `Id: ${b.page.id}`, `Path: ${b.page.path || 'not in a story yet'}`, '')
+  const open = b.notes.filter((n) => isPlain(n) && !n.done)
+  if (!open.length) out.push('No open notes.')
+  else {
+    out.push(`Open notes (${open.length}):`)
+    open.forEach((n, i) => {
+      out.push('', `${i + 1}. ${String(n.text ?? '').trim().replace(/\n/g, '\n   ')}`)
+      if (n.about) {
+        const name = b.nameOf(n.about)
+        out.push(`   About: ${name && name !== n.about ? `${name} (${n.about})` : n.about}`)
+      }
+      if (n.shot != null) out.push(`   Shot: ${typeof n.shot === 'number' ? n.shot : `"${n.shot}"`}`)
+      if (n.view && Array.isArray(n.view.pos)) out.push(`   View: ${viewLine(n.view)}`)
+    })
+  }
+  out.push('')
+  if (b.key == null || !isPlain(b.entry)) out.push(`The page has no entry in ${b.file} yet: it is staged automatically.`)
+  else out.push(`Its entry in ${b.file}, under "scenes" → "${b.key}":`, JSON.stringify(b.entry, null, 2))
+  out.push('', 'Views are exact framing, as a shot writes it (docs/scenes.md). When you act on a note, add a "reply" to it saying what you did.')
+  return out.join('\n')
+}
+
+/* ───────────── the lock ───────────── */
+
+/**
+ * Every shot as exact framing, for a lock: the shot on screen (`current`) where the camera is now
+ * (`now`: what you see is what is locked), a shot already exact as written (a lens filled in when
+ * it has none), and every other where the director frames it (`viewOf`). Each keeps its label,
+ * hold and move.
+ */
+export function lockedCamera(shots: Shot[], current: number, now: CameraView, viewOf: (i: number) => CameraView | null): Shot[] {
+  return shots.map((s, i) => {
+    if (i === current) return exactShot(s, now)
+    if (isExact(s)) {
+      if (typeof s.fov === 'number') return exactShot(s, { pos: s.pos!, target: s.target!, fov: s.fov })
+      const v = viewOf(i)
+      return exactShot(s, { pos: s.pos!, target: s.target!, fov: v?.fov ?? 35 })
+    }
+    const v = viewOf(i)
+    return v ? exactShot(s, v) : clone(s)
+  })
+}
+
+/** What a lock writes for the page besides its cast and camera: the moment and place as the stage shows them. */
+export interface LockedMoment { place?: string | null; time: number; season: string; weather: string; ambient?: string | null }
+
+/**
+ * The page's full, explicit direction, as one undo step: its place, time, season, weather and
+ * ambient (when there is one), its cast (everyone with an explicit at and facing) and camera
+ * (every shot exact), "locked": true and the shot on screen as its "picture". Its dressing,
+ * changes, notes and continues stay as they are. A value the entry already has is left alone.
+ */
+export function lockOps(key: string, entry: Record<string, any>, d: LockedMoment & { cast: CastEntry[]; camera: Shot[]; picture: number }): Op[] {
+  const ops: Op[] = []
+  const set = (field: string, value: unknown) => {
+    if (JSON.stringify(entry[field]) !== JSON.stringify(value)) ops.push({ op: 'set', path: ['scenes', key, field], value: clone(value) })
+  }
+  if (d.place) set('place', d.place)
+  set('time', round2(d.time))
+  set('season', d.season)
+  set('weather', d.weather)
+  if (d.ambient) set('ambient', d.ambient)
+  set('cast', d.cast)
+  set('camera', d.camera)
+  set('locked', true)
+  set('picture', d.picture)
+  return ops
+}
+
+/** Unlocking: "locked" goes, everything else stays. */
+export const unlockOps = (key: string): Op[] => [{ op: 'delete', path: ['scenes', key, 'locked'] }]
+
+/** Is the page's own entry locked? Only "locked": true locks it. */
+export const isLocked = (entry: Record<string, any>) => entry.locked === true

@@ -127,6 +127,8 @@ button.primary { background: var(--accent) !important; color: #fff; border-color
 .sc-lore header, .sc-scene header { display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--muted); }
 .sc-lore strong, .sc-scene strong { font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sc-tag { background: var(--ink); color: #fff; padding: 1px 8px; border-radius: 99px; text-transform: uppercase; letter-spacing: 0.05em; font-size: 10px; font-weight: 600; }
+.sc-tags { display: flex; gap: 4px; align-items: center; }
+.sc-lock { display: inline-flex; align-items: center; gap: 3px; background: var(--accent); color: #fff; padding: 1px 7px; border-radius: 99px; text-transform: uppercase; letter-spacing: 0.05em; font-size: 10px; font-weight: 600; }
 .sc-scene { border-color: #cfd8e3; }
 .sc-chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .sc-chip { font-size: 11px; color: #fff; padding: 2px 8px; border-radius: 99px; font-weight: 600; }
@@ -255,7 +257,8 @@ fieldset.three-grid:disabled { opacity: 0.55; }
 .stage-overlay { --bar-h: 34px; --dock-h: 48px; }
 .direct-panel { position: absolute; z-index: 1; right: 12px; top: calc(12px + var(--bar-h) + 10px); bottom: calc(12px + var(--dock-h) + 10px); width: min(320px, calc(100% - 24px)); overflow-y: auto; overscroll-behavior: contain; background: #fafbf7f4; border-radius: 12px; padding: 12px 14px 14px; font-size: 13px; line-height: 1.4; color: var(--ink); box-shadow: 0 2px 14px #00000026; overflow-wrap: anywhere; }
 .direct-panel .three-panel { padding: 4px 0; }
-.dp-head { display: flex; gap: 8px; align-items: flex-start; }
+.dp-head { display: flex; flex-direction: column; gap: 7px; }
+.dp-top { display: flex; gap: 8px; align-items: flex-start; }
 .dp-title { flex: 1; min-width: 0; }
 .dp-title small { color: var(--muted); font-size: 11px; }
 .dp-title h2 { margin: 1px 0 0; font-size: 16px; line-height: 1.25; }
@@ -294,6 +297,43 @@ section.dp-selected h3 { color: var(--accent); }
 .dp-prop { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; margin: 2px 0 8px; }
 .dp-subhead { display: flex; align-items: baseline; gap: 6px; margin-bottom: 6px; }
 .dp-subhead small { color: var(--muted); font-size: 11px; }
+/* the lock (in the header): Lock page, or Locked with Unlock and Retake picture */
+.lock-glyph { flex-shrink: 0; }
+.dp-lock { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.dp-lock button { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 4px 10px; font-size: 12.5px; color: var(--ink); }
+.dp-lock button:disabled { opacity: 0.5; cursor: default; }
+.dp-lock .dp-lock-button { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.dp-locked { display: inline-flex; align-items: center; gap: 5px; background: var(--accent); color: #fff; border-radius: 99px; padding: 3px 10px; font-size: 12px; font-weight: 600; }
+.dp-locked-note { color: var(--accent); font-weight: 500; }
+/* the camera: the shot on screen */
+.dp-shot { margin: 0 0 8px; font-size: 12.5px; }
+.dp-shot small { color: var(--muted); font-size: 11px; }
+.dp-on { display: flex; flex-wrap: wrap; gap: 2px 10px; padding-top: 5px; }
+.dp-check { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; }
+.dp-check input { margin: 0; accent-color: var(--accent); }
+.dp-after { margin: 8px 0 0; }
+/* notes for Claude */
+.direct-panel textarea.dp-note-input { resize: vertical; min-height: 56px; line-height: 1.35; display: block; }
+.direct-panel textarea:disabled { color: var(--muted); background: #f3f2ee; }
+.dp-about { margin-top: 4px; display: block; }
+.dp-refused { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.dp-refused small { color: var(--muted); font-size: 11.5px; }
+.direct-panel .dp-refused textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; resize: vertical; }
+.dp-refused button { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 3px 9px; font-size: 12px; color: var(--ink); }
+.dp-notes { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.dp-notes li { background: #fff; border: 1px solid var(--line); border-radius: 9px; padding: 7px 9px; display: flex; flex-direction: column; gap: 3px; }
+.dp-note-text { margin: 0; white-space: pre-wrap; font-size: 13px; }
+.dp-notes li.done .dp-note-text { text-decoration: line-through; color: var(--muted); }
+.dp-reply { margin: 2px 0 0; padding: 4px 8px; border-left: 2px solid var(--accent); background: #e8590c0d; border-radius: 0 6px 6px 0; font-size: 12px; white-space: pre-wrap; }
+.dp-note-tools { display: flex; gap: 4px; margin-top: 2px; }
+.dp-note-tools button { border: 1px solid var(--line); background: #fff; border-radius: 7px; padding: 2px 8px; font-size: 11.5px; color: var(--ink); }
+.dp-note-tools button[aria-pressed='true'] { background: var(--ink); border-color: var(--ink); color: #fff; }
+.dp-note-tools button:disabled { opacity: 0.45; cursor: default; }
+.dp-note-tools button:last-child { margin-left: auto; }
+/* Directing, the dock's shot chips: a dot for exact framing, a frame for a locked page's picture. */
+.three-chips button.exact::after { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-left: 6px; vertical-align: 1px; }
+.three-chips button.on.exact::after { background: #fff; }
+.three-chips button.picture::before { content: ''; display: inline-block; width: 8px; height: 6px; border: 1.5px solid currentColor; border-radius: 1.5px; margin-right: 5px; vertical-align: 0; }
 /* While directing, the page card stays clear of the panel: on a narrow stage it is only its title,
    on a very narrow one it goes. */
 @media (max-width: 720px) {

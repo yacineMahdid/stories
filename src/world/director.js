@@ -1571,6 +1571,16 @@ export class Director {
     return true;
   }
 
+  /** Change the lens (field of view, degrees) of the camera where it stands. It counts as a move by hand. */
+  setLens(fov) {
+    if (!this.state || !Number.isFinite(fov)) return false;
+    const cam = this.stage.camera;
+    cam.fov = Math.max(5, Math.min(120, fov));
+    cam.updateProjectionMatrix();
+    this.userCamera = true;
+    return true;
+  }
+
   /** Stop what is left of a hand orbit's glide (the orbit controls' damping), so the camera stays put. */
   stopGlide() {
     const controls = this.stage.controls;
