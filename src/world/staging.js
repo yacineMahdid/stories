@@ -1,5 +1,6 @@
 import { SEASON_OF_MONTH } from './sky.js';
 import { hashString } from './kit.js';
+import { HAIR_STYLES as HAIR_CATALOG } from '../engine/hair.js';
 
 /**
  * Staging: the 3D direction for a Story Canvas world. It never repeats what the canvas
@@ -832,15 +833,80 @@ const HAIR_COLORS = {
   black: '#1f1b1a', dark: '#1f1b1a', brown: '#4a2f22', gray: '#c8c3ba', grey: '#c8c3ba', silver: '#c8c3ba',
   white: '#ece7df', pink: '#f29ab2', blue: '#4d7cc9', green: '#5aa56a', purple: '#8a5cc2',
 };
+// Hair words. The first style whose words match wins; a few of them name the texture too ("afro
+// puffs" are coily, a "crew cut" is straight). Other texture words count where the style offers
+// that texture (hair.js lists them, natural first). Nothing here reads skin tone or ethnicity: the
+// texture comes from hair words, or else from the card's own hash.
 const HAIR_STYLES = [
-  ['pigtails', /\b(pigtails?|braids|plaits|twin ?tails)\b/],
-  ['ponytail', /\bpony ?tail\b/],
-  ['bun', /\b(bun|top ?knot|chignon)\b/],
-  ['bob', /\b(bob|bobbed)\b/],
-  ['spiky', /\b(spiky|spiked)\b/],
-  ['swept', /\b(swept|side-swept|slicked)\b/],
-  ['long', /\blong[- ](?:[a-z]+[- ])?hair(?:ed)?\b|\b(?:flowing|long) locks\b/],
+  ['balding', /\b(?:balding|going bald|bald(?:ing)? (?:patch|spot)|bald on top|receding hair(?:line)?|hair(?:line)? receding|thinning hair|comb-?over|tonsure)\b/],
+  ['cornrows', /\b(?:cornrows?|cornrowed|cane ?rows|braided rows|feed-in braids|stitch braids)\b/],
+  ['updo', /\b(?:(?<!pineapple )up-?do|french twist|beehive|victory rolls|(?:hair|curls|braids|locks) (?:swept|pinned|piled) up|flat twists)\b/, { coily: /\bflat twists\b/ }],
+  ['locs', /\b(?:locs|dread ?locks?|dreadlocked|(?:his|her|their|long|short|thick) dreads|sisterlocks|(?:box|micro|knotless|goddess) braids|(?:two-strand|senegalese|passion|mini) twists|(?:hair|locks|curls) (?:in|into) twists)\b/],
+  ['buns', /\b(?:afro[- ]puffs|(?:two|space|double|twin) (?:buns|puffs)|buns on (?:each|either|both) sides?|(?:hair|curls) in (?:two )?(?:buns|puffs))\b/, { coily: /\bpuffs\b/ }],
+  ['afro', /\b(?<!(?:short|teeny|tiny|small) )afro\b(?!-\w|\s+(?:puffs?|textured|caribbean|american|latin\w*|brazilian|cuban|colombian|descent|heritage)\b)|\b(?<!to[- ]and[- ])fro\b/],
+  ['braids', /\b(?:braids|plaits|(?:braided|plaited) (?:[a-z]+ )?(?:hair|pigtails?|ponytail|bunches|locks|tails?)|hair (?:is |was )?(?:braided|plaited)|(?:a|one|single|two|twin|long|thick|neat|side|french|dutch|fishtail|her|his|their) (?:braid|plait)|(?:braid|plait) (?:down|over))\b/],
+  ['pigtails', /\b(?:pig ?tails?|in bunches|twin ?tails|(?:two|twin|double) pony ?tails)\b/],
+  ['ponytail', /\b(?:pony ?tail(?:s|ed)?|hair (?:tied|pulled) back(?! (?:in|into) (?:a |two )?(?:buns?|knot|chignon|puff))|side[- ]pony)\b/],
+  ['bun', /\b(?:(?<!(?:currant|cross|sticky|cinnamon|iced|sweet|honey|burger|bath|chelsea|cream|steamed) )bun(?! in the oven)|top ?knot|chignon|(?:hair|curls) (?:tied|put) up|(?:high|afro|hair)[- ]puff|hair in a puff|pineapple (?:up-?do|bun|puff)|(?:hair|curls) in a pineapple)\b/, { coily: /\b(?:puff|pineapple)\b/ }],
+  ['quiff', /\b(?:quiff|pompadour|slicked(?:[- ](?:back|up|down))?|(?:greased|combed|brushed)[- ]back (?:[a-z]+ )?hair|hair (?:greased|combed|brushed) back|rockabilly|greaser|(?:an?|his|her|their) undercut)\b/],
+  ['fade', /\b(?:(?:a|high|low|mid|skin|taper(?:ed)?|bald|high[- ]top) fade(?! (?:to|in|out|away)\b)|fade (?:haircut|cut)|faded sides|(?<!(?:hat|cap|helmet|hill|rock|table|desk|box|roof|stone|tower|mountain|building|lid)s? (?:with|has|had) an? )flat[- ]?top(?: (?:haircut|cut))?(?! (?:of|hat|cap|table|desk|rock|hill|roof|box|stone)\b)|crew ?cut|short back and sides|high and tight|military (?:haircut|cut))\b/, { straight: /\b(?:crew ?cut|flat[- ]?top|short back and sides|high and tight|military)\b/ }],
+  ['buzz', /\b(?:buzz ?cut|(?:buzzed|shorn)(?: short| close)? (?:hair|head)|(?:hair|head) (?:buzzed|shorn)|close[- ]cropped(?! (?:grass|lawn|turf|beard)\b)|cropped (?:hair|short)|stubbly head)\b/],
+  ['curls', /\b(?:short curls|tight curls|curly crop|cropped curls|(?:mop|head|cap) of (?:tight |short )?curls|short curly hair|perm(?:ed)?|short afro|teeny afro|twa)\b/, { coily: /\b(?:tight curls|short afro|teeny afro|twa)\b/ }],
+  ['shaggy', /\b(?:shaggy(?! (?:dog|coat|beard|fur|rug|carpet|blanket|pony|sheep)\b)|shag (?:cut|haircut)|(?:a|her|his|their) shag(?! (?:carpet|rug|pile)\b)|mop[- ]?top|mop of hair|(?:messy|scruffy|unkempt|untidy|floppy|windswept|surfer) hair|tousled|bowl[- ]cut|pudding[- ]bowl|mushroom cut|bed ?head)\b/],
+  ['spiky', /\b(?:spiky|spiked(?:[- ]up)? hair|hair spiked|spikes of hair|gelled(?:[- ]up)? hair)\b/],
+  ['swept', /\b(?:side[- ]part(?:ed|ing)?|parted (?:on|to) (?:the|one) side|side-swept|swept to (?:one|the) side|pixie[- ](?:cut|crop)|neatly combed|combed (?:to (?:one|the) side|neatly))\b/],
+  ['parted', /\b(?:(?:center|centre|middle)[- ]part(?:ed|ing)?|parted (?:in|down) the (?:middle|center|centre)|curtain (?:bangs|fringe))\b/],
+  ['bob', /\b(?:(?:a|her|his|their|short|sleek|neat|blunt|curly|wavy|chin-length|black|brown|blonde?|red|ginger|auburn|gr[ae]y|white|silver|pink|blue|green|purple|dark|golden) bob|bobbed (?:[a-z]+ )?hair|hair (?:is |was )?bobbed|bob[- ]cut|pageboy|(?:chin|jaw)[- ]length)\b/],
+  ['long', /\blong[- ](?:[a-z]+[- ])?(?:hair(?:ed)?|curls|waves)\b|\b(?:flowing|long) (?:hair|locks)\b|\b(?:shoulder|waist|hip)[- ]length (?:[a-z]+ ){0,2}(?:hair|curls|locks|waves)\b|\bdown to (?:her|his|their) (?:waist|back|shoulders)\b|\bmane\b|\bringlets\b|\bbeach waves\b|\bhair down\b/,
+    { curly: /\b(?:ringlets|long curls)\b/, wavy: /\b(?:long|beach) waves\b/ }],
 ];
+const HAIR_TEXTURE_WORDS = [
+  ['coily', /\b(?:coily|coils(?! of (?:rope|wire|cable|chain|string|thread|smoke)\b)|kinky|tight(?:ly)? (?:curls|curled|coiled)|afro-textured)\b/],
+  ['curly', /\b(?:curly|(?<!(?:lip|she|he|it|who|they|smoke) )curls(?! (?:up|into|around|round|her|his|their|its|my|your)\b)|ringlets|corkscrews|corkscrew curls|spiral curls|frizzy|perm(?:ed)?)\b/],
+  ['wavy', /\b(?:wavy|(?:loose|soft|beachy|gentle) waves(?! (?:of|on|in|at|against|lap\w*|crash\w*|roll\w*|break\w*)\b))\b/],
+  ['straight', /\b(?:(?:dead |poker[- ])?straight(?:[- ]haired| (?:[a-z]+ )?(?:hair|locks|bob|fringe|bangs|ponytail))|(?:hair|locks) (?:is |was )?(?:dead |poker[- ])?straight|sleek (?:[a-z]+ ){0,2}(?:hair|bob|ponytail|bun|locks|updo|chignon))\b/],
+];
+// No hair at all ("a bald man", "a shaved head"), unless balding words say otherwise.
+const NO_HAIR = /\b(?:bald(?:[- ]headed)?(?![- ](?:patch|spot|fade|eagles?)\b)(?!\s+on\s+top)|shaved[- ]bald|(?:shaved|shaven)\s+head|hairless)\b/;
+// Without a style word, one for who the character is.
+const HAIR_POOLS = {
+  oldMan: ['balding', 'swept', 'buzz', 'quiff', 'curls'],
+  man: ['spiky', 'swept', 'buzz', 'fade', 'quiff', 'curls', 'shaggy', 'afro', 'locs'],
+  oldWoman: ['bun', 'curls', 'bob', 'updo', 'swept'],
+  anyone: ['bob', 'long', 'parted', 'ponytail', 'pigtails', 'braids', 'bun', 'buns', 'shaggy', 'curls', 'afro', 'swept', 'spiky'],
+};
+const HAIR_ENTRY = new Map(HAIR_CATALOG.map((s) => [s.id, s]));
+/** Does a texture show on a style: its natural one, or one with a mesh of its own? */
+const hairShows = (id, texture) => HAIR_ENTRY.get(id)?.textures?.[0] === texture || !!HAIR_ENTRY.get(id)?.files?.[texture];
+/** A second hash of the card for its hair, mixed so that its low bits don't follow the skin's (h % 6). */
+function hairHash(id) {
+  let x = hashString(`${id}/hair`);
+  x = Math.imul(x ^ (x >>> 16), 0x7feb352d);
+  x = Math.imul(x ^ (x >>> 15), 0x846ca68b);
+  return (x ^ (x >>> 16)) >>> 0;
+}
+/**
+ * The hair a person's text gives them, { style, color, texture? } (the texture only when it isn't
+ * the style's natural one), or null for none. The style comes from its words, else from the pool
+ * for who they are (narrowed to styles where a texture the text names shows); the texture from
+ * hair words, else from the hash, about 60% natural on a style with three.
+ */
+function guessHair(text, male, old, id, color) {
+  if (NO_HAIR.test(text) && !HAIR_STYLES[0][1].test(text)) return null;
+  const hit = HAIR_STYLES.find(([, re]) => re.test(text));
+  const named = (hit?.[2] && Object.keys(hit[2]).find((t) => hit[2][t].test(text))) ?? HAIR_TEXTURE_WORDS.find(([, re]) => re.test(text))?.[0];
+  const hh = hairHash(id);
+  let style = hit?.[0];
+  if (!style) {
+    const pool = HAIR_POOLS[male ? (old ? 'oldMan' : 'man') : old ? 'oldWoman' : 'anyone'].filter((s) => HAIR_ENTRY.has(s));
+    const fit = named ? pool.filter((s) => hairShows(s, named)) : pool;
+    const list = fit.length ? fit : HAIR_CATALOG.map((s) => s.id).filter((s) => hairShows(s, named));
+    style = list[hh % list.length] ?? pool[hh % pool.length] ?? 'bob';
+  }
+  const textures = HAIR_ENTRY.get(style)?.textures ?? [];
+  const texture = named ? (textures.includes(named) ? named : textures[0]) : textures[(hh >>> 8) % 5] ?? textures[0];
+  return texture && texture !== textures[0] ? { style, color, texture } : { style, color };
+}
 const CLOTH_COLORS = {
   red: '#d9473c', orange: '#ee8a3a', yellow: '#f2c94c', green: '#5aa56a', blue: '#4f86c6', navy: '#2f3d57',
   teal: '#2f9a94', purple: '#8a5cc2', pink: '#f29ab2', white: '#f4f1ea', cream: '#f2e6c8', beige: '#d9c3a0',
@@ -1007,14 +1073,12 @@ export function guessSpec(c, forceSpecies = null) {
     const m = new RegExp(`\\b(${Object.keys(words).join('|')})(?:[- ](?:and[- ])?[a-z]+)?[- ](${nouns})\\b`).exec(text);
     return m ? { color: m[1], noun: m[2] } : null;
   };
-  let hairWord = colorWord(HAIR_COLORS, 'hair|haired|locks|curls|braids|pigtails|ponytail|bob|bun')?.color
+  let hairWord = colorWord(HAIR_COLORS, 'hair|haired|locks|curls|braids?|plaits?|pigtails|ponytail|bob|bun|buns|afro|fro|puffs(?! of (?!hair))|ringlets|waves(?! (?:of (?!hair)|on|against|lap\\w*|crash\\w*|roll\\w*|break\\w*))|locs|dreadlocks|dreads|twists|cornrows|quiff|mop|tufts(?! of (?!hair))|mane|fringe(?! (?:of (?!hair)|on))|bangs')?.color
     ?? { blonde: 'blonde', blond: 'blond', brunette: 'brown', redhead: 'red', redheaded: 'red' }[/\b(blonde?|brunette|redhead(?:ed)?)\b/.exec(text)?.[1]];
   if (hairWord === 'dark' && /\bdark[- ]brown\b/.test(text)) hairWord = 'brown';
   const old = [appearance, role].some((t) => about.old.some((re) => re.test(t)));
   if (!hairWord && old) hairWord = (h >>> 11) % 2 ? 'gray' : 'white'; // old: grey or white
-  const styleWord = HAIR_STYLES.find(([, re]) => re.test(text))?.[0];
-  // Without a style in the text, boys and men get a short one, older people a tidy one.
-  const styles = MALE.test(text) ? ['spiky', 'swept', 'bob'] : old ? ['bun', 'bob', 'swept'] : ['bob', 'spiky', 'swept', 'pigtails', 'ponytail', 'bun', 'long'];
+  const hair = guessHair(text, MALE.test(text), old, c.id ?? c.name ?? 'x', hairWord ? HAIR_COLORS[hairWord] : ['#4a2f22', '#1f1b1a', '#7a4a2c', '#e0b45c'][(h >>> 3) % 4]);
   const skins = ['#f8d3b0', '#f1c39c', '#e0a47c', '#c98e66', '#9c6a48', '#6e4a33'];
   const top = colorWord(CLOTH_COLORS, TOPS);
   const bottom = colorWord(CLOTH_COLORS, BOTTOMS);
@@ -1022,7 +1086,7 @@ export function guessSpec(c, forceSpecies = null) {
   const spec = {
     species,
     skin: SKIN_TONES.find(([re]) => re.test(text))?.[1] ?? skins[h % skins.length],
-    hair: { style: styleWord ?? styles[h % styles.length], color: hairWord ? HAIR_COLORS[hairWord] : ['#4a2f22', '#1f1b1a', '#7a4a2c', '#e0b45c'][(h >>> 3) % 4] },
+    ...(hair ? { hair } : {}),
     ...(body ? { body } : {}),
     outfit: {
       top: top ? CLOTH_COLORS[top.color] : c.color ?? ['#e2483c', '#4f86c6', '#5aa56a', '#f2c94c', '#9a72c9'][h % 5],

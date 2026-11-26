@@ -195,6 +195,7 @@ export function CharacterLook({ editor, shape, onPortrait }: { editor: Editor; s
     } finally { setBusy(false) }
   }
   const note = stored ? 'from the file' : 'guessed'
+  const hairTextures: string[] = lookOptions.hair.find((h) => h.id === look.hair?.style)?.textures ?? [] // natural first
 
   return (
     <div className="three-panel">
@@ -209,13 +210,23 @@ export function CharacterLook({ editor, shape, onPortrait }: { editor: Editor; s
           <input type="color" value={spec.skin ?? '#f8d3b0'} onChange={(e) => set({ skin: e.target.value })} />
         </label>
         <label>Hair
-          <select value={look.hair?.style ?? ''} onChange={(e) => save({ ...look, hair: e.target.value ? { color: look.hair?.color ?? '#4a2f22', style: e.target.value } : undefined }, 'hair')}>
+          <select value={look.hair?.style ?? ''} onChange={(e) => {
+            // The texture stays when the new style offers it and it isn't that style's natural one (never written).
+            const style = e.target.value, texture = look.hair?.texture
+            const keep = (lookOptions.hair.find((h) => h.id === style)?.textures ?? []).indexOf(texture) > 0
+            save({ ...look, hair: style ? { color: look.hair?.color ?? '#4a2f22', style, ...(keep ? { texture } : {}) } : undefined }, 'hair')
+          }}>
             <Options value={look.hair?.style ?? ''} note={note} list={lookOptions.hair.map((h) => [h.id, h.label])} />
           </select>
         </label>
         <label>Hair colour
           <select value={look.hair?.color ?? ''} disabled={!look.hair?.style} onChange={(e) => setGroup('hair', { color: e.target.value })}>
             <Options value={look.hair?.color ?? ''} note={note} list={lookOptions.hairColors.map((h) => [h.value, h.label])} />
+          </select>
+        </label>
+        <label>Hair texture
+          <select value={look.hair?.texture ?? hairTextures[0] ?? ''} disabled={!look.hair?.style || hairTextures.length < 2} onChange={(e) => setGroup('hair', { texture: e.target.value === hairTextures[0] ? undefined : e.target.value })}>
+            <Options value={look.hair?.texture ?? hairTextures[0] ?? ''} note={note} list={hairTextures.map((t) => [t, lookOptions.hairTextures.find((x) => x.id === t)?.label ?? t])} />
           </select>
         </label>
         <label>Eyes
