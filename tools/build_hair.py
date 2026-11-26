@@ -188,9 +188,13 @@ class Region:
         amp, k, m, ph = self.wave
         f = phi + amp * np.sin(k * theta + m * phi + ph) * smoothstep(0.1, 0.6, theta)
         if self.comb:
+            # Combed away from a part at `from`: full strength at the part, fading over `width`
+            # on the combed side, and fading again before the far side of the pole, so the
+            # flow is continuous all the way around (no jump where phi - from wraps).
             c = self.comb
-            x = np.clip(wrap(phi - math.radians(c['from'])) * c['side'], 0, None)
-            f = f - c['side'] * math.radians(c['amount']) * smoothstep(*c['theta'], theta) * (1 - smoothstep(0, c['width'], x))
+            x = wrap(phi - math.radians(c['from'])) * c['side']
+            w = np.where(x >= 0, 1 - smoothstep(0, c['width'], x), smoothstep(-math.pi, -math.pi + c['width'], x))
+            f = f - c['side'] * math.radians(c['amount']) * smoothstep(*c['theta'], theta) * w
         return theta, f
 
     def uvg(self, D):
@@ -310,14 +314,16 @@ STYLES = {
         'label': 'Pigtails',
         'edge': mirrored([(0, 0.838), (38, 0.845), (46, 0.85), (50, 0.68), (84, 0.68), (180, 0.62)]),
         'top': 0.032, 'side': 0.028,
-        # bangs combed forward; the rest parted in the middle and pulled to the two ties
+        # bangs combed forward; the rest parted in the middle and pulled to the two ties. The
+        # partings are soft and shallow and the lock creases run right into them, so the back
+        # reads as locks pulled to the ties rather than two smooth panels with a sharp seam.
         'flow': [crown(15, locks=20, where=in_bangs),
-                 tie((0.17, 0.70, -0.13), locks=12, where=side_of, seam=(0, -1, 0)),
-                 tie((-0.17, 0.70, -0.13), locks=12, seam=(0, -1, 0))],
+                 tie((0.17, 0.70, -0.13), locks=16, where=side_of, seam=(0, -1, 0)),
+                 tie((-0.17, 0.70, -0.13), locks=16, seam=(0, -1, 0))],
         'parts': [{'dist': lambda D: np.abs(D[..., 0]) * R_FLOW, 'mask': lambda D: smoothstep(-0.004, -0.014, in_bangs(D)),
-                   'depth': 0.011, 'width': 0.0055},
-                  {'dist': lambda D: np.abs(in_bangs(D)), 'mask': lambda D: np.ones(D.shape[:-1]), 'depth': 0.008, 'width': 0.006}],
-        'depth': 0.008, 'tips': [(-47, 47, 0.0085)],
+                   'depth': 0.007, 'width': 0.010, 'fade': (0.003, 0.012)},
+                  {'dist': lambda D: np.abs(in_bangs(D)), 'mask': lambda D: np.ones(D.shape[:-1]), 'depth': 0.005, 'width': 0.010, 'fade': (0.003, 0.012)}],
+        'depth': 0.011, 'tips': [(-47, 47, 0.0085)],
         'extras': ['pigtails'],
     },
     'ponytail': {
@@ -439,10 +445,12 @@ def shell(style, A, d, r, top_r, rng):
     for part in style.get('parts', []):
         dist = part['dist'](D); mask = part['mask'](D)
         dip += part['depth'] * mask * np.exp(-(dist / part['width']) ** 2)
-        part_fade *= 1 - mask * (1 - smoothstep(0.003, 0.02, dist))
+        # A parting is a chart boundary: the locks on its two sides differ, so their relief fades
+        # out toward it (over `fade`, metres from the part line) and both sides meet without a step.
+        part_fade *= 1 - mask * (1 - smoothstep(*part.get('fade', (0.003, 0.02)), dist))
     near_end = 1 - smoothstep(0.02, 0.12, s)                                       # locks are most distinct where they end
     depth = style['depth'] * grow * part_fade * (0.6 + 0.4 * near_end)
-    thick = thick + 0.0018 * bump * grow - depth * (1 - h) - dip
+    thick = thick + 0.0018 * bump * grow * part_fade - depth * (1 - h) - dip
 
     # Where the hair ends (bangs, nape), each lock ends in a rounded tip.
     tip = ranges(az_deg, style.get('tips', []))
@@ -500,7 +508,7 @@ def shell(style, A, d, r, top_r, rng):
 # ---------------------------------------------------------------------------
 # Extra shapes
 # ---------------------------------------------------------------------------
-def catmull(points, radii, per=10):
+def catmull(points, radii, per):
     pts = np.array(points, float); rad = np.array(radii, float)
     fine, frad = [], []
     for i in range(len(pts) - 1):
@@ -513,12 +521,17 @@ def catmull(points, radii, per=10):
     return np.array(fine), np.array(frad)
 
 
-def tube(points, radii, rng, around=48, lobes=7, depth=0.15, twist=0.9, flat=1.0):
-    """A tapered tube of hair along a polyline, in a few twisting locks, closed at the end."""
-    fine, frad = catmull(points, radii)
+def tube(points, radii, rng, around=48, lobes=7, depth=0.15, twist=0.9, flat=1.0, root=0, per=10):
+    """A tapered tube of hair along a polyline, in a few twisting locks, closed at both ends.
+    The first `root` control points lie inside the head: the tube grows out of the scalp, so
+    its start is buried and never shows, and its locks and strands start at point `root` (the
+    tie)."""
+    fine, frad = catmull(points, radii, per)
     tang = np.gradient(fine, axis=0); tang /= np.linalg.norm(tang, axis=1, keepdims=True)
     seg = np.linalg.norm(np.diff(fine, axis=0), axis=1)
-    arc = np.concatenate([[0], np.cumsum(seg)]); along = arc / arc[-1]
+    arc = np.concatenate([[0], np.cumsum(seg)])
+    a0 = arc[root * per]
+    along = np.clip((arc - a0) / (arc[-1] - a0), 0, 1)
     normal = np.cross(tang[0], [0, 0, 1.0]) if abs(tang[0][2]) < 0.9 else np.cross(tang[0], [1.0, 0, 0])
     normal /= np.linalg.norm(normal)
     bounds = lock_bounds(lobes, [], rng)
@@ -547,6 +560,10 @@ def tube(points, radii, rng, around=48, lobes=7, depth=0.15, twist=0.9, flat=1.0
     U.append(U[-1]); Vv.append(Vv[-1] + frad[-1] * 0.6 / TILE_V); G.append(0.0); H.append(1.0); T.append(1.0)
     last = (n - 1) * around
     F += [(last + k, last + (k + 1) % around, tip) for k in range(around)]
+    # The start is closed too, so even a root that came out of the scalp could not show a hole.
+    start = len(V); V.append(fine[0] - tang[0] * frad[0] * 0.3)
+    U.append(U[0]); Vv.append(Vv[0]); G.append(0.0); H.append(1.0); T.append(1.0)
+    F += [((k + 1) % around, k, start) for k in range(around)]
     V = np.array(V); U = np.array(U); Vv = np.array(Vv); G = np.array(G); H = np.array(H)
     occ = 1 - 0.3 * (1 - H) ** 1.6
 
@@ -682,14 +699,16 @@ def ellipsoid(center, radii, rng, lat=30, lon=56, lobes=7, depth=0.09, twist=1.1
 def extras(name, rng, shell_part):
     if name == 'bun':
         return [ellipsoid((0, 1.035, -0.045), (0.088, 0.078, 0.088), rng)]
+    # Tails start 3 cm inside the head (the first point, on the line of the first segment) and
+    # come out of the hair at the tie, so there is no gap or open end at the root.
     if name == 'ponytail':
-        return [tube([(0, 0.93, -0.17), (0, 0.92, -0.27), (0, 0.83, -0.33), (0, 0.72, -0.33), (0, 0.62, -0.29)],
-                     [0.05, 0.058, 0.062, 0.048, 0.012], rng)]
+        return [tube([(0, 0.937, -0.10), (0, 0.93, -0.17), (0, 0.92, -0.27), (0, 0.83, -0.33), (0, 0.72, -0.33), (0, 0.62, -0.29)],
+                     [0.045, 0.05, 0.058, 0.062, 0.048, 0.012], rng, root=1)]
     if name == 'pigtails':
         out = []
         for s in (1, -1):
-            out.append(tube([(s * 0.17, 0.70, -0.13), (s * 0.25, 0.68, -0.13), (s * 0.29, 0.60, -0.11), (s * 0.29, 0.52, -0.09), (s * 0.27, 0.46, -0.08)],
-                            [0.045, 0.05, 0.048, 0.036, 0.01], rng, around=44, lobes=6, twist=s * 0.8))
+            out.append(tube([(s * 0.12, 0.7125, -0.13), (s * 0.17, 0.70, -0.13), (s * 0.25, 0.68, -0.13), (s * 0.29, 0.60, -0.11), (s * 0.29, 0.52, -0.09), (s * 0.27, 0.46, -0.08)],
+                            [0.04, 0.045, 0.05, 0.048, 0.036, 0.01], rng, around=44, lobes=6, twist=s * 0.8, root=1))
         return out
     if name == 'long':
         # (height, half-width, half-depth): starts inside the cap, tucked under the cap's tips,

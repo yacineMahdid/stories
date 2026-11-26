@@ -212,15 +212,28 @@ export function createHairMaterial() {
 }
 
 const WHITE = new THREE.Color(1, 1, 1);
+const COOL_WHITE = new THREE.Color(0.86, 0.93, 1.0);
+const NEUTRAL = new THREE.Color();
+const GRAY = new THREE.Color();
 
-/** Set the hair color; the sheen is a soft, lighter tint of it (never white). */
+/** Set the hair color; the sheen is a soft, faint tint of it (never white). */
 export function setHairColor(material, color) {
+  const { lerp, smoothstep } = THREE.MathUtils;
   material.color.set(color);
   const c = material.color;
   const lum = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;   // linear
   // Dark hair needs relatively more sheen to show its form; light hair needs little.
-  const amount = THREE.MathUtils.lerp(0.27, 0.15, Math.min(1, Math.sqrt(lum / 0.6)));
-  // The hair's own hue at full brightness, a little paler: even black hair keeps its warmth.
-  const tint = material.sheenColor.copy(c).multiplyScalar(1 / Math.max(c.r, c.g, c.b, 1e-4)).lerp(WHITE, 0.2);
-  tint.multiplyScalar(amount);
+  const amount = lerp(0.27, 0.15, Math.min(1, Math.sqrt(lum / 0.6)));
+  // The sheen is the hair's own hue at full brightness, a little paler. On very dark hair that
+  // warm tint is many times the hair's own color and would turn black into espresso brown and
+  // browns into copper, so the darker the hair, the closer its sheen gets to a neutral tone
+  // (black fully, dark brown mostly, chestnut and auburn partly; colors from purple up keep
+  // their own hue). Only black gets a faintly cool one: on brown it would read as lavender.
+  const dark = 1 - smoothstep(lum, 0.015, 0.16);
+  NEUTRAL.copy(COOL_WHITE).lerp(WHITE, smoothstep(lum, 0.015, 0.04));
+  material.sheenColor.copy(c).multiplyScalar(1 / Math.max(c.r, c.g, c.b, 1e-4))
+    .lerp(WHITE, 0.2).lerp(NEUTRAL, 0.75 * dark).multiplyScalar(amount);
+  // Under a warm key light the darkest browns drift toward copper: take a little of their
+  // saturation out, at the same luminance. Chestnut and lighter colors are left as they are.
+  c.lerp(GRAY.setScalar(lum), 0.25 * (1 - smoothstep(lum, 0.03, 0.08)));
 }

@@ -84,6 +84,10 @@ the long hair's lower layer). The hair is sculpted, not a smooth helmet:
   pigtails); bangs can have their own section, be combed or swept away from a part.
 - **Locks** follow the flow: rounded on top, soft creases between them, a little uneven,
   merging where the strands converge, and ending in rounded tips where the hair ends.
+- **Partings** are soft grooves where two flow sections meet; the locks' relief fades out
+  right at the part line, so the two sides meet without a step.
+- **Tails** (ponytail, pigtails) grow out of the scalp: each tube starts a few centimetres
+  inside the head and is closed at both ends, so no gap or open end shows at the root.
 - **Hairline:** the shell dips under the skin along the style's hairline, measured exactly to
   its segments, so edges come out as smooth curves.
 - `TEXCOORD_0` runs across the strands (u) and along them (v), in units of the strand
@@ -91,9 +95,11 @@ the long hair's lower layer). The hair is sculpted, not a smooth helmet:
   tails, inside long hair), alpha is how much of the strand texture shows.
 
 `hair.js` gives it a matte material: rough, low specular, no clearcoat, and a soft sheen
-tinted from the hair color (never white). A normal map of fine strand grooves and a matching
-shade map are drawn once at runtime and shared by every character. Every build is identical
-for the same input.
+tinted from the hair color (never white). On black and dark brown hair the sheen is nearly
+neutral and the darkest browns lose a little saturation, so under a warm light black stays
+black and brown stays brown instead of turning coppery. A normal map of fine strand grooves
+and a matching shade map are drawn once at runtime and shared by every character. Every build
+is identical for the same input.
 
 ## Building the assets
 
