@@ -1,4 +1,5 @@
 import { editJson, isIndex, JsonEditRefused, nameTaken, spotOf, type JsonOp, type Removed } from './json-edit.ts'
+import { rebase } from '../src/lib/merge.ts'
 
 export { JsonEditRefused, type JsonOp, type Removed }
 
@@ -70,8 +71,22 @@ export function checkOps(ops: unknown): JsonOp[] {
     if (op.op === 'delete' && op.ifEmpty !== undefined && typeof op.ifEmpty !== 'boolean') throw new JsonEditRefused(`A delete at ${op.path.join(' › ')} has a bad "ifEmpty".`)
     // Text to put back only helps the layout: one that isn't is dropped, and the edit still lands.
     if (op.restore !== undefined && !isRemoved(op.restore)) delete op.restore
+    // What the writer saw only matters for a set or delete; elsewhere it is dropped.
+    if (op.op === 'rename' && 'expect' in op) delete (op as { expect?: unknown }).expect
   }
   return ops as JsonOp[]
+}
+
+/**
+ * The op as it lands on `doc`: a whole list written from what the writer saw there (`expect`), when
+ * the file has changed it since (by hand, or Claude answering a note), is merged into what the file
+ * holds now rather than written over it (app/src/lib/merge.ts). Anything else as it is.
+ */
+export function landing(doc: Record<string, unknown>, op: JsonOp): JsonOp {
+  if (op.op === 'rename' || op.expect === undefined) return op
+  const r = rebase(doc, op, op.expect)
+  if (!r) return op
+  return { ...r, ...(op.restore ? { restore: op.restore } : {}) } as JsonOp
 }
 
 /** Fill `node` again with `entries`, in their order (as own keys, whatever their names). */
@@ -123,7 +138,8 @@ export function patchText(text: string, ops: JsonOp[]): { text: string; doc: Rec
   let out = text
   let spliced = true
   const removed: (Removed | null)[] = [] // what each edit took out of the text, for its Undo
-  for (const op of ops) {
+  for (const sent of ops) {
+    const op = landing(doc, sent) // merged into a list the file has changed since it was read
     applyOp(doc, op) // refusals throw before anything is written
     if (!spliced) continue
     try {
@@ -140,4 +156,26 @@ export function patchText(text: string, ops: JsonOp[]): { text: string; doc: Rec
     out = (text.startsWith('﻿') ? '﻿' : '') + formatJSON(doc).replace(/\n/g, eol) + eol
   }
   return { text: out, doc, spliced, removed: spliced ? removed : ops.map(() => null) }
+}
+
+/** The answers to the last saves, by their id: what each edit took out of the file. */
+export type Answered = Map<string, (Removed | null)[]>
+
+/**
+ * A save of the direction (PATCH /api/staging): { id, ops } on the file's text. Returns the new
+ * text (null: the file stays as it is) and the answer, { doc, removed }. A save whose id is in
+ * `answered` (sent again because its answer was lost) is not made twice: it is answered with what
+ * its edits took out the first time, so each one's Undo still puts that back.
+ */
+export function patchRequest(text: string, body: unknown, answered: Answered): { text: string | null; answer: { doc: Record<string, unknown>; removed: (Removed | null)[] } } {
+  const b = isObj(body) ? body : {}
+  const id = typeof b.id === 'string' && b.id && b.id.length <= 64 ? b.id : null
+  const seen = id ? answered.get(id) : undefined
+  if (seen) return { text: null, answer: { doc: parseDirection(text), removed: seen } }
+  const { text: out, doc, removed } = patchText(text, checkOps(b.ops))
+  if (id) {
+    answered.set(id, removed)
+    if (answered.size > 50) answered.delete(answered.keys().next().value!)
+  }
+  return { text: out, answer: { doc, removed } }
 }

@@ -1,11 +1,13 @@
 import { useSyncExternalStore } from 'react'
+import { rebase, valueAt } from './merge.ts'
 
 /**
  * The 3D direction (staging.json in the data folder): character looks, place presets and
  * everything else a scene needs in 3D (see docs/scenes.md). The file is also edited by hand, so
  * the app never writes a copy of the whole thing: each change is a small set, delete or rename
  * that the dev server splices into the file on disk, and the server answers with the file as it
- * now is.
+ * now is. A list written whole (a page's cast, notes…) says what it was made from, so a change the
+ * file got meanwhile (by hand, or Claude answering a note) is merged, not written over (merge.ts).
  */
 export type Direction = Record<string, any>
 export type StagingStatus = 'loading' | 'ready' | 'saving' | 'saved' | 'error'
@@ -26,6 +28,12 @@ let readFailed = false // the file on disk could not be read: no edits until it 
 let unreadable = '' // why it could not be read
 let pending: Op[] = [] // made here, not sent yet
 let inflight: Op[] = [] // sent, not answered yet
+// A save whose answer didn't come: sent again as it was, under the same id, before anything else.
+// The server answers an id it has seen with what it answered then, so nothing is made twice and
+// each edit's Undo still knows what the edit took out.
+let retry: { id: string; ops: Op[] } | null = null
+const session = Math.random().toString(36).slice(2, 10)
+let sends = 0
 let timer: ReturnType<typeof setTimeout> | undefined
 let flushing: Promise<void> | null = null
 let rereadAfterSave = false // the window came back while a save was on its way
@@ -34,7 +42,9 @@ const listeners = new Set<() => void>()
 const notify = () => listeners.forEach((l) => l())
 const isObject = (v: unknown): v is Direction => !!v && typeof v === 'object' && !Array.isArray(v)
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
-const readError = () => `${unreadable} Fix it; it is read again when you come back to this tab${pending.length ? ', and the changes not saved yet are saved then' : ''}.`
+const readError = () => `${unreadable} Fix it; it is read again when you come back to this tab${pending.length || retry ? ', and the changes not saved yet are saved then' : ''}.`
+/** Every edit not saved yet, in order: sent and not answered, to send again, still to send. */
+const unsaved = () => [...inflight, ...(retry?.ops ?? []), ...pending]
 
 // An Undo puts back the very text its edit took out of the file (a hand-written entry, its blank
 // line, its place among the others), not just the same values: the server's answer to each edit
@@ -43,6 +53,20 @@ const undoes = new WeakMap<Op, Op>() // an op of an Undo → the edit it takes b
 const took = new WeakMap<Op, Removed>() // an edit → what it last took out of the file
 const putsBack = new WeakSet<Op>() // the op of an Undo that puts that text back
 const restoreOf = (op: Op) => { const e = putsBack.has(op) ? undoes.get(op) : undefined; return e && took.get(e) }
+// A set or delete of a whole list → what it was made from (null: nothing was there). An edit's is
+// the list as it was here when it was made; its Undo's is what the edit wrote. When the file holds
+// something else by the time it lands, it is merged into that (merge.ts), here and on disk alike.
+const expects = new WeakMap<Op, unknown>()
+const isList = (v: unknown) => Array.isArray(v)
+function expectFor(op: Op, before: unknown, after: unknown) {
+  if (op.op === 'rename' || expects.has(op) || !(isList(before) || isList(after))) return
+  expects.set(op, before === undefined ? null : structuredClone(before))
+}
+/** `op` on `doc`, merged into a list that has changed since the op was made (see merge.ts). */
+function land(doc: Direction, op: Op): Direction {
+  const r = expects.has(op) ? rebase(doc, op, expects.get(op)) : null
+  return apply(doc, r ?? op)
+}
 
 // Key order as the server keeps it (see spotOf and applyOp in app/server), so the copy here lists
 // the entries in the file's order.
@@ -101,9 +125,9 @@ export async function loadStaging(): Promise<void> {
       if (!isObject(fresh)) throw new Error(`${STAGING_FILE} must hold an object ({ … }).`)
     }
     // Keep the same object when nothing changed, so the 3D views don't restage for nothing.
-    for (const op of [...inflight, ...pending]) fresh = apply(fresh, op) // edits still on their way
+    for (const op of unsaved()) fresh = land(fresh, op) // edits still on their way
     if (!same(fresh, direction)) direction = fresh
-    status = pending.length || inflight.length ? 'saving' : 'ready'
+    status = unsaved().length ? 'saving' : 'ready'
     readFailed = false
     error = ''
   } catch (e) {
@@ -113,34 +137,45 @@ export async function loadStaging(): Promise<void> {
     error = readError()
   }
   notify()
-  if (pending.length) schedule()
+  if (pending.length || retry) schedule()
 }
 
 async function flush(keepalive = false) {
-  if (readFailed || status === 'loading' || !pending.length) return
-  // An Undo waits for the answer to the edit it takes back, which says what to put back (unless
-  // the tab is closing: then everything goes now).
-  const held = keepalive ? -1 : pending.findIndex((op, i) => { const e = undoes.get(op); const j = e ? pending.indexOf(e) : -1; return j >= 0 && j < i })
-  const ops = held > 0 ? pending.slice(0, held) : pending
-  pending = pending.slice(ops.length)
+  if (readFailed || status === 'loading' || (!pending.length && !retry)) return
+  let batch: { id: string; ops: Op[] }
+  let held = -1
+  if (retry && !keepalive) {
+    // A save whose answer was lost goes again first, alone and as it was (the server knows its id).
+    batch = retry
+    retry = null
+  } else {
+    // An Undo waits for the answer to the edit it takes back, which says what to put back (unless
+    // the tab is closing: then everything goes now, a lost save with it).
+    held = keepalive ? -1 : pending.findIndex((op, i) => { const e = undoes.get(op); const j = e ? pending.indexOf(e) : -1; return j >= 0 && j < i })
+    const ops = held > 0 ? pending.slice(0, held) : pending
+    pending = pending.slice(ops.length)
+    batch = { id: `${session}-${++sends}`, ops: [...(retry?.ops ?? []), ...ops] }
+    retry = null
+  }
+  const ops = batch.ops
   inflight = ops
   status = 'saving'
   notify()
   let failed = false
   try {
-    const body = JSON.stringify({ ops: ops.map((op) => ({ ...op, restore: restoreOf(op) })) })
+    const body = JSON.stringify({ id: batch.id, ops: ops.map((op) => ({ ...op, restore: restoreOf(op), expect: expects.get(op) })) })
     const res = await fetch('/api/staging', { method: 'PATCH', body, keepalive })
     if (!res.ok) throw await failure(res, `Saving ${STAGING_FILE} failed`)
     const answer: { doc: Direction; removed?: (Removed | null)[] } = await res.json()
     ops.forEach((op, i) => { const r = answer.removed?.[i]; if (r) took.set(op, r); else took.delete(op) })
     let fresh = answer.doc
-    for (const op of pending) fresh = apply(fresh, op) // changes made while saving
+    for (const op of pending) fresh = land(fresh, op) // changes made while saving
     if (!same(fresh, direction)) direction = fresh // an identical answer changes nothing on screen
     status = pending.length ? 'saving' : 'saved'
     error = ''
     failures = 0
   } catch (e) {
-    pending = [...ops, ...pending] // sent again with the next change, when you come back, or a little later
+    retry = batch // sent again (the same id) with the next change, when you come back, or a little later
     status = 'error'
     error = `${(e instanceof Error ? e.message : String(e)).replace(/[.\s]*$/, '.')} It is tried again by itself.`
     failed = true
@@ -150,8 +185,8 @@ async function flush(keepalive = false) {
   // A failed save is tried again by itself, a little later each time (2 s, 4 s … a minute), and
   // soon if you came back to the tab while it was on its way.
   if (failed) { schedule(rereadAfterSave ? 400 : Math.min(60_000, 2_000 * 2 ** failures++)); rereadAfterSave = false }
-  else if (held > 0) schedule(0) // the Undo held back above
-  else if (rereadAfterSave && !pending.length && !readFailed) { rereadAfterSave = false; void loadStaging() }
+  else if (held > 0 || pending.length) schedule(0) // the Undo held back above, or what waited behind a save sent again
+  else if (rereadAfterSave && !readFailed) { rereadAfterSave = false; void loadStaging() }
 }
 
 function schedule(delay = 400) {
@@ -168,7 +203,10 @@ export const canEdit = () => status !== 'loading' && !readFailed
  */
 export function edit(ops: Op[]): boolean {
   if (!canEdit() || !ops.length) return false
-  for (const op of ops) direction = apply(direction, op)
+  for (const op of ops) {
+    expectFor(op, valueAt(direction, op.path), op.op === 'set' ? op.value : undefined)
+    direction = land(direction, op)
+  }
   pending.push(...ops)
   status = 'saving'
   notify()
@@ -186,10 +224,15 @@ export function undoOf(ops: Op[]): Op[] {
   const back: Op[] = []
   for (const op of ops) {
     const us = inverse(d, op)
-    for (const u of us) undoes.set(u, op)
+    const next = apply(d, op)
+    for (const u of us) {
+      undoes.set(u, op)
+      // An Undo of a whole list is made from what the edit writes there.
+      expectFor(u, valueAt(next, u.path), u.op === 'set' ? u.value : undefined)
+    }
     if (us.length) putsBack.add(us[us.length - 1])
     back.unshift(...us)
-    d = apply(d, op)
+    d = next
   }
   return back
 }
@@ -225,7 +268,7 @@ function inverse(d: Direction, op: Op): Op[] {
  */
 export function replay(ops: Op[]) {
   if (edit(ops) || !ops.length) return
-  for (const op of ops) direction = apply(direction, op)
+  for (const op of ops) direction = land(direction, op)
   pending.push(...ops)
   if (readFailed) error = readError()
   notify()
@@ -248,7 +291,7 @@ if (typeof window !== 'undefined') {
   window.addEventListener('focus', () => {
     if (status === 'saving') { rereadAfterSave = true; return }
     if (status === 'loading') return
-    if (readFailed || !pending.length) void loadStaging() // a fixed file, or hand edits
+    if (readFailed || !(pending.length || retry)) void loadStaging() // a fixed file, or hand edits
     else schedule() // a save that failed: try again
   })
 }

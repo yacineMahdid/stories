@@ -78,6 +78,19 @@ function rotate([x, z], deg) {
   return [x * c + z * s, -x * s + z * c];
 }
 
+/**
+ * A place-local point ([x, z] in units east / south of the pin, turned by the place's `rotate`)
+ * in world coordinates, and back again. `worldToLocal` is the exact inverse of `localToWorld`:
+ * the pin's position comes off, then the turn is undone.
+ */
+export function localToWorld(p, place) {
+  const [rx, rz] = rotate(p, place?.rotate ?? 0);
+  return [(place?.pos?.[0] ?? 0) + rx, (place?.pos?.[1] ?? 0) + rz];
+}
+export function worldToLocal(p, place) {
+  return rotate([p[0] - (place?.pos?.[0] ?? 0), p[1] - (place?.pos?.[1] ?? 0)], -(place?.rotate ?? 0));
+}
+
 function byIdOrName(map, ref) {
   if (ref == null) return null;
   if (map.has(ref)) return map.get(ref);
@@ -206,8 +219,11 @@ export class World {
       this.characters.set(key, { id: key, name: spec.name ?? key, spec });
     }
 
-    // Scenes in reading order.
-    this.scenes = canvas.pages.map((page) => ({ page, dir: direction.scenes?.[page.id] ?? this.sceneDirectionByTitle(page.title) ?? {} }));
+    // Scenes in reading order, each with the key of its entry in "scenes" (null when it has none).
+    this.scenes = canvas.pages.map((page) => {
+      const key = this.sceneKey(page);
+      return { page, key, dir: key != null ? direction.scenes[key] : {} };
+    });
     this.sceneIndex = new Map(this.scenes.map((s, i) => [s.page.id, i]));
   }
 
@@ -249,7 +265,27 @@ export class World {
     return null;
   }
 
+  /** The key of a page's entry in "scenes": its id, else its title written by hand (any case). Null when none. */
+  sceneKey(page) {
+    const scenes = this.direction.scenes ?? {};
+    if (Object.hasOwn(scenes, page.id) && scenes[page.id] != null) return page.id;
+    const low = (page.title ?? '').toLowerCase();
+    if (!low) return null;
+    return Object.keys(scenes).find((k) => k.toLowerCase() === low) ?? null;
+  }
+
   placeByName(ref) { return byIdOrName(this.places, ref); }
+
+  /** Every thing id in the world: the places' things, and every page's dressing and added things (rows and rings one by one). */
+  thingIds() {
+    const ids = new Set([...this.things.keys(), ...this.orphanThings]);
+    for (const s of this.scenes) {
+      const placeId = this.placeOf(s).place?.id;
+      for (const t of expandGroups(Array.isArray(s.dir.dressing) ? s.dir.dressing : [], placeId)) if (t?.id) ids.add(t.id);
+      for (const ch of Array.isArray(s.dir.changes) ? s.dir.changes : []) if (ch?.add) for (const t of expandGroups([ch.add], placeId)) if (t?.id) ids.add(t.id);
+    }
+    return [...ids];
+  }
 
   /** Where a page happens before the map has any pins: an empty meadow at the origin. */
   nowhere() {
@@ -272,6 +308,11 @@ export class World {
     if (!place) return this.mapToWorld(p);
     const [rx, rz] = rotate(p, place.rotate);
     return [place.pos[0] + rx, place.pos[1] + rz];
+  }
+  /** A world point in a place's local units (its inverse); with no place, in map coordinates. */
+  worldToLocal(p, place) {
+    if (!place) return this.worldToMap(p);
+    return worldToLocal(p, place);
   }
 
   /** Resolve an `at`: [x, z] local, { map }, { pin, offset }, { near, offset }. Returns world [x, z]. */
@@ -455,6 +496,15 @@ export class World {
     // Snow means winter, also snow that is over ("the morning after the snow").
     const season = scene.dir.season ?? SEASON_OF_MONTH(page.at?.month) ?? told.season ?? (told.snow ? 'winter' : null) ?? inherit('season') ?? this.direction.defaults?.season ?? 'summer';
     const weather = scene.dir.weather ?? told.weather ?? inherit('weather') ?? this.direction.defaults?.weather ?? 'clear';
+    // Where each part of the moment comes from: this page's direction, the page on the canvas (its
+    // time, or its "When" text), a page it continues, or the defaults.
+    const momentFrom = {
+      hour: typeof scene.dir.time === 'number' || (typeof scene.dir.time === 'string' && /^[+-]/.test(scene.dir.time) && chain[0]) ? 'own'
+        : page.at?.hour != null ? 'canvas' : told.hour != null ? 'when' : chain.some((s) => hourOf(s) != null) ? 'inherit' : 'default',
+      season: scene.dir.season != null ? 'own' : SEASON_OF_MONTH(page.at?.month) != null ? 'canvas'
+        : told.season != null || told.snow ? 'when' : inherit('season') != null ? 'inherit' : 'default',
+      weather: scene.dir.weather != null ? 'own' : told.weather != null ? 'when' : inherit('weather') != null ? 'inherit' : 'default',
+    };
     const ambient = inherit('ambient') ?? null;
     const day = page.at?.day ?? 15;
 
@@ -512,7 +562,15 @@ export class World {
         notes.push({ text: `${t.note ?? t.kind} (left from the page it continues)`, since: s.page.path, title: s.page.title, id: th.id });
       }
     }
-    for (const t of expandGroups(scene.dir.dressing ?? [], place?.id)) this.addThing({ ...t, id: t.id ?? `${page.id}/dress-${things.size}` }, place, 'dressing', things);
+    // The page's own single entries are the ones its direction can move: each one's thing id, by
+    // its place in the list (null for a row, ring or scatter).
+    const ownDressing = Array.isArray(scene.dir.dressing) ? scene.dir.dressing : [];
+    const dressingIds = ownDressing.map(() => null);
+    const entryIndex = new Map(ownDressing.map((t, k) => [t, k]));
+    for (const t of expandGroups(scene.dir.dressing ?? [], place?.id)) {
+      const th = this.addThing({ ...t, id: t.id ?? `${page.id}/dress-${things.size}` }, place, 'dressing', things);
+      if (entryIndex.has(t) && t?.kind !== 'scatter') dressingIds[entryIndex.get(t)] = th.id;
+    }
 
     // Facing toward a named target (another thing, or the place center).
     for (const t of things.values()) {
@@ -525,7 +583,14 @@ export class World {
 
     // Cast: the page's characters, placed by the direction or gathered automatically.
     const castDir = scene.dir.cast ?? (chain.length ? inherit('cast') ?? [] : []);
+    // Where the cast comes from: this page's own "cast", one it continues, or nobody's (gathered).
+    const castSource = [scene, ...chain].find((s) => s.dir.cast != null);
+    const castFrom = !castSource ? { kind: 'auto' } : castSource === scene ? { kind: 'own' } : { kind: 'inherit', page: castSource.page.id };
     const cast = [];
+    // Beside the cast: each member's entry as written (a gathered one's as it was made), and the
+    // whole written list, also the entries that match no character.
+    const castEntries = [];
+    const castList = Array.isArray(castDir) ? castDir.map((c) => (isEntryMap(c) ? { ...c } : c)) : [];
     const used = new Set();
     warnings.push(...this.deletedCards(scene, chain, castDir));
     for (const c of castDir) {
@@ -538,10 +603,15 @@ export class World {
       if (page.characterIds?.length && !page.characterIds.includes(who.id)) warnings.push(`${String(who.name ?? '').trim() || 'A character with no name'} is staged here but not listed on this page.`);
       used.add(who.id);
       cast.push({ ...c, who: who.id, character: who, look: deepMerge(looks.get(who.id) ?? {}, c.look ?? {}) });
+      castEntries.push({ ...c });
     }
-    // Listed but not staged (a deleted card has its note above and no place in the arc).
+    // Listed but not staged (a deleted card has its note above and no place in the arc). A locked
+    // page keeps the cast it was locked with: nobody joins it by themselves, they get a note.
+    const locked = scene.dir.locked === true;
     const missing = [...new Set(page.characterIds ?? [])].filter((id) => !used.has(id) && this.character(id));
-    missing.forEach((id, i) => {
+    if (locked) {
+      for (const id of missing) warnings.push(`${String(this.character(id).name ?? '').trim() || 'A character with no name'} is listed on this page but not in its locked 3D cast.`);
+    } else missing.forEach((id, i) => {
       const who = this.character(id);
       // A shallow arc that opens to the south, where the camera looks from: everyone faces its
       // middle, so they talk to each other and their faces read (no backs to the camera).
@@ -553,21 +623,25 @@ export class World {
       const at = rotate([Math.sin(t) * r, 1.2 - Math.cos(t) * r * 0.75], view);
       const facing = n > 1 ? yawTo(at, rotate([0, 1.2 + r * 0.35], view)) : view;
       cast.push({ who: who.id, character: who, at, facing, do: n > 1 ? 'Talk' : 'Idle', auto: true, look: looks.get(who.id) ?? {} });
+      castEntries.push({ who: who.id, at: [...at], facing, do: n > 1 ? 'Talk' : 'Idle', auto: true });
     });
 
     // Camera: its own shots, the continued page's, or `{ "same": "<page>" }` to reuse another page's framing.
     let camera = scene.dir.camera ?? inherit('camera') ?? null;
+    // The page whose "camera" it is: this one, or the one it continues.
+    const cameraSource = [scene, ...chain].find((s) => s.dir.camera != null);
+    let cameraFrom = !cameraSource ? { kind: 'auto' } : cameraSource === scene ? { kind: 'own' } : { kind: 'inherit', page: cameraSource.page.id };
     if (camera && !Array.isArray(camera) && camera.same) {
       const j = this.resolveSceneIndex(camera.same);
       if (j == null) {
-        // The page whose "camera" it is: this one, or the one it continues.
-        const from = [scene, ...chain].find((s) => s.dir.camera != null);
-        const where = from === scene ? 'this page\'s "camera"' : `the "camera" of "${from.page.title || from.page.path}"`;
+        const where = cameraSource === scene ? 'this page\'s "camera"' : `the "camera" of "${cameraSource.page.title || cameraSource.page.path}"`;
         warnings.push(String(camera.same).startsWith('shape:')
           ? `The camera copies a page that was deleted: remove "same" from ${where} in staging.json.`
           : `The camera copies an unknown page "${camera.same}".`);
         camera = null;
       } else camera = this.scenes[j].dir.camera ?? null;
+      // Another page's shots, or automatic ones when "same" finds none.
+      cameraFrom = camera ? { kind: 'same', page: this.scenes[j].page.id } : { kind: 'auto' };
     }
     const shots = Array.isArray(camera) ? camera : camera ? [camera] : [{ shot: cast.length ? 'medium' : 'wide' }];
 
@@ -593,6 +667,13 @@ export class World {
       hour, season, weather, ambient, day,
       things, cast, shots, notes: relevant, allNotes: notes, changes: here, warnings: [...warnings],
       looks,
+      // For editing the direction (docs/scenes.md): the key of this page's own entry in "scenes"
+      // (null when it has none), where its cast and camera come from, the cast as written, which
+      // dressing entries became which things, and the page's lock, picture and notes as read.
+      entryKey: scene.key ?? null,
+      castFrom, cameraFrom, momentFrom, castList, castEntries, dressingIds,
+      locked, picture: typeof scene.dir.picture === 'number' ? scene.dir.picture : null,
+      feedback: Array.isArray(scene.dir.feedback) ? scene.dir.feedback : [],
     };
   }
 
@@ -615,6 +696,8 @@ export class World {
       index: -1, page: { id: `place:${place.id}`, title: place.name, when: '', at: {}, summary: place.description, path: '', characterIds: [], locationIds: [place.id] },
       dir: {}, place, chain: [], hour, season, weather, ambient: null, day,
       things, cast: [], shots: [{ shot: 'establishing', label: place.name }, { shot: 'wide', label: 'Closer' }], notes: [], allNotes: [], changes: [], warnings: [], looks: new Map(),
+      entryKey: null, castFrom: { kind: 'auto' }, cameraFrom: { kind: 'auto' }, momentFrom: { hour: 'default', season: 'default', weather: 'default' }, castList: [], castEntries: [], dressingIds: [],
+      locked: false, picture: null, feedback: [],
     };
   }
 

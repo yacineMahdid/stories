@@ -6,6 +6,8 @@ import {
 import { getPages, getScenes, portraitOf } from '../lib/world'
 import { formatSpan, formatTime, isSet } from '../lib/time'
 import { buildOutline, containerTypeAccepts, countDescendants, findNode, LEVEL } from '../lib/structure'
+import { useStaging } from '../lib/staging'
+import { isLocked, sceneEntry } from '../lib/direct'
 
 function roundRect(w: number, h: number, r = 14) {
   const p = new Path2D()
@@ -143,8 +145,20 @@ export class SceneShapeUtil extends BaseBoxShapeUtil<SceneShape> {
   }
 }
 
+/** A small padlock (the badge of a page whose 3D direction is locked). */
+function Padlock() {
+  return (
+    <svg width="8" height="10" viewBox="0 0 9 11" aria-hidden="true">
+      <path d="M2.1 5V3.6a2.4 2.4 0 0 1 4.8 0V5" fill="none" stroke="currentColor" strokeWidth="1.4" />
+      <rect x="0.5" y="4.8" width="8" height="5.7" rx="1.3" fill="currentColor" />
+    </svg>
+  )
+}
+
 function SceneCard({ shape }: { shape: SceneShape }) {
   const editor = useEditor()
+  // A page whose 3D direction is locked (Direct mode's Lock page) says so on its card.
+  const locked = isLocked(sceneEntry(useStaging(), shape.id, shape.props.title))
   const info = useValue('scene info', () => {
     const entry = getPages(editor).find((p) => p.scene.id === shape.id)
     const characters = shape.props.characterIds.map((id) => editor.getShape(id as any) as CharacterShape | undefined)
@@ -157,7 +171,12 @@ function SceneCard({ shape }: { shape: SceneShape }) {
     <HTMLContainer className={`sc-card sc-scene${p.still ? ' has-still' : ''}`} style={{ width: p.w, height: p.h }}>
       {p.still && <img className="sc-still" src={p.still} alt="" draggable={false} />}
       <header>
-        <span className="sc-tag">Page {info.number}</span>
+        {locked ? (
+          <span className="sc-tags">
+            <span className="sc-tag">Page {info.number}</span>
+            <span className="sc-lock" title="Locked: its 3D direction is final, and its picture is the locked shot"><Padlock /> Locked</span>
+          </span>
+        ) : <span className="sc-tag">Page {info.number}</span>}
         {where && <small className="sc-path">{where}</small>}
         <em>{p.when || (isSet(p.at) ? '' : 'when?')}</em>
       </header>

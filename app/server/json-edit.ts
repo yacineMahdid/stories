@@ -4,9 +4,11 @@
  * BOM, the way numbers and strings are spelled) stays exactly as it was.
  */
 export type JsonOp =
-  | { op: 'set'; path: string[]; value: unknown; restore?: Removed }
-  | { op: 'delete'; path: string[]; ifEmpty?: boolean; restore?: Removed } // ifEmpty: only an object with nothing in it
+  | { op: 'set'; path: string[]; value: unknown; restore?: Removed; expect?: unknown }
+  | { op: 'delete'; path: string[]; ifEmpty?: boolean; restore?: Removed; expect?: unknown } // ifEmpty: only an object with nothing in it
   | { op: 'rename'; path: string[]; to: string; restore?: Removed }
+// expect (a set or delete of a whole list): what the writer saw there (null: nothing). When the file
+// holds something else by then, the edit is merged into it (see app/src/lib/merge.ts).
 
 /**
  * The text an edit took out of the file: a value it replaced, a key it renamed, or a member it
@@ -177,6 +179,14 @@ export function editJson(source: string, op: JsonOp, style: JsonStyle): { text: 
       }
       const first = (k: string) => obj.members.find((m) => m.key === k)!
       const oneLine = !text.slice(obj.start, obj.end).includes('\n')
+      // The gap before a new member: a blank line when the members beside it are kept apart by one
+      // (the page entries in "scenes"); with nothing to go by, as the hand style writes it (a blank
+      // line between tall members of the file and of its sections).
+      const gapNear = (i: number, tall: boolean) => {
+        const at = Math.min(Math.max(i, 1), obj.members.length - 1)
+        if (at < 1) return d < 2 && tall ? eol + eol : eol
+        return /\n[ \t]*\r?\n/.test(text.slice(obj.members[at - 1].value.end, obj.members[at].keyStart)) ? eol + eol : eol
+      }
       if (!obj.members.length) {
         if (spot === 0 && breaksFit && holds(back, 1)) return splice(obj.start, obj.end, back)
         const outer = indentAt(text, obj.start)
@@ -190,7 +200,7 @@ export function editJson(source: string, op: JsonOp, style: JsonStyle): { text: 
         const indent = indentAt(text, next.keyStart)
         const written = fmt(value, indent, d + 1)
         const tall = written.includes('\n') || text.slice(next.value.start, next.value.end).includes('\n')
-        return splice(next.keyStart, next.keyStart, `${JSON.stringify(key)}: ${written},${d < 1 && tall ? eol + eol : eol}${indent}`)
+        return splice(next.keyStart, next.keyStart, `${JSON.stringify(key)}: ${written},${gapNear(1, tall)}${indent}`)
       }
       const prev = spot > 0 ? first(keys[spot - 1]) : obj.members[obj.members.length - 1]
       if (spot > 0 && breaksFit && holds(`{"\\u0000":0${back}}`, 2)) return splice(prev.value.end, prev.value.end, back)
@@ -198,7 +208,7 @@ export function editJson(source: string, op: JsonOp, style: JsonStyle): { text: 
       const indent = indentAt(text, prev.keyStart)
       const written = fmt(value, indent, d + 1)
       const tall = written.includes('\n') || text.slice(prev.value.start, prev.value.end).includes('\n')
-      const gap = d < 1 && tall ? eol + eol : eol // big sections are separated by a blank line
+      const gap = gapNear(obj.members.indexOf(prev), tall) // big sections and page entries are separated by a blank line
       return splice(prev.value.end, prev.value.end, `,${gap}${indent}${JSON.stringify(key)}: ${written}`)
     }
     const member = obj.members[index]

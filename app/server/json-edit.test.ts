@@ -1,7 +1,8 @@
 // node server/json-edit.test.ts — checks that edits change only what they touch.
 import fs from 'node:fs'
 import assert from 'node:assert/strict'
-import { patchText, parseDirection, applyOp, checkOps, formatJSON, JsonEditRefused, type JsonOp, type Removed } from './json-style.ts'
+import { patchText, parseDirection, applyOp, checkOps, formatJSON, JsonEditRefused, patchRequest, type Answered, type JsonOp, type Removed } from './json-style.ts'
+import { merge3 } from '../src/lib/merge.ts'
 
 let failures = 0
 const test = (name: string, fn: () => void) => {
@@ -441,6 +442,85 @@ test('random edits agree with the object edit', () => {
   }
   console.log(`     ${runs} edits, ${fallbacks} fell back to a full rewrite; ${undos} undone and redone byte for byte, and ${steps} steps of two`)
   assert.ok(fallbacks / runs < 0.01, `too many fallbacks: ${fallbacks}`)
+})
+
+/* ── a whole list written from what the app saw (expect), when the file changed it meanwhile ── */
+
+const parse = (text: string) => parseDirection(text) as Record<string, any>
+
+test('merge3: entries by id/who/added/label, fields one by one; the edit wins on the same field', () => {
+  const base = [{ who: 'a', feel: 'x', do: 'Idle' }, { who: 'b', feel: 'y' }]
+  // The edit changes a's feel; the file changed b's: both stay.
+  assert.deepEqual(merge3(base, [{ who: 'a', feel: 'z', do: 'Idle' }, base[1]], [base[0], { who: 'b', feel: 'w' }]), [{ who: 'a', feel: 'z', do: 'Idle' }, { who: 'b', feel: 'w' }])
+  // Both changed a's feel: the edit's; the file's other field stays.
+  assert.deepEqual(merge3(base, [{ who: 'a', feel: 'z', do: 'Idle' }, base[1]], [{ who: 'a', feel: 'q', do: 'Wave' }, base[1]]), [{ who: 'a', feel: 'z', do: 'Wave' }, base[1]])
+  // Added by the edit (after the one it follows) and by the file; taken out by the edit.
+  assert.deepEqual(merge3(base, [base[0], { who: 'c' }], [base[0], base[1], { who: 'd' }]), [base[0], { who: 'c' }, { who: 'd' }])
+  // A note's reply written in the file stays when the app adds a note.
+  const n1 = { text: 'one', added: 't1' }, n2 = { text: 'two', added: 't2' }
+  assert.deepEqual(merge3([n1], [n1, n2], [{ ...n1, reply: 'Done.' }]), [{ ...n1, reply: 'Done.' }, n2])
+  // Nothing changed in the file: the edit as it is; the edit changed nothing: the file as it is.
+  assert.deepEqual(merge3(base, [], base), [])
+  assert.deepEqual(merge3(base, base, [base[1]]), [base[1]])
+  // A delete of the list keeps what the file added meanwhile, else it is a delete.
+  assert.deepEqual(merge3([n1], undefined, [n1, n2]), [n2])
+  assert.equal(merge3([n1], undefined, [{ ...n1, reply: 'r' }]), undefined)
+  // Points and paths are one value each; entries nobody can tell apart go by their place.
+  assert.deepEqual(merge3({ at: [1, 2], path: [[0, 0], [1, 1]] }, { at: [3, 4], path: [[0, 0], [1, 1]] }, { at: [1, 2], path: [[5, 5]] }), { at: [3, 4], path: [[5, 5]] })
+  assert.deepEqual(merge3([{ shot: 'wide' }, { shot: 'wide' }], [{ shot: 'close' }, { shot: 'wide' }], [{ shot: 'wide' }, { shot: 'wide', hold: 3 }]), [{ shot: 'close' }, { shot: 'wide', hold: 3 }])
+})
+test('expect: a list the file changed since the app read it is merged into, not written over', () => {
+  const key = ['scenes', 'shape:p1', 'cast']
+  const seen = parse(sample).scenes['shape:p1'].cast as Record<string, unknown>[]
+  const mine = seen.map((c, i) => (i === 0 ? { ...c, feel: 'angry' } : c))
+  // Unchanged in the file: the same text as without expect.
+  const plain = patchText(sample, [{ op: 'set', path: key, value: mine }]).text
+  assert.equal(patchText(sample, [{ op: 'set', path: key, value: mine, expect: seen }]).text, plain)
+  // Juniper's "do" changed by hand meanwhile: it stays, and Mira's feel lands.
+  const hand = sample.replace('"do": "Stretch"', '"do": "Dance"')
+  assert.notEqual(hand, sample)
+  const out = parse(patchText(hand, [{ op: 'set', path: key, value: mine, expect: seen }]).text).scenes['shape:p1'].cast
+  assert.equal(out[0].feel, 'angry')
+  assert.equal(out[2].do, 'Dance')
+  // Its Undo (what the edit wrote as expect) takes back only the edit: Biscuit's later hand edit stays.
+  const after = patchText(sample, [{ op: 'set', path: key, value: mine, expect: seen }])
+  const later = after.text.replace('"feel": "excited"', '"feel": "bored"')
+  const undone = patchText(later, [{ op: 'set', path: key, value: seen, expect: mine, restore: after.removed[0] ?? undefined }])
+  const back = parse(undone.text).scenes['shape:p1'].cast
+  assert.equal(back[0].feel, seen[0].feel)
+  assert.equal(back[1].feel, 'bored')
+  assert.equal(undone.text, sample.replace('"feel": "excited"', '"feel": "bored"'))
+  // An unchanged file: the Undo is byte for byte.
+  assert.equal(patchText(after.text, [{ op: 'set', path: key, value: seen, expect: mine, restore: after.removed[0] ?? undefined }]).text, sample)
+})
+test('expect: a delete of a list the file added to meanwhile keeps the added entries; checkOps keeps expect', () => {
+  const t = patchText(sample, [{ op: 'set', path: ['scenes', 'shape:p2', 'feedback'], value: [{ text: 'one', added: 't1' }] }]).text
+  const hand = t.replace('{ "text": "one", "added": "t1" }', '{ "text": "one", "added": "t1" }, { "text": "two", "added": "t2" }')
+  const out = parse(patchText(hand, [{ op: 'delete', path: ['scenes', 'shape:p2', 'feedback'], expect: [{ text: 'one', added: 't1' }] }]).text)
+  assert.deepEqual(out.scenes['shape:p2'].feedback, [{ text: 'two', added: 't2' }])
+  const ops = checkOps([{ op: 'set', path: ['a'], value: [], expect: null }, { op: 'rename', path: ['b'], to: 'c', expect: [] }])
+  assert.ok('expect' in ops[0] && !('expect' in ops[1]))
+})
+test('a save sent again (its answer lost) is answered as before and not made twice', () => {
+  const answered: Answered = new Map()
+  const body = { id: 's-1', ops: [{ op: 'delete', path: ['scenes', 'shape:p3', 'weather'] }] }
+  const first = patchRequest(sample, body, answered)
+  assert.ok(first.text && first.answer.removed[0])
+  const again = patchRequest(first.text!, structuredClone(body), answered)
+  assert.equal(again.text, null)
+  assert.deepEqual(again.answer.removed, first.answer.removed)
+  // Its Undo with what the first one took out: byte for byte.
+  const undo = patchText(first.text!, [{ op: 'set', path: ['scenes', 'shape:p3', 'weather'], value: 'storm', restore: first.answer.removed[0]! }])
+  assert.equal(undo.text, sample)
+  // Without an id, as before.
+  assert.ok(patchRequest(sample, { ops: body.ops }, answered).text)
+})
+test('a new page entry gets the blank line the page entries are kept apart by', () => {
+  const out = patchText(sample, [{ op: 'set', path: ['scenes', 'shape:p9', 'cast'], value: [{ who: 'shape:mira', at: [1, 2], facing: 3, do: 'Talk' }] }]).text
+  assert.match(out, /\n    \},\n\n    "shape:p9": \{\n/)
+  // Inside a page entry, members aren't kept apart: no blank line.
+  const inner = patchText(sample, [{ op: 'set', path: ['scenes', 'shape:p1', 'feedback'], value: [{ text: 'x' }] }]).text
+  assert.ok(!/\n\n\s*"feedback"/.test(inner))
 })
 
 if (failures) { console.log(`${failures} failed`); process.exit(1) }

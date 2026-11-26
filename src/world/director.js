@@ -2,9 +2,9 @@ import * as THREE from 'three';
 import { Terrain, WATER_LEVEL, resolveFlatHeights } from './terrain.js';
 import { CATALOG, buildProp } from './props/index.js';
 import { PropLights } from './lights.js';
-import { spotTransform, placeCharacter, poseLift, POSE_CLIPS } from './blocking.js';
+import { spotTransform, placeCharacter, poseLift, POSE_CLIPS, clipFits } from './blocking.js';
 import { Parts, blob, cone, roundCyl, instanced, rng, seasonal, PALETTE, hashString, boundsOf } from './kit.js';
-import { yawTo } from './staging.js';
+import { yawTo, localToWorld, worldToLocal } from './staging.js';
 import { createCharacter } from '../engine/character.js';
 import { SPECIES } from '../engine/species.js';
 import { EMOTIONS } from '../engine/emotions.js';
@@ -42,6 +42,49 @@ const noteTo = (state) => (text) => { if (!state.warnings.includes(text)) state.
 
 /** A camera brought in to `closer` of its planned distance widens its lens (up to 65°), so the subjects keep their place in the frame. */
 const widened = (fov, closer) => (closer < 0.7 ? Math.min(2 * Math.atan(Math.tan((fov * D2R) / 2) / closer) / D2R, 65) : fov);
+
+// What the direction file is written with (docs/scenes.md): positions to 0.01, whole degrees 0–359.
+const round = (v, k) => Math.round(v * k) / k + 0; // + 0: never "-0"
+const r2 = (v) => round(v, 100);
+const deg360 = (d) => ((Math.round(d) % 360) + 360) % 360;
+// The bones a cast member's pick box is drawn around (feet to head top, hands): a quick test before
+// the closer one, a ball for the head and capsules along the body, arms and legs (radius × height).
+const PICK_BONES = ['Hips', 'Head', 'HeadTop_End', 'LeftFoot', 'RightFoot', 'LeftHand', 'RightHand'];
+const PICK_LIMBS = [
+  ['Hips', 'Neck', 0.15],
+  ['LeftArm', 'LeftForeArm', 0.075], ['LeftForeArm', 'LeftHand', 0.07], ['RightArm', 'RightForeArm', 0.075], ['RightForeArm', 'RightHand', 0.07],
+  ['LeftUpLeg', 'LeftLeg', 0.085], ['LeftLeg', 'LeftFoot', 0.075], ['RightUpLeg', 'RightLeg', 0.085], ['RightLeg', 'RightFoot', 0.075],
+];
+const PICK_PAD = 0.03; // a little more than the body, so a small figure is easy to hit
+const MARKER_COLOR = 0xe8590c; // the app's accent
+/** Is `o` drawn: it and each parent up to `root` visible? */
+const drawn = (o, root) => { for (let x = o; x; x = x.parent) { if (!x.visible) return false; if (x === root) break; } return true; };
+/**
+ * How a view straight down keeps its turn when it is written to 0.01 (see Director.viewOf): the
+ * step of whole hundredths [i, j] (x and z) from its target to its lens that changes the picture
+ * least, for a lens `step` ([x, z], hundredths) from the target and `height` (hundredths) above
+ * it, pointing at `angle` (radians, as atan2(x, z)). The picture turns by the step's error in
+ * direction, and tilts by how far the lens moves over its height: both count.
+ */
+function turnStep(angle, step, height) {
+  let best = null;
+  for (let i = -60; i <= 60; i++) {
+    for (let j = -60; j <= 60; j++) {
+      if (!i && !j) continue;
+      const d = Math.atan2(i, j) - angle;
+      const turn = Math.atan2(Math.sin(d), Math.cos(d));
+      const change = Math.hypot(turn, Math.atan(Math.hypot(i - step[0], j - step[1]) / height));
+      if (!best || change < best.change) best = { i, j, change };
+    }
+  }
+  return [best.i, best.j];
+}
+/** "bench-west" → "bench west", "endLeft" → "end left", "seat2" → "seat 2". */
+const words = (s) => String(s).replace(/([a-z])([A-Z])/g, '$1 $2').replace(/([a-z])(\d)/gi, '$1 $2').replace(/[-_]+/g, ' ').trim().toLowerCase();
+const capital = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+const _hit = new THREE.Vector3();
+const _v = new THREE.Vector3();
+const _box = new THREE.Box3();
 
 /* ───────────── the set ───────────── */
 
@@ -102,15 +145,7 @@ class SceneSet {
     // 3. Place the props on the ground, on the water, or across it (a bridge rests on its banks).
     for (const [id, object] of this.objects) {
       const t = object.userData.thing;
-      const def = CATALOG[t.kind];
-      let y;
-      // Floating things ride the water; on dry land (a boat pulled up the beach) they rest on it.
-      if (def?.floats) y = Math.max(WATER_LEVEL, this.terrain.heightAt(t.pos[0], t.pos[1]));
-      else if (t.ground === false) y = 0;
-      else {
-        y = this.terrain.heightAt(t.pos[0], t.pos[1]);
-        if (y < WATER_LEVEL + 0.05 || def?.spans || t.kind === 'bridge') y = Math.max(this.restingHeight(object, t), WATER_LEVEL + 0.2);
-      }
+      const y = this.restY(object, t);
       object.position.set(t.pos[0], y + (t.lift ?? 0), t.pos[1]);
       object.rotation.y = (t.facing ?? 0) * D2R;
       object.scale.setScalar(t.scale ?? 1);
@@ -135,6 +170,17 @@ class SceneSet {
     // 5. Lights.
     this.lights = new PropLights(stage.scene, { max: 12 });
     for (const object of this.objects.values()) this.lights.addFrom(object);
+  }
+
+  /** The height a prop stands at (before its `lift`): on the ground, on the water, or across it. */
+  restY(object, t) {
+    const def = CATALOG[t.kind];
+    // Floating things ride the water; on dry land (a boat pulled up the beach) they rest on it.
+    if (def?.floats) return Math.max(WATER_LEVEL, this.terrain.heightAt(t.pos[0], t.pos[1]));
+    if (t.ground === false) return 0;
+    const y = this.terrain.heightAt(t.pos[0], t.pos[1]);
+    if (y < WATER_LEVEL + 0.05 || def?.spans || t.kind === 'bridge') return Math.max(this.restingHeight(object, t), WATER_LEVEL + 0.2);
+    return y;
   }
 
   /** The highest ground under a prop's footprint edge: where something that spans water rests. */
@@ -347,12 +393,17 @@ export class Director {
     this.shots = [];
     this.cameraMove = null;
     this.userCamera = false;
+    // Directing (see setDirecting): the camera stays where it is through every re-stage and resize,
+    // and shot moves hold still. What is selected shows with a marker, made on the first select.
+    this.directing = false;
+    this.selection = null;
+    this.marker = null;
     stage.controls.addEventListener('start', () => { this.userCamera = true; });
     // A new size or shape of view frames the shot again (unless the camera was moved by hand).
     let reframe = null;
     stage.onResize = () => {
       clearTimeout(reframe);
-      reframe = setTimeout(() => { if (!this.disposed && !this.userCamera && this.shots?.length) this.shot(this.shotIndex); }, 150);
+      reframe = setTimeout(() => { if (!this.disposed && !this.userCamera && !this.directing && this.shots?.length) this.shot(this.shotIndex); }, 150);
     };
     stage.add(this);
   }
@@ -379,11 +430,17 @@ export class Director {
     if (this.set) this.set.world = world;
   }
 
-  async showState(state, overrides = {}, { keepShot = false } = {}) {
+  /**
+   * Stage a scene state. `keepShot` re-stages the same scene on the shot it was on (framed again,
+   * unless the camera was moved by hand); `keepCamera` re-stages it and leaves the camera exactly
+   * where it is, however it got there (so does every re-stage while directing). Another scene
+   * always starts on its first shot.
+   */
+  async showState(state, overrides = {}, { keepShot = false, keepCamera = false } = {}) {
     if (!state || this.disposed) return null;
     const gen = this.gen = (this.gen ?? 0) + 1; // a show started later wins
     const sceneOf = (s) => (s?.page ? `page:${s.page.id}` : `place:${s?.place?.id}`);
-    const sameScene = keepShot && this.state && sceneOf(this.state) === sceneOf(state);
+    const sameScene = (keepShot || keepCamera) && this.state && sceneOf(this.state) === sceneOf(state);
     const previousShot = this.shotIndex;
     Object.assign(state, Object.fromEntries(Object.entries(overrides).filter(([, v]) => v != null)));
     this.state = state;
@@ -400,10 +457,12 @@ export class Director {
     if (this.disposed || gen !== this.gen) return null;
     this.shots = state.shots;
     // Re-staging the same page (the canvas changed) keeps the shot, and leaves alone a camera
-    // the viewer has moved.
+    // the viewer has moved; asked to keep the camera, or while directing, it doesn't move at all.
     if (!sameScene) this.shot(0);
+    else if (keepCamera || this.directing) this.shotIndex = Math.min(previousShot, this.shots.length - 1);
     else if (!this.userCamera) this.shot(Math.min(previousShot, this.shots.length - 1));
     for (const w of this.set.warnings) if (!state.warnings.includes(w)) state.warnings.push(w);
+    this.showSelection();
     return state;
   }
 
@@ -457,10 +516,12 @@ export class Director {
         this.set?.lights?.removeFrom(member.held);
         if (this.set) this.set.ticks = this.set.ticks.filter((o) => o !== member.held);
         member.held.removeFromParent();
+        // A new one is made for the next staging: this one's geometry goes (kit materials stay).
+        member.held.traverse((o) => { if (o.isMesh) o.geometry?.dispose(); });
       }
     }
     this.cast.clear();
-    const members = (await Promise.all(state.cast.map(async (entry) => ({ entry, character: await this.characterFor(entry, gen) })))).filter((m) => m.character);
+    const members = (await Promise.all(state.cast.map(async (entry, k) => ({ entry, k, character: await this.characterFor(entry, gen) })))).filter((m) => m.character);
     if (this.disposed || gen !== this.gen) return; // a newer show is staging its own cast
     // Whoever this page doesn't have leaves the stage, also a model kept by a show this one cut short.
     for (const [id, character] of this.characters) if (!keep.has(id)) character.root.removeFromParent();
@@ -492,7 +553,7 @@ export class Director {
         // Off a prop, "Sit" means sitting on the ground, and lying clips rest on the ground.
         if (clip === 'Sit') clip = 'SitFloor';
         if (clip === 'LieDown' || clip === 'Sleep') pose = 'lie';
-      }
+      } else if (clip && !clipFits(pose, clip)) clip = null; // a seat makes them sit (a bed lie, a spot to kneel at kneel)
       // A character kept from the last page starts this one as a new one would. Its emotion's
       // motion from the last frame comes off the bones (Character.update lays it on the mixer's
       // pose), and the clip asked for takes over at once: placeCharacter switches with a fade of
@@ -510,7 +571,9 @@ export class Director {
       character.talking = !!entry.talk;
       // Desynchronize idle loops so a crowd doesn't breathe in unison.
       character.mixer.setTime((hashString(entry.who) % 1000) / 333);
-      const member = { character, entry, walker: null, held: null };
+      // The mark as staged (world), for the editor: where they stand and face, and how their pose
+      // rests them on it (see castMarks, moveCast).
+      const member = { character, entry, walker: null, held: null, mark, yaw, pose, lift: poseLift(pose, character.spec?.height ?? 1), written: state.castEntries?.[m.k] ?? null };
       if (entry.hold) member.held = this.hold(character, entry.hold, state);
       if (entry.path?.length) member.walker = new Walker(this, character, entry, state);
       // The body as staged, for framing: not as it breathes later, nor its shadow on the floor
@@ -657,12 +720,35 @@ export class Director {
 
   shot(i) {
     if (!this.shots.length) return;
+    // Directing, a shot frames exactly what it saves: what was left of a hand orbit's glide goes.
+    if (this.directing) this.stopGlide();
     this.shotIndex = ((i % this.shots.length) + this.shots.length) % this.shots.length;
     const shot = this.shots[this.shotIndex];
     const place = this.state.place;
     const cam = this.stage.camera;
     const controls = this.stage.controls;
     this.userCamera = false;
+    const { pos, target, fov } = this.frameOf(shot);
+    cam.fov = fov;
+    cam.near = 0.05;
+    cam.far = 2500;
+    cam.position.copy(pos);
+    controls.target.copy(target);
+    cam.updateProjectionMatrix();
+    controls.update();
+    this.cameraMove = shot.move && shot.move !== 'still' ? { kind: shot.move, speed: shot.speed ?? 1, t: 0, origin: pos.clone(), target: target.clone() } : null;
+    const radius = shot.shot === 'establishing' ? (place.radius ?? 10) * 2.2 : Math.max(pos.distanceTo(target) * 0.9, 12);
+    this.stage.focus(target.clone().setY(0), Math.min(radius, 48));
+    return shot;
+  }
+
+  /**
+   * Where a shot puts the camera: { pos, target, fov } in world coordinates, before the orbit
+   * controls keep it in their range. Nothing moves; the framing reads the cast as it stands now.
+   */
+  frameOf(shot) {
+    const place = this.state.place;
+    const cam = this.stage.camera;
     let pos, target, fov = shot.fov ?? 35;
 
     if (shot.pos && shot.target) {
@@ -777,17 +863,7 @@ export class Director {
     // Keep the camera above the ground.
     const ground = this.set.terrain.heightAt(pos.x, pos.z);
     pos.y = Math.max(pos.y, Math.max(ground, WATER_LEVEL) + 0.25);
-    cam.fov = fov;
-    cam.near = 0.05;
-    cam.far = 2500;
-    cam.position.copy(pos);
-    controls.target.copy(target);
-    cam.updateProjectionMatrix();
-    controls.update();
-    this.cameraMove = shot.move && shot.move !== 'still' ? { kind: shot.move, speed: shot.speed ?? 1, t: 0, origin: pos.clone(), target: target.clone() } : null;
-    const radius = shot.shot === 'establishing' ? (place.radius ?? 10) * 2.2 : Math.max(pos.distanceTo(target) * 0.9, 12);
-    this.stage.focus(target.clone().setY(0), Math.min(radius, 48));
-    return shot;
+    return { pos, target, fov };
   }
 
   /**
@@ -798,8 +874,10 @@ export class Director {
   clearView(pos, target, subs, maxSwing = 80, kind = 'medium', fov = 35, widen = false) {
     const boxes = this.blockerBoxes(target);
     // Each view is judged through the lens it will be shown with: this shot's own (wider when the
-    // camera comes in close), not whatever the last shot left on the camera.
+    // camera comes in close), not whatever the last shot left on the camera; and in the picture's
+    // frame (the view round it, beside the editor's panel, doesn't count).
     const cam = this.stage.camera.clone();
+    cam.clearViewOffset();
     const planned = pos.distanceTo(target);
     const lensAt = (p) => {
       const f = widen ? widened(fov, p.distanceTo(target) / planned) : fov;
@@ -1004,14 +1082,843 @@ export class Director {
     return boxes;
   }
 
+  /* ───────────── directing ─────────────
+   * What the scene direction editor needs (app/src/three/bridge.js passes it on). Coordinates:
+   * "world" is the 3D scene's (what groundPoint gives and moveCast takes); "local" is the page's
+   * place units, as the direction file writes them (x east, z south of the pin, turned by the
+   * place's rotate). Facings in the file are place degrees (0 faces south, 90 east); a world yaw
+   * is (degrees + place.rotate) in radians. Nothing here runs unless it is called (the marker
+   * follows what is selected, only while something is).
+   */
+
+  /**
+   * Directing on or off. While on, the camera never moves by itself: re-stages keep it where it
+   * is, a resize doesn't frame the shot again, and a shot's move (orbit, push…) holds at the
+   * shot's framing (a move under way goes back to where it started). Off, all is as before.
+   */
+  setDirecting(on) {
+    on = !!on;
+    if (on === this.directing) return;
+    this.directing = on;
+    const m = this.cameraMove;
+    if (on && m && !this.userCamera) {
+      this.stage.camera.position.copy(m.origin);
+      this.stage.controls.target.copy(m.target);
+      this.stage.controls.update();
+      m.t = 0;
+    }
+  }
+
+  /** A world [x, z] in the place units of the page on stage, and back. */
+  toLocal(p) { return worldToLocal(p, this.state?.place); }
+  fromLocal(p) { return localToWorld(p, this.state?.place); }
+  /** Place degrees (whole, 0–359) of a world yaw; and the world yaw of place degrees. */
+  localFacing(yaw) { return deg360(yaw / D2R - (this.state?.place?.rotate ?? 0)); }
+  worldYaw(deg) { return (deg + (this.state?.place?.rotate ?? 0)) * D2R; }
+  /** A world point as the file writes it: local [x, z] to 0.01. */
+  localXZ(v) { const [x, z] = this.toLocal([v.x, v.z]); return [r2(x), r2(z)]; }
+  /** Place degrees from a local point toward the camera, as a whole number. */
+  facingToCamera(at) {
+    const c = this.stage.camera.position;
+    return deg360(yawTo(at, this.toLocal([c.x, c.z])));
+  }
+
+  raycaster() { return (this.rays ??= new THREE.Raycaster()); }
+  /** The ray from the camera through a point of the view, in client (CSS) pixels; null off the view. */
+  rayAt(clientX, clientY) {
+    const rect = this.stage.renderer?.domElement?.getBoundingClientRect?.();
+    if (!rect || !rect.width || !rect.height) return null;
+    return this.rayThrough(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+  }
+  /** The ray through a point of the picture (-1…1 across and up). */
+  rayThrough(x, y) {
+    const cam = this.stage.camera;
+    cam.updateMatrixWorld();
+    const rc = this.raycaster();
+    rc.setFromCamera(new THREE.Vector2(x, y), cam);
+    return rc.ray.clone();
+  }
+
+  /** This page's own single dressing props, by id: the only things the editor can pick and move. */
+  pickableIds() {
+    const ids = new Set();
+    for (const id of this.state?.dressingIds ?? []) if (id != null && this.set?.objects.has(id)) ids.add(id);
+    return ids;
+  }
+  ownThing(id) { return this.pickableIds().has(id) ? this.set.objects.get(id) : null; }
+
+  /** A cast member's pick box: around their bones as they are posed now, a little wider than the body, and round what they wear on them and hold. */
+  castBox(m, box = new THREE.Box3(), extras = this.castExtras(m)) {
+    const ch = m.character, h = ch.spec?.height ?? 1;
+    box.makeEmpty();
+    ch.root.updateMatrixWorld(true);
+    for (const name of PICK_BONES) if (ch.bones?.[name]) box.expandByPoint(ch.bones[name].getWorldPosition(_v));
+    if (box.isEmpty()) box.setFromCenterAndSize(_v.copy(ch.root.position).setY(ch.root.position.y + h / 2), new THREE.Vector3(0.5 * h, h, 0.5 * h));
+    box.expandByScalar(0.12 * h);
+    box.max.y += 0.06 * h; // hair and ears over the head top
+    for (const o of extras) box.union(_box.setFromObject(o));
+    return box;
+  }
+
+  /**
+   * What a cast member wears on their bones or holds, as plain meshes the bone shapes leave out:
+   * their hair, ears, an animal's muzzle, horns or tail, and their hand prop (an umbrella, a bag).
+   */
+  castExtras(m) {
+    const ch = m.character;
+    return [ch.hairMesh, ...(ch.earObjects ?? []), ...(ch.partObjects ?? []).map((p) => p.object), m.held].filter((o) => o && drawn(o, ch.root));
+  }
+
+  /**
+   * How far along `ray` it meets a cast member (null: it misses): their pick box first, then a ball
+   * round the head and capsules along the body, arms and legs, as posed now (cheap, invisible, and
+   * nothing like raycasting a skinned mesh), and the plain meshes of their hair, ears, animal parts
+   * and hand prop (castExtras).
+   */
+  castHit(ray, m, box = new THREE.Box3()) {
+    const extras = this.castExtras(m);
+    if (!ray.intersectBox(this.castBox(m, box, extras), _hit)) return null;
+    const ch = m.character, h = ch.spec?.height ?? 1;
+    const at = (name) => (ch.bones?.[name] ? ch.bones[name].getWorldPosition(new THREE.Vector3()) : null);
+    let best = Infinity;
+    const head = at('Head'), top = at('HeadTop_End');
+    if (head && top) {
+      const ball = new THREE.Sphere(head.clone().add(top).multiplyScalar(0.5), Math.max(head.distanceTo(top) * 0.58, 0.2 * h) + PICK_PAD * h);
+      if (ray.intersectSphere(ball, _hit)) best = Math.min(best, _hit.distanceTo(ray.origin));
+    }
+    const onRay = new THREE.Vector3();
+    let limbs = 0;
+    for (const [a, b, r] of PICK_LIMBS) {
+      const p = at(a), q = at(b);
+      if (!p || !q) continue;
+      limbs++;
+      const rr = (r + PICK_PAD) * h;
+      const d2 = ray.distanceSqToSegment(p, q, onRay);
+      if (d2 <= rr * rr) best = Math.min(best, Math.max(0, onRay.distanceTo(ray.origin) - Math.sqrt(rr * rr - d2)));
+    }
+    // A model without these bones: its box.
+    if (!limbs && !(head && top)) return _hit.distanceTo(ray.origin);
+    // Hair, ears, an animal's parts and the hand prop, nearer than the body.
+    if (extras.length) {
+      const rc = this.raycaster();
+      rc.ray.copy(ray);
+      rc.near = 0;
+      rc.far = best;
+      for (const o of extras) {
+        for (const hit of rc.intersectObject(o, true)) {
+          if (!hit.object.isMesh || !drawn(hit.object, ch.root)) continue;
+          if (hit.distance < best) best = hit.distance;
+          break;
+        }
+      }
+    }
+    return best < Infinity ? best : null;
+  }
+
+  /** How far along `ray` it first meets a drawn mesh of `object`, if before `far` (else null). */
+  hitDistance(ray, object, far = Infinity) {
+    const b = object.userData.bounds ?? boundsOf(object);
+    if (b.isEmpty() || !ray.intersectBox(b, _hit) || _hit.distanceTo(ray.origin) > far) return null;
+    const rc = this.raycaster();
+    rc.ray.copy(ray);
+    rc.near = 0;
+    rc.far = far;
+    for (const h of rc.intersectObject(object, true)) if (h.object.isMesh && drawn(h.object, object)) return h.distance;
+    return null;
+  }
+
+  /** Is the ground or a prop that can't be picked in front of a hit `dist` along `ray`? */
+  hiddenBefore(ray, dist, pickable) {
+    const t = this.set.terrain, p = new THREE.Vector3();
+    for (let s = 0.25; s < dist - 0.3; s += 0.2) {
+      ray.at(s, p);
+      if (p.y < t.heightAt(p.x, p.z) - 0.02) return true;
+    }
+    for (const [id, o] of this.set.objects) if (!pickable.has(id) && this.hitDistance(ray, o, dist - 0.05) != null) return true;
+    return false;
+  }
+
+  /**
+   * What is under a point of the view (client pixels): { kind: 'cast', id } (a character's card
+   * id, as the cast's "who" is written), { kind: 'thing', id } (one of this page's own single
+   * dressing props, by its thing id: see state.dressingIds for its entry), or null. The nearest
+   * hit wins; anything else in front (the ground, a house, the place's own props) hides it. Cast
+   * members are picked by shapes round their bones (castHit), not their skinned mesh.
+   */
+  pick(clientX, clientY) {
+    const ray = this.rayAt(clientX, clientY);
+    if (!ray || !this.set || !this.state) return null;
+    let best = null;
+    const box = new THREE.Box3();
+    for (const [id, m] of this.cast) {
+      const d = this.castHit(ray, m, box);
+      if (d != null && (!best || d < best.d)) best = { kind: 'cast', id, d };
+    }
+    const pickable = this.pickableIds();
+    for (const id of pickable) {
+      const d = this.hitDistance(ray, this.set.objects.get(id), best?.d ?? Infinity);
+      if (d != null && (!best || d < best.d)) best = { kind: 'thing', id, d };
+    }
+    if (!best || this.hiddenBefore(ray, best.d, pickable)) return null;
+    return { kind: best.kind, id: best.id };
+  }
+
+  /** Where a point of the view (client pixels) meets the ground, the water or a deck: a world { x, y, z }, or null (sky). */
+  groundPoint(clientX, clientY) {
+    const ray = this.rayAt(clientX, clientY);
+    return ray && this.set ? this.groundAlong(ray) : null;
+  }
+
+  groundAlong(ray) {
+    const t = this.set.terrain;
+    const surface = (x, z) => Math.max(t.heightAt(x, z), WATER_LEVEL);
+    const half = t.size / 2;
+    const inside = (x, z) => Math.abs(x - t.center[0]) <= half && Math.abs(z - t.center[1]) <= half;
+    const o = ray.origin, d = ray.direction;
+    // March out from the lens to where the ray first goes under, then halve the step to the surface.
+    let a = 0, b = null;
+    for (let s = 0, step = 0.05; s < 600; s += step, step = Math.min(1, 0.05 + s * 0.01)) {
+      const x = o.x + d.x * s, z = o.z + d.z * s;
+      if (!inside(x, z)) { a = s; continue; }
+      if (o.y + d.y * s <= surface(x, z)) { b = s; break; }
+      a = s;
+    }
+    let best = null;
+    if (b != null) {
+      for (let k = 0; k < 40; k++) {
+        const m = (a + b) / 2;
+        if (o.y + d.y * m <= surface(o.x + d.x * m, o.z + d.z * m)) b = m;
+        else a = m;
+      }
+      const x = o.x + d.x * b, z = o.z + d.z * b;
+      best = { p: new THREE.Vector3(x, surface(x, z), z), d: b };
+    }
+    // A pier, dock or bridge deck in front of the ground: its first upward face along the ray.
+    const rc = this.raycaster(), up = new THREE.Vector3();
+    for (const obj of this.set.objects.values()) {
+      if (!WALKABLE.has(obj.userData.kind)) continue;
+      const box = obj.userData.bounds ?? boundsOf(obj);
+      if (!ray.intersectBox(box, _hit) || (best && _hit.distanceTo(o) > best.d)) continue;
+      rc.ray.copy(ray);
+      rc.near = 0;
+      rc.far = best?.d ?? Infinity;
+      for (const h of rc.intersectObject(obj, true)) {
+        if (!h.face || !h.object.isMesh || !drawn(h.object, obj)) continue;
+        up.copy(h.face.normal).transformDirection(h.object.matrixWorld);
+        if (up.y < 0.7) continue;
+        if (!best || h.distance < best.d) best = { p: h.point.clone(), d: h.distance };
+        break;
+      }
+    }
+    return best ? { x: best.p.x, y: best.p.y, z: best.p.z } : null;
+  }
+
+  /**
+   * Move a cast member's live model to world (x, z), on the ground or a deck there (no re-stage:
+   * fast enough for every pointer move). Their hand prop and pick box go with them, and a walker's
+   * whole path moves by as much. Off a prop's spot, they stand (or sit, or lie) as on open ground.
+   * castMarks() then writes them where they are. False when they aren't on stage.
+   */
+  moveCast(id, x, z) {
+    const m = this.cast.get(id);
+    if (!m || !this.set || !Number.isFinite(x) || !Number.isFinite(z)) return false;
+    const { y, onDeck } = this.footingAt(x, z);
+    const dx = x - m.mark.position.x, dz = z - m.mark.position.z;
+    if (!m.mark.free) this.leaveSpot(m);
+    m.mark.position.set(x, y, z);
+    m.mark.onDeck = onDeck;
+    m.moved = true;
+    m.editedIn = this.world;
+    if (m.walker) {
+      for (const p of m.walker.points) { p.x += dx; p.z += dz; }
+      m.walker.update(0);
+    } else m.character.root.position.set(x, y + m.lift, z);
+    if (this.selection?.kind === 'cast' && this.selection.id === id && this.marker) this.placeRing(m, true);
+    return true;
+  }
+
+  /** Turn a cast member's live model to a world yaw (radians; see worldYaw). A walker keeps facing the way it walks. */
+  turnCast(id, yaw) {
+    const m = this.cast.get(id);
+    if (!m || !Number.isFinite(yaw)) return false;
+    m.yaw = yaw;
+    m.turned = true;
+    m.editedIn = this.world;
+    if (!m.walker) m.character.root.rotation.y = yaw;
+    return true;
+  }
+
+  /** Off a spot, a member's mark is free: posed as the next staging would pose them there. */
+  leaveSpot(m) {
+    const { entry, character } = m;
+    let clip = entry.do && character.actions.has(entry.do) ? entry.do : null;
+    let pose = entry.pose ?? 'stand';
+    if (clip === 'Sit') clip = 'SitFloor';
+    if (clip === 'LieDown' || clip === 'Sleep') pose = 'lie';
+    m.mark = { position: m.mark.position.clone(), yaw: m.yaw, pose, free: true, onDeck: false };
+    m.pose = pose;
+    m.lift = poseLift(pose, character.spec?.height ?? 1);
+    if (!m.walker) character.play(clip ?? (pose !== 'stand' ? POSE_CLIPS[pose] : 'Idle'), 0.2);
+  }
+
+  /** Move one of this page's own dressing props to world (x, z), resting as it was built to (no re-stage). Its lights go with it. */
+  moveThing(id, x, z) {
+    const o = this.ownThing(id);
+    if (!o || !Number.isFinite(x) || !Number.isFinite(z)) return false;
+    this.lightsFollow(o);
+    o.position.x = x;
+    o.position.z = z;
+    o.userData.moved = true;
+    o.userData.editedIn = this.world;
+    this.restThing(o);
+    return true;
+  }
+
+  /** Turn one of this page's own dressing props to a world yaw (radians). */
+  turnThing(id, yaw) {
+    const o = this.ownThing(id);
+    if (!o || !Number.isFinite(yaw)) return false;
+    this.lightsFollow(o);
+    o.rotation.y = yaw;
+    o.userData.turned = true;
+    o.userData.editedIn = this.world;
+    this.restThing(o);
+    return true;
+  }
+
+  restThing(o) {
+    const t = { ...o.userData.thing, pos: [o.position.x, o.position.z], facing: o.rotation.y / D2R };
+    o.position.y = this.set.restY(o, t) + (t.lift ?? 0);
+    o.updateMatrixWorld(true);
+    o.userData.bounds = boundsOf(o);
+    if (this.selection?.kind === 'thing' && this.selection.id === o.userData.thing?.id) this.showSelection();
+  }
+
+  /** A prop's lights were placed once, where it was built: from its first move they follow it. */
+  lightsFollow(o) {
+    const lights = this.set?.lights;
+    if (o.userData.lightsFollow || !lights) return;
+    o.userData.lightsFollow = true;
+    o.updateMatrixWorld(true);
+    for (const l of o.userData.lights ?? []) {
+      const at = new THREE.Vector3(...l.at).applyMatrix4(o.matrixWorld);
+      const entry = lights.entries.find((e) => !e.follow && e.position.distanceTo(at) < 1e-6);
+      if (entry) entry.follow = { object: o, local: new THREE.Vector3(...l.at) };
+    }
+  }
+
+  /** Move or turn whatever `kind`/`id` names by the view: `right` and `away` from the camera (world units), `deg` round (seen from above, counterclockwise). */
+  nudge(kind, id, right = 0, away = 0) {
+    const fwd = this.awayOnGround();
+    const dx = fwd.x * away - fwd.z * right, dz = fwd.z * away + fwd.x * right;
+    if (kind === 'cast') { const m = this.cast.get(id); return !!m && this.moveCast(id, m.mark.position.x + dx, m.mark.position.z + dz); }
+    const o = this.ownThing(id);
+    return !!o && this.moveThing(id, o.position.x + dx, o.position.z + dz);
+  }
+  /**
+   * "Away from the camera" on the ground, which is "up" on the screen: the camera's forward and up
+   * directions laid flat, added. However steeply the camera looks down (straight down too), one
+   * of them points that way, and the other doesn't point against it.
+   */
+  awayOnGround() {
+    const cam = this.stage.camera;
+    cam.updateMatrixWorld();
+    const fwd = cam.getWorldDirection(new THREE.Vector3());
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(cam.quaternion);
+    const away = new THREE.Vector3(fwd.x + up.x, 0, fwd.z + up.z);
+    return away.lengthSq() > 1e-12 ? away.normalize() : away.set(0, 0, -1);
+  }
+
+  turn(kind, id, deg) {
+    if (kind === 'cast') { const m = this.cast.get(id); return !!m && this.turnCast(id, m.yaw + deg * D2R); }
+    const o = this.ownThing(id);
+    return !!o && this.turnThing(id, o.rotation.y + deg * D2R);
+  }
+
+  /** The page on stage as the direction has it now (the latest world, also while a re-stage is on its way). */
+  liveState() {
+    const i = this.state?.index >= 0 ? this.world?.sceneIndex.get(this.state.page.id) : null;
+    return i == null ? this.state : this.world.sceneState(i);
+  }
+
+  /**
+   * The cast as entries to write as the page's "cast", in staging order: the written list, then the
+   * members gathered automatically. The entries come from the direction as it is now. By default
+   * (a copy on write, or the entry of the one being edited), an entry nobody has moved or turned
+   * since the page was staged is kept exactly as written; one that was moved or turned gets where it
+   * stands now (`at`, local [x, z] to 0.01; a walker its moved `path`) or faces (`facing`, place
+   * degrees 0–359); a gathered member is written where it stands, by its card id. With `explicit`
+   * (the lock), everyone gets an explicit `at` ([x, z] or the spot string) and `facing` (degrees or
+   * the entry's reference: a cast member, a thing, "group", "camera"), by card id. Entries that match
+   * no character are kept as they are. Writing it back stages the same picture.
+   */
+  castMarks({ explicit = false } = {}) {
+    const state = this.liveState();
+    if (!state) return [];
+    const out = [];
+    for (const e of state.castList ?? []) {
+      const id = e && typeof e === 'object' ? this.world.character(e.who)?.id : null;
+      out.push(id != null ? this.markOf(this.cast.get(id), e, explicit) : e && typeof e === 'object' ? { ...e } : e);
+    }
+    state.cast.forEach((c, k) => { if (c.auto) out.push(this.markOf(this.cast.get(c.who), state.castEntries?.[k] ?? c, true)); });
+    return out;
+  }
+
+  /**
+   * An entry as it should be written (see castMarks): as written, with where it was moved or turned
+   * since the direction last changed; `explicit`, also where the model on stage stands and faces
+   * when the entry doesn't say. Its keys keep their order (a new `at` or `facing` goes after `who`).
+   */
+  markOf(m, written = {}, explicit = true) {
+    const { who, at, facing, auto } = written;
+    // A drag or a turn counts until the direction changes: then the file has it, or an undo took it back.
+    const live = !!m && m.editedIn === this.world;
+    const moved = live && m.moved, turned = live && m.turned;
+    if (!explicit && !auto && !moved && !turned) return { ...written };
+    const exact = explicit || auto;
+    const walker = !!m?.walker;
+    // Where a gathered member stands is the stage's, while they are gathered as they were staged.
+    const staged = !!m && JSON.stringify(m.written ?? null) === JSON.stringify(written);
+    const fields = new Map([['who', exact ? this.world.character(who)?.id ?? m?.entry.who ?? who : who]]);
+    let place;
+    if (!exact && walker && at === undefined) place = undefined; // a walker's path says where it is
+    else if (moved || (staged && auto)) place = this.localXZ(m.mark.position);
+    else if (typeof at === 'string') place = at;
+    else if (Array.isArray(at)) place = exact ? [r2(at[0]), r2(at[1])] : at;
+    else if (m && exact) place = this.localXZ(m.mark.position);
+    else place = at;
+    let face;
+    if (turned && !walker) face = this.localFacing(m.yaw);
+    else if (typeof facing === 'string') face = facing;
+    else if (typeof facing === 'number') face = exact ? deg360(facing) : facing;
+    else if (m && (exact || (moved && !walker))) face = this.localFacing(m.yaw); // moved off a spot, they face as they do
+    else face = facing;
+    if (place !== undefined) fields.set('at', place);
+    if (face !== undefined) fields.set('facing', face);
+    if (moved && walker) fields.set('path', m.walker.points.map((p) => this.localXZ(p)));
+    // In the written order; what the entry didn't have goes after "who".
+    const out = {};
+    const added = () => { for (const k of ['at', 'facing']) if (!(k in written) && fields.has(k)) out[k] = fields.get(k); };
+    if (!('who' in written)) { out.who = fields.get('who'); added(); }
+    for (const [k, v] of Object.entries(written)) {
+      if (k === 'auto' || k === 'character') continue;
+      if (fields.has(k)) out[k] = fields.get(k);
+      else if (k !== 'at' && k !== 'facing') out[k] = v;
+      if (k === 'who') added();
+    }
+    return out;
+  }
+
+  /**
+   * Everyone on stage, for the editor's cast list: { who, name, auto, entry (as written; a gathered
+   * member's as it was made), at and facing (local, as they stand now), spot (the "thing.spot"
+   * they stand at, or null), pos and yaw (world), walker }.
+   */
+  castInfo() {
+    const state = this.state;
+    if (!state) return [];
+    return state.cast.map((c, k) => {
+      const m = this.cast.get(c.who);
+      const entry = { ...(state.castEntries?.[k] ?? {}) };
+      const root = m?.character.root.position;
+      return {
+        who: c.who, name: String(c.character?.name ?? ''), auto: !!c.auto, entry,
+        at: m ? this.localXZ(m.mark.position) : null,
+        facing: m ? this.localFacing(m.yaw) : null,
+        spot: m && !m.mark.free && !m.moved && typeof entry.at === 'string' ? entry.at : null,
+        pos: root ? [root.x, root.y, root.z] : null,
+        yaw: m ? m.yaw : null,
+        walker: !!m?.walker,
+      };
+    });
+  }
+
+  /**
+   * One of this page's own dressing props: { id, kind, index (its place in the page's "dressing"),
+   * at and facing (local, as it stands now), pos and yaw (world), entry (the entry to write:
+   * moved or turned, its at or facing as it is now; the rest as written) }, or null.
+   */
+  thingMark(id) {
+    const o = this.ownThing(id);
+    if (!o) return null;
+    // The entry as the direction has it now (its place in the list too); moved or turned since the
+    // direction last changed, as it is now.
+    const live = this.liveState() ?? this.state;
+    const index = live.dressingIds?.indexOf(id) ?? -1;
+    const written = index >= 0 ? live.dir.dressing?.[index] : null;
+    if (!written) return null;
+    const entry = { ...written };
+    const edited = o.userData.editedIn === this.world;
+    if (edited && o.userData.moved) entry.at = this.localXZ(o.position);
+    if (edited && o.userData.turned) entry.facing = this.localFacing(o.rotation.y);
+    return { id, kind: o.userData.kind, index, at: this.localXZ(o.position), facing: this.localFacing(o.rotation.y), pos: [o.position.x, o.position.y, o.position.z], yaw: o.rotation.y, entry };
+  }
+
+  /** The ground at the middle of the picture (else under the orbit target), facing the camera: { at, facing } (local). */
+  centerMark() {
+    if (!this.set || !this.state) return null;
+    // Along the camera's axis: the middle of the picture, also when it is framed for part of the view.
+    const cam = this.stage.camera;
+    cam.updateMatrixWorld();
+    const g = this.groundAlong(new THREE.Ray(cam.position.clone(), cam.getWorldDirection(new THREE.Vector3())));
+    const t = this.stage.controls.target;
+    const at = g ? this.localXZ(g) : this.localXZ({ x: t.x, z: t.z });
+    return { at, facing: this.facingToCamera(at) };
+  }
+
+  /**
+   * Where a new prop of `kind` goes: the ground nearest the middle of the picture where it stands
+   * clear of everyone on stage (`clear` plus its own size from each) and of solid props, on dry
+   * ground unless it floats; facing the camera: { at, facing } (local).
+   */
+  propMark(kind, clear = 0.8) {
+    const c = this.centerMark();
+    if (!c || !this.set) return c;
+    const [cx, cz] = this.fromLocal(c.at);
+    const t = this.set.terrain, def = CATALOG[kind];
+    // How big it is: its footprint, built once to measure (its geometry goes again at once).
+    let size = 0.5;
+    try {
+      const probe = buildProp(kind, {}, { season: this.state.season, hour: this.state.hour, weather: this.state.weather, id: `${kind}:probe` });
+      const fp = probe.userData.footprint ?? { r: 0.5 };
+      size = fp.r ?? Math.hypot(fp.w ?? 1, fp.d ?? 1) / 2;
+      probe.traverse((o) => { if (o.isMesh) o.geometry?.dispose(); });
+    } catch { /* an unknown kind: a small one */ }
+    const others = [...this.cast.values()].map((m) => m.character.root.position);
+    const solid = (this.set.footprints ?? []).filter((f) => f.solid);
+    const ok = (x, z) => others.every((p) => Math.hypot(p.x - x, p.z - z) >= clear + size)
+      && solid.every((f) => Math.hypot(f.x - x, f.z - z) >= f.r + size * 0.5)
+      && (def?.floats || t.heightAt(x, z) >= WATER_LEVEL + 0.02);
+    for (let r = 0; r <= 12; r += 0.25) {
+      const steps = r ? Math.max(8, Math.round(r * 8)) : 1;
+      for (let k = 0; k < steps; k++) {
+        const a = (k / steps) * Math.PI * 2;
+        const x = cx + Math.sin(a) * r, z = cz + Math.cos(a) * r;
+        if (!ok(x, z)) continue;
+        const at = this.localXZ({ x, z });
+        return { at, facing: this.facingToCamera(at) };
+      }
+    }
+    return c;
+  }
+
+  /**
+   * What dragging a cast member or one of this page's props starts from: `at`, the world [x, z] that
+   * moveCast or moveThing moves (a walker: where its path is); `foot`, the world point on the ground
+   * under the model now; and `screen`, that point in client pixels. A drag keeps the pointer's offset
+   * from `screen`, and moves by as much as the ground under pointer + offset moves from `foot`, so
+   * what was grabbed stays under the pointer. Null when it isn't on stage.
+   */
+  grabOf(kind, id) {
+    if (!this.set || !this.state) return null;
+    let at, foot;
+    if (kind === 'cast') {
+      const m = this.cast.get(id);
+      if (!m) return null;
+      const p = m.mark.position, root = m.character.root.position;
+      at = [p.x, p.z];
+      // On a spot (a seat, a porch), the ground or deck under it; a walker where it walks now.
+      const x = m.walker ? root.x : p.x, z = m.walker ? root.z : p.z;
+      foot = new THREE.Vector3(x, m.walker ? this.set.terrain.heightAt(x, z) : m.mark.free ? p.y : this.footingAt(x, z).y, z);
+    } else {
+      const o = this.ownThing(id);
+      if (!o) return null;
+      at = [o.position.x, o.position.z];
+      foot = new THREE.Vector3(o.position.x, o.position.y - (o.userData.thing?.lift ?? 0), o.position.z);
+    }
+    const rect = this.stage.renderer?.domElement?.getBoundingClientRect?.();
+    if (!rect || !rect.width) return null;
+    const cam = this.stage.camera;
+    cam.updateMatrixWorld();
+    const q = foot.clone().project(cam);
+    if (!Number.isFinite(q.x) || !Number.isFinite(q.y) || q.z > 1) return null; // behind the lens
+    const screen = [rect.left + ((q.x + 1) / 2) * rect.width, rect.top + ((1 - q.y) / 2) * rect.height];
+    return { at, foot: { x: foot.x, y: foot.y, z: foot.z }, screen };
+  }
+
+  /**
+   * Somewhere for a new cast member near the middle of the view: open ground (dry, not steep, clear
+   * of props) at least `clear` from everyone on stage, facing the camera: { at, facing } (local).
+   */
+  freeMark(clear = 0.9) {
+    const c = this.centerMark();
+    if (!c) return null;
+    const [cx, cz] = this.fromLocal(c.at);
+    const others = [...this.cast.values()].map((m) => m.mark.position);
+    const ok = (x, z) => this.standable(x, z) && others.every((p) => Math.hypot(p.x - x, p.z - z) >= clear);
+    for (let r = 0; r <= 10; r += 0.5) {
+      const steps = r ? Math.max(8, Math.round(r * 6)) : 1;
+      for (let k = 0; k < steps; k++) {
+        const a = (k / steps) * Math.PI * 2;
+        const x = cx + Math.sin(a) * r, z = cz + Math.cos(a) * r;
+        if (!ok(x, z)) continue;
+        const at = this.localXZ({ x, z });
+        return { at, facing: this.facingToCamera(at) };
+      }
+    }
+    return c;
+  }
+
+  /**
+   * The spots of the props near local (x, z), nearest first: { ref ("thingId.spot", as a cast
+   * entry's "at" takes it), label, thing, spot, kind, pose, distance, by (the cast member standing
+   * there, or null) }. A bench's seats, a door, the end of a pier, the logs round a campfire...
+   */
+  spotsNear(x, z, r = 2) {
+    if (!this.set || !this.state) return [];
+    const [wx, wz] = this.fromLocal([x, z]);
+    const taken = new Map();
+    for (const info of this.castInfo()) if (info.spot) taken.set(info.spot.includes('.') ? info.spot : `${info.spot}.`, info.who);
+    const out = [];
+    for (const [id, o] of this.set.objects) {
+      const names = Object.keys(o.userData.spots ?? {});
+      if (!names.length || String(id).includes('.')) continue;
+      const b = o.userData.bounds;
+      if (b && (wx < b.min.x - r || wx > b.max.x + r || wz < b.min.z - r || wz > b.max.z + r)) continue;
+      const kind = o.userData.kind;
+      // A thing's own id names it ("bench-west": "Bench west"); a made-up one goes by its kind.
+      const thing = capital(/[:/]/.test(id) ? (CATALOG[kind]?.label ?? kind).toLowerCase() : words(id));
+      names.forEach((name, k) => {
+        const s = spotTransform(o, name);
+        if (!s) return;
+        const d = Math.hypot(s.position.x - wx, s.position.z - wz);
+        if (d > r) return;
+        const ref = `${id}.${name}`;
+        out.push({ ref, label: `${thing}, ${words(name)}`, thing: id, spot: name, kind, pose: s.pose, distance: r2(d), by: taken.get(ref) ?? (k === 0 ? taken.get(`${id}.`) : null) ?? null });
+      });
+    }
+    return out.sort((a, b) => a.distance - b.distance);
+  }
+
+  /* the camera, as a shot's exact framing */
+
+  /**
+   * A camera as the direction writes a shot's exact framing: x and z local, y world height, all to
+   * 0.01, the lens to 0.1°. Looking (almost) straight down, the small step from the target to the
+   * lens is all that turns the picture, and 0.01 would round it away: it is written as the step in
+   * 0.01s that changes the picture least, its turn and its tilt together (`quat`, the camera's
+   * turn, says which way when the step is too small to tell), so the view comes back the same way
+   * round.
+   */
+  viewOf(pos, target, fov, quat = null) {
+    const lp = this.toLocal([pos.x, pos.z]), lt = this.toLocal([target.x, target.z]);
+    const t = [r2(lt[0]), r2(lt[1])];
+    let p = [r2(lp[0]), r2(lp[1])];
+    let dx = lp[0] - lt[0], dz = lp[1] - lt[1];
+    if (Math.hypot(dx, dz) < 0.25) {
+      if (Math.hypot(dx, dz) < 1e-3 && quat) {
+        // The lens sits where the picture's bottom edge points: the camera's up, laid flat, reversed.
+        const up = new THREE.Vector3(0, 1, 0).applyQuaternion(quat);
+        const a = this.toLocal([pos.x - up.x, pos.z - up.z]), b = this.toLocal([pos.x, pos.z]);
+        [dx, dz] = [a[0] - b[0], a[1] - b[1]];
+      }
+      // The lens as it is, from the target as written: what the step should come closest to.
+      const step = [(lp[0] - t[0]) * 100, (lp[1] - t[1]) * 100];
+      const [i, j] = turnStep(Math.atan2(dx, dz), step, Math.max(1, (pos.y - target.y) * 100));
+      p = [round(t[0] + i / 100, 100), round(t[1] + j / 100, 100)];
+    }
+    return { pos: [p[0], r2(pos.y), p[1]], target: [t[0], r2(target.y), t[1]], fov: round(fov, 10) };
+  }
+
+  /** The camera now: { pos, target, fov } (see viewOf), positions to 0.01 and the lens to 0.1°. */
+  cameraView() {
+    if (!this.state) return null;
+    const cam = this.stage.camera;
+    cam.updateMatrixWorld();
+    return this.viewOf(cam.position, this.stage.controls.target, cam.fov, cam.quaternion);
+  }
+
+  /** Put the camera at a view (see cameraView). It counts as a move by hand. */
+  setCameraView(view) {
+    if (!this.state || !Array.isArray(view?.pos) || !Array.isArray(view?.target)) return false;
+    const cam = this.stage.camera, controls = this.stage.controls;
+    const [px, pz] = this.fromLocal([view.pos[0], view.pos[2]]);
+    const [tx, tz] = this.fromLocal([view.target[0], view.target[2]]);
+    cam.position.set(px, view.pos[1], pz);
+    controls.target.set(tx, view.target[1], tz);
+    if (Number.isFinite(view.fov)) cam.fov = view.fov;
+    cam.updateProjectionMatrix();
+    this.stopGlide(); // nothing still gliding from the last drag
+    controls.update();
+    this.userCamera = true;
+    return true;
+  }
+
+  /** Change the lens (field of view, degrees) of the camera where it stands. It counts as a move by hand. */
+  setLens(fov) {
+    if (!this.state || !Number.isFinite(fov)) return false;
+    const cam = this.stage.camera;
+    cam.fov = Math.max(5, Math.min(120, fov));
+    cam.updateProjectionMatrix();
+    this.userCamera = true;
+    return true;
+  }
+
+  /** Stop what is left of a hand orbit's glide (the orbit controls' damping), so the camera stays put. */
+  stopGlide() {
+    const controls = this.stage.controls;
+    controls._sphericalDelta?.set(0, 0, 0);
+    controls._panOffset?.set(0, 0, 0);
+    if (typeof controls._scale === 'number') controls._scale = 1;
+  }
+
+  /** The view shot `i` frames (see cameraView), as shot(i) would leave the camera, worked out without moving it. */
+  shotView(i) {
+    const n = this.shots.length;
+    if (!n || !this.state || !this.set) return null;
+    const { pos, target, fov } = this.frameOf(this.shots[((i % n) + n) % n]);
+    return this.viewOf(this.controlled(pos, target), target, fov);
+  }
+
+  /** Where the orbit controls keep a camera at `pos` looking at `target`: above the target's level, in their range. */
+  controlled(pos, target) {
+    const c = this.stage.controls;
+    const s = new THREE.Spherical().setFromVector3(_v.copy(pos).sub(target));
+    s.phi = Math.max(c.minPolarAngle ?? 0, Math.min(c.maxPolarAngle ?? Math.PI, s.phi));
+    s.makeSafe();
+    s.radius = Math.max(c.minDistance ?? 0, Math.min(c.maxDistance ?? Infinity, s.radius));
+    return new THREE.Vector3().setFromSpherical(s).add(target);
+  }
+
+  /**
+   * For a still of shot `i` (or of the camera as it is, with no `i`): frames it, hides the marker,
+   * and returns what puts the camera, the shadows and the marker back as they were.
+   */
+  stillOf(i = null) {
+    const stage = this.stage, cam = stage.camera, controls = stage.controls;
+    const saved = { pos: cam.position.clone(), quat: cam.quaternion.clone(), fov: cam.fov, target: controls.target.clone(), focus: stage.focusCenter.clone(), radius: stage.focusRadius };
+    const shown = this.marker ? [this.marker.ring.visible, this.marker.box.visible] : null;
+    if (this.marker) this.marker.ring.visible = this.marker.box.visible = false;
+    const n = this.shots.length;
+    if (i != null && n && this.state && this.set) {
+      const shot = this.shots[((i % n) + n) % n];
+      const { pos, target, fov } = this.frameOf(shot);
+      cam.position.copy(this.controlled(pos, target));
+      cam.lookAt(target);
+      cam.fov = fov;
+      cam.updateProjectionMatrix();
+      cam.updateMatrixWorld();
+      const radius = shot.shot === 'establishing' ? (this.state.place.radius ?? 10) * 2.2 : Math.max(pos.distanceTo(target) * 0.9, 12);
+      stage.focus(target.clone().setY(0), Math.min(radius, 48));
+    }
+    return () => {
+      cam.position.copy(saved.pos);
+      cam.quaternion.copy(saved.quat);
+      cam.fov = saved.fov;
+      cam.updateProjectionMatrix();
+      cam.updateMatrixWorld();
+      controls.target.copy(saved.target);
+      stage.focus(saved.focus, saved.radius);
+      if (shown && this.marker) [this.marker.ring.visible, this.marker.box.visible] = shown;
+    };
+  }
+
+  /* the selection marker */
+
+  /**
+   * Show what is selected: a ring on the ground under a cast member (`kind` 'cast', their card id)
+   * or a box round a prop ('thing', its thing id); `select(null)` clears it. The director keeps it
+   * by id through re-stages and set rebuilds, and the marker follows the model while it moves.
+   * True when it is on stage now.
+   */
+  select(kind, id = null) {
+    this.selection = kind && id != null ? { kind, id } : null;
+    return this.showSelection();
+  }
+  get selected() { return this.selection ? { ...this.selection } : null; }
+
+  showSelection() {
+    const sel = this.selection;
+    if (!sel) {
+      if (this.marker) this.marker.ring.visible = this.marker.box.visible = false;
+      return false;
+    }
+    const { ring, box } = this.ensureMarker();
+    ring.visible = box.visible = false;
+    if (!this.set) return false;
+    if (sel.kind === 'cast') {
+      const m = this.cast.get(sel.id);
+      if (!m) return false;
+      this.placeRing(m, true);
+      return (ring.visible = true);
+    }
+    const o = this.set.objects.get(sel.id);
+    if (!o) return false;
+    box.box.copy(o.userData.bounds ?? boundsOf(o)).expandByScalar(0.05);
+    return (box.visible = true);
+  }
+
+  /** Each frame while a cast member is selected: the ring goes where they are (a walker walks). */
+  followSelection() {
+    const sel = this.selection;
+    if (sel?.kind !== 'cast' || !this.marker?.ring.visible) return;
+    const m = this.cast.get(sel.id);
+    if (m) this.placeRing(m);
+  }
+
+  /** The ring under a member: flat at a deck or a raised spot they stand on, else lying on the ground. */
+  placeRing(m, force = false) {
+    const ring = this.marker.ring, u = ring.userData, root = m.character.root.position;
+    if (!force && u.x === root.x && u.z === root.z) return;
+    u.x = root.x;
+    u.z = root.z;
+    if (force) u.floor = this.ringFloor(m);
+    const h = m.character.spec?.height ?? 1, t = this.set.terrain;
+    ring.position.set(root.x, 0, root.z);
+    ring.scale.set(h, 1, h);
+    const pos = ring.geometry.attributes.position, base = u.base;
+    for (let k = 0; k < pos.count; k++) {
+      const x = root.x + base[k * 2] * h, z = root.z + base[k * 2 + 1] * h;
+      pos.setY(k, u.floor != null ? u.floor + 0.03 : Math.max(t.heightAt(x, z), WATER_LEVEL) + 0.04);
+    }
+    pos.needsUpdate = true;
+    ring.geometry.computeBoundingSphere();
+  }
+
+  ringFloor(m) {
+    if (m.walker) return null;
+    const p = m.mark.position;
+    if (m.mark.free) return m.mark.onDeck ? p.y : null;
+    const f = this.footingAt(p.x, p.z);
+    if ((m.pose === 'stand' || m.pose === 'lean') && p.y > f.y + 0.15) return p.y;
+    return f.onDeck ? f.y : null;
+  }
+
+  ensureMarker() {
+    if (this.marker) return this.marker;
+    const geometry = new THREE.RingGeometry(0.34, 0.44, 48, 1).rotateX(-Math.PI / 2);
+    const n = geometry.attributes.position.count;
+    const base = new Float32Array(n * 2);
+    for (let k = 0; k < n; k++) { base[k * 2] = geometry.attributes.position.getX(k); base[k * 2 + 1] = geometry.attributes.position.getZ(k); }
+    const ring = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+      color: MARKER_COLOR, transparent: true, opacity: 0.92, depthWrite: false, side: THREE.DoubleSide, toneMapped: false, fog: false,
+      polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+    }));
+    Object.assign(ring, { name: 'selection-ring', renderOrder: 4, visible: false, frustumCulled: false, raycast: () => {} });
+    ring.userData.base = base;
+    const box = new THREE.Box3Helper(new THREE.Box3(), MARKER_COLOR);
+    Object.assign(box.material, { depthTest: false, transparent: true, opacity: 0.9, toneMapped: false, fog: false });
+    Object.assign(box, { name: 'selection-box', renderOrder: 6, visible: false, raycast: () => {} });
+    this.stage.scene.add(ring, box);
+    return (this.marker = { ring, box });
+  }
+
+  disposeMarker() {
+    if (!this.marker) return;
+    for (const o of [this.marker.ring, this.marker.box]) { o.removeFromParent(); o.geometry.dispose(); o.material.dispose(); }
+    this.marker = null;
+  }
+
   update(dt) {
     for (const member of this.cast.values()) {
       member.walker?.update(dt);
       member.character.update(dt);
     }
     if (this.set) this.set.update(this.stageTime(), dt, this.stage.controls.target);
+    if (this.selection) this.followSelection();
     const m = this.cameraMove;
-    if (m && !this.userCamera) {
+    // While directing, a shot's move holds at its framing: what you see is what is saved.
+    if (m && !this.userCamera && !this.directing) {
       m.t += dt * m.speed;
       const cam = this.stage.camera;
       const controls = this.stage.controls;
@@ -1035,6 +1942,7 @@ export class Director {
   /** Release the set and the cast (when a stage closes for good). */
   dispose() {
     this.disposed = true;
+    this.disposeMarker();
     this.set?.dispose();
     this.set = null;
     for (const c of this.characters.values()) c.dispose();

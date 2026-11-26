@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
-    "test": "node server/json-edit.test.ts"
+    "test": "node server/json-edit.test.ts && node src/lib/direct.test.ts"
   },
   "dependencies": {
     "react": "^19.3.1",

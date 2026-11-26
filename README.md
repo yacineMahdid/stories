@@ -27,7 +27,9 @@ Then open http://localhost:5173. Your world is saved in `data/`; `STORY_DATA=pat
 
 **3D stage** (top bar) plays the whole story full screen: pages, camera shots, time of day, weather, season.
 
-The 3D direction (looks, place sets, blocking, cameras) is saved in `data/staging.json` (format in `docs/scenes.md`). The app only rewrites the entries you change, so the file can be edited by hand alongside it.
+**Direct a page in 3D.** Turn on *Direct* in the 3D stage (or click *Direct in 3D* on a page in the inspector) to stage the page by hand: click a character or a prop and drag it (Shift+drag turns it), choose what they do, feel and hold, put characters in or take them out, add props, set the time, weather and season, and frame each shot from where you put the camera (*Use this view*). Everything is saved on the page in `data/staging.json`, and Undo takes back each change. **Notes for Claude** keep what you want changed, with the camera view and what was selected; *Copy for Claude* puts a brief on the clipboard to paste in the chat, and Claude's reply shows under each note it acts on. **Lock page** freezes the page's direction exactly as you see it and puts that shot on the page card as its picture: while you direct, the lit frame beside the panel is that picture.
+
+The 3D direction (looks, place sets, blocking, cameras) is saved in `data/staging.json` (format in `docs/scenes.md`). The app only rewrites the entries you change, so the file can be edited by hand alongside it, also while the app is open: a list the app writes whole (a page's cast or notes) takes in what was changed in the file meanwhile instead of writing over it.
 
 **Continuity checks** flag deleted references, missing time or places, a character in two places at the same moment, a character appearing before they are born, and pages that jump back in time.
 **Export story bible** writes `data/exports/story-bible.md`: lore in date order, characters, places, then the full Story → Book → Chapter → Page tree. Each page lists each character's age and effective look, plus which backstory is history, ongoing, or has not happened yet at that moment.

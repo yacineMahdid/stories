@@ -11,6 +11,10 @@ import { readCanvas } from '../../../src/world/canvas.js';
 import { World, guessSpec, PLACE_PRESETS, directionKey } from '../../../src/world/staging.js';
 import { Director, buildSpec } from '../../../src/world/director.js';
 import { WEATHERS } from '../../../src/world/sky.js';
+import { ANIMATION_GROUPS } from '../../../src/engine/animations.js';
+import { EMOTIONS } from '../../../src/engine/emotions.js';
+import { CATALOG } from '../../../src/world/props/index.js';
+import { SPOT_CLIPS } from '../../../src/world/blocking.js';
 
 export const lookOptions = {
   species: Object.entries(SPECIES).map(([id, s]) => ({ id, label: s.label })),
@@ -28,6 +32,29 @@ export { directionKey };
 export function effectiveSpec(look) { return buildSpec(look); }
 export const weathers = Object.entries(WEATHERS).map(([id, w]) => ({ id, label: w.label }));
 
+/** What a cast entry and a page's props can be, for the Direct panel's selects. */
+const GROUP_KINDS = new Set(['row', 'ring', 'scatter']);
+const FAMILY_LABELS = { nature: 'Nature', buildings: 'Buildings', village: 'Village', waterside: 'Waterside' };
+export const directOptions = {
+  /** `do`: every animation, by group */
+  animations: Object.entries(ANIMATION_GROUPS).map(([group, names]) => ({ group, names: [...names] })),
+  /** `feel`: every emotion, Neutral first */
+  emotions: Object.entries(EMOTIONS).map(([id, e]) => ({ id, label: e.label ?? id })).sort((a, b) => (a.id === 'neutral' ? -1 : b.id === 'neutral' ? 1 : 0)),
+  /** `hold`: every hand prop (held-*) */
+  held: Object.entries(CATALOG).filter(([kind]) => kind.startsWith('held-')).map(([id, d]) => ({ id, label: d.label ?? id })),
+  /** a page's dressing: every set piece, by family (no hand props, no rows, rings or scatters) */
+  props: [],
+  /** the clips a spot that sits, lies or kneels them can play, by its pose (any other `do` gives way to the spot's pose) */
+  spotClips: SPOT_CLIPS,
+};
+for (const [id, d] of Object.entries(CATALOG)) {
+  if (id.startsWith('held-') || GROUP_KINDS.has(id)) continue;
+  const family = d.family ?? 'other';
+  let group = directOptions.props.find((g) => g.family === family);
+  if (!group) directOptions.props.push(group = { family, label: FAMILY_LABELS[family] ?? family, kinds: [] });
+  group.kinds.push({ id, label: d.label ?? id });
+}
+
 /** A first 3D look for a character card, from its name, role and appearance text. */
 export function guessLook(card, species) {
   const { guessed, ...look } = guessSpec(card, species);
@@ -43,12 +70,16 @@ function dataUrlToBlob(url) {
   return new Blob([a], { type: head.match(/:(.*?);/)[1] });
 }
 
-/** Render one frame at a given size and return it as a PNG (with an optional painted backdrop). */
+/**
+ * Render one frame at a given size and return it as a PNG (with an optional painted backdrop). A
+ * camera framed for a part of its view (WorldStage.setFrame) renders that frame, the picture.
+ */
 function capture(renderer, scene, camera, width, height, backdrop) {
   const el = renderer.domElement;
-  const prev = { w: el.width, h: el.height, ratio: renderer.getPixelRatio(), aspect: camera.aspect };
+  const prev = { w: el.width, h: el.height, ratio: renderer.getPixelRatio(), aspect: camera.aspect, view: camera.view?.enabled ? { ...camera.view } : null };
   renderer.setPixelRatio(1);
   renderer.setSize(width, height, false);
+  if (prev.view) camera.clearViewOffset();
   camera.aspect = width / height;
   camera.updateProjectionMatrix();
   renderer.render(scene, camera);
@@ -70,6 +101,7 @@ function capture(renderer, scene, camera, width, height, backdrop) {
   renderer.setPixelRatio(prev.ratio);
   renderer.setSize(prev.w / prev.ratio, prev.h / prev.ratio, false);
   camera.aspect = prev.aspect;
+  if (prev.view) camera.setViewOffset(prev.view.fullWidth, prev.view.fullHeight, prev.view.offsetX, prev.view.offsetY, prev.view.width, prev.view.height);
   camera.updateProjectionMatrix();
   return dataUrlToBlob(url);
 }
@@ -153,6 +185,15 @@ export function getStudio() {
 
 /* ───────────── world views (pages and places) ───────────── */
 
+/** The direction without the pages' notes for Claude ("feedback"), which change nothing in 3D: as text, to compare. */
+function stagedPart(direction) {
+  const scenes = direction?.scenes;
+  if (!scenes || typeof scenes !== 'object' || Array.isArray(scenes)) return JSON.stringify(direction ?? null);
+  const plain = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+  const kept = Object.fromEntries(Object.entries(scenes).map(([k, v]) => [k, plain(v) && 'feedback' in v ? Object.fromEntries(Object.entries(v).filter(([f]) => f !== 'feedback')) : v]));
+  return JSON.stringify({ ...direction, scenes: kept });
+}
+
 /** A 3D view of the live canvas: one page staged with its cast, or one map place on its own. */
 export class WorldView {
   constructor() {
@@ -162,6 +203,7 @@ export class WorldView {
     this.director = null;
     this.world = null;
     this.busy = Promise.resolve();
+    this.directing = false;
   }
 
   mount(parent) { parent.appendChild(this.el); this.stage.resize(); this.resume(); }
@@ -179,12 +221,19 @@ export class WorldView {
     const canvas = readCanvas({ document });
     const sig = JSON.stringify([[...canvas.pins.values()], [...canvas.characters.values()], canvas.pages, canvas.stories]);
     if (this.world && sig === this.worldSig && direction === this.worldDirection) return this.world;
+    // Notes for Claude (a page's "feedback") change nothing in 3D: a direction that differs from the
+    // last one only in them keeps the world, and what is on stage stays as it is.
+    const staged = stagedPart(direction);
+    if (this.world && sig === this.worldSig && staged === this.worldStaged) { this.worldDirection = direction; return this.world; }
     this.worldSig = sig;
     this.worldDirection = direction;
+    this.worldStaged = staged;
     this.worldVersion = (this.worldVersion ?? 0) + 1;
     this.world = new World(canvas, direction ?? {});
-    if (!this.director) this.director = new Director(this.stage, this.world);
-    else this.director.setWorld(this.world);
+    if (!this.director) {
+      this.director = new Director(this.stage, this.world);
+      this.director.setDirecting(this.directing);
+    } else this.director.setWorld(this.world);
     return this.world;
   }
 
@@ -192,6 +241,14 @@ export class WorldView {
   showing(kind, id, overrides) {
     const s = this.shown;
     return !!s && s.ticket === this.ticket && this.matches(s, kind, id, overrides);
+  }
+  /**
+   * Has the stage caught up with `direction` (the direction as it is now): given to setWorld, and
+   * what it stages on screen, with nothing waiting? After an edit, the stage shows it once this is so.
+   */
+  upToDate(direction) {
+    const s = this.shown;
+    return direction === this.worldDirection && !!s && s.ticket === this.ticket && s.version === this.worldVersion && !this.pending;
   }
   matches(s, kind, id, overrides) {
     return s.kind === kind && s.id === id && s.version === this.worldVersion && !Object.values(overrides ?? {}).some((v) => v != null);
@@ -205,27 +262,55 @@ export class WorldView {
 
   /** Run staging work one job at a time; a failed job never blocks the ones after it. */
   queue(job) {
+    this.jobs = (this.jobs ?? 0) + 1;
     const run = this.busy.then(() => (this.disposed ? null : job()));
-    this.busy = run.catch((e) => console.error('[3d]', e));
+    this.busy = run.catch((e) => console.error('[3d]', e)).finally(() => { this.jobs--; });
     return run;
   }
+  /** Staging work waiting or under way (a re-stage in flight: leave the models alone until it is done). */
+  get pending() { return (this.jobs ?? 0) > 0; }
+  /** Resolves once no staging work is waiting or under way (also work queued meanwhile). */
+  idle() { return this.busy.then(() => (this.pending && !this.disposed ? this.idle() : undefined)); }
 
   /**
-   * Stage a page. `keepShot` re-stages the same page without resetting the camera.
+   * Stage a page. `keepShot` re-stages the same page on the shot it was on (framed again unless
+   * the camera was moved by hand); `keepCamera` re-stages it and leaves the camera exactly where it
+   * is. Another page starts on its first shot either way.
    * Only the latest show matters: one still waiting when a newer one comes is skipped (null).
    */
-  showPage(pageId, overrides = {}, { keepShot = false } = {}) {
+  showPage(pageId, overrides = {}, { keepShot = false, keepCamera = false } = {}) {
     const ticket = this.ticket = (this.ticket ?? 0) + 1;
     return this.queue(async () => {
       if (ticket !== this.ticket) return null;
-      if (keepShot && this.shown && this.matches(this.shown, 'page', pageId, overrides)) { this.shown.ticket = ticket; return this.director.state; }
+      if ((keepShot || keepCamera) && this.shown && this.matches(this.shown, 'page', pageId, overrides)) { this.shown.ticket = ticket; return this.director.state; }
       const i = this.world?.sceneIndex.get(pageId);
       if (i == null) return null;
       const version = this.worldVersion;
-      const state = await this.director.showState(this.world.sceneState(i), overrides, { keepShot });
+      const state = await this.director.showState(this.world.sceneState(i), overrides, { keepShot, keepCamera });
       this.shown = state ? { kind: 'page', id: pageId, version, ticket } : null;
       return state;
     });
+  }
+
+  /**
+   * Would staging this page now build its set again (another page or place, a new season, a prop
+   * added, moved or removed)? That is the slow part of staging: the rest takes a moment.
+   */
+  rebuilds(pageId) {
+    const i = this.world?.sceneIndex.get(pageId);
+    if (i == null || !this.director?.state || this.director.state.page?.id !== pageId) return true;
+    return this.director.setKeyFor(this.world.sceneState(i)) !== this.director.setKey;
+  }
+
+  /**
+   * Stage the page on screen again as the direction has it: the time, weather and season the viewer
+   * picked (retime) go, the camera stays. Null when no page is on screen.
+   */
+  restage() {
+    const s = this.shown;
+    if (s?.kind !== 'page') return Promise.resolve(null);
+    this.shown = null;
+    return this.showPage(s.id, {}, { keepCamera: true });
   }
 
   showPlace(pinId, moment = {}) {
@@ -247,11 +332,68 @@ export class WorldView {
   get warnings() { return [...new Set([...(this.director?.state?.warnings ?? []), ...(this.world?.warnings ?? [])])]; }
   retime(moment) { return this.queue(() => this.director?.retime(moment)); }
 
-  /** A 16:9 still of what the camera sees now. */
-  async still(width = 1280, height = 720) {
+  /* ── directing (the Direct mode of the full stage; see Director in src/world/director.js) ── */
+
+  /** Direct mode on or off: while on, the camera stays where it is and shot moves hold still. */
+  setDirecting(on) {
+    this.directing = !!on;
+    this.director?.setDirecting(this.directing);
+  }
+  /** The orbit controls: turn them off (`enabled = false`) while a pointer drags something. */
+  get controls() { return this.stage.controls; }
+  /** The canvas the stage draws on (what the pointer is over: its cursor shows what can be grabbed). */
+  get canvas() { return this.stage.renderer.domElement; }
+  /**
+   * The picture's frame in the view (CSS pixels from its top left: { x, y, w, h }), or null for all
+   * of it: shots are framed for it, the camera aims at its middle, and a still is what it shows.
+   * Direct mode frames the picture beside its panel. True when it changed.
+   */
+  setFrame(frame) { return this.stage.setFrame(frame); }
+  get frame() { return this.stage.frame ?? null; }
+  /** Moved by hand since the last shot framed it (orbit, or setCameraView). */
+  get userCamera() { return !!this.director?.userCamera; }
+
+  pick(clientX, clientY) { return this.director?.pick(clientX, clientY) ?? null; }
+  groundPoint(clientX, clientY) { return this.director?.groundPoint(clientX, clientY) ?? null; }
+  moveCast(id, x, z) { return !!this.director?.moveCast(id, x, z); }
+  turnCast(id, yaw) { return !!this.director?.turnCast(id, yaw); }
+  moveThing(id, x, z) { return !!this.director?.moveThing(id, x, z); }
+  turnThing(id, yaw) { return !!this.director?.turnThing(id, yaw); }
+  nudge(kind, id, right, away) { return !!this.director?.nudge(kind, id, right, away); }
+  turn(kind, id, deg) { return !!this.director?.turn(kind, id, deg); }
+  select(kind, id = null) { return !!this.director?.select(kind, id); }
+  get selected() { return this.director?.selected ?? null; }
+  cameraView() { return this.director?.cameraView() ?? null; }
+  setCameraView(view) { return !!this.director?.setCameraView(view); }
+  setLens(fov) { return !!this.director?.setLens(fov); }
+  shotView(i) { return this.director?.shotView(i) ?? null; }
+  castMarks(opts) { return this.director?.castMarks(opts) ?? []; }
+  castInfo() { return this.director?.castInfo() ?? []; }
+  thingMark(id) { return this.director?.thingMark(id) ?? null; }
+  centerMark() { return this.director?.centerMark() ?? null; }
+  freeMark(clear) { return this.director?.freeMark(clear) ?? null; }
+  propMark(kind, clear) { return this.director?.propMark(kind, clear) ?? null; }
+  grabOf(kind, id) { return this.director?.grabOf(kind, id) ?? null; }
+  spotsNear(x, z, r) { return this.director?.spotsNear(x, z, r) ?? []; }
+  toLocal(p) { return this.director?.toLocal(p) ?? [...p]; }
+  fromLocal(p) { return this.director?.fromLocal(p) ?? [...p]; }
+  localFacing(yaw) { return this.director?.localFacing(yaw) ?? 0; }
+  worldYaw(deg) { return this.director?.worldYaw(deg) ?? 0; }
+  facingToCamera(at) { return this.director?.facingToCamera(at) ?? 0; }
+  /** Every thing id in the world (places, every page's dressing and added things): a new prop's id must be none of these. */
+  thingIds() { return this.world?.thingIds() ?? []; }
+
+  /**
+   * A still of what the camera sees now, or with `shot` of that shot (framed for the still, then
+   * the camera goes back). The selection marker is never in it.
+   */
+  async still(width = 1280, height = 720, { shot = null } = {}) {
     await this.busy;
     this.stage.applyMoment();
-    return capture(this.stage.renderer, this.stage.scene, this.stage.camera, width, height, null);
+    const restore = this.director?.stillOf(shot);
+    try {
+      return capture(this.stage.renderer, this.stage.scene, this.stage.camera, width, height, null);
+    } finally { restore?.(); }
   }
 
   /** Close for good, once whatever is staging has finished. */

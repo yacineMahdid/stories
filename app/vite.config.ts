@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import type { IncomingMessage } from 'node:http'
-import { checkOps, JsonEditRefused, parseDirection, patchText, formatJSON } from './server/json-style.ts'
+import { JsonEditRefused, parseDirection, patchRequest, formatJSON, type Answered } from './server/json-style.ts'
 
 // Everything the canvas creates is saved inside the repo so it can be versioned with git.
 // STORY_DATA=path/to/folder opens another world instead (handy for keeping several).
@@ -38,6 +38,9 @@ function safeName(name: string) {
 }
 
 function storyDataApi(): Plugin {
+  // The last saves' answers (what each edit took out of the file), by the id the app gives each
+  // save: a save sent again because its answer was lost is answered as before, not made twice.
+  const answered: Answered = new Map()
   return {
     name: 'story-data-api',
     configureServer(server) {
@@ -69,14 +72,16 @@ function storyDataApi(): Plugin {
             return res.end(JSON.stringify(doc))
           }
           if (url.pathname === '/api/staging' && req.method === 'PATCH') {
-            const ops = checkOps(JSON.parse((await readBody(req)).toString('utf8'))?.ops)
+            const body = JSON.parse((await readBody(req)).toString('utf8'))
             const before = fs.existsSync(STAGING_FILE) ? fs.readFileSync(STAGING_FILE, 'utf8') : formatJSON({ version: 1 }) + '\n'
-            const { text, doc, removed } = patchText(before, ops) // only the touched spans change
-            fs.writeFileSync(STAGING_FILE + '.tmp', text)
-            fs.renameSync(STAGING_FILE + '.tmp', STAGING_FILE)
+            const { text, answer } = patchRequest(before, body, answered) // only the touched spans change
+            if (text != null) {
+              fs.writeFileSync(STAGING_FILE + '.tmp', text)
+              fs.renameSync(STAGING_FILE + '.tmp', STAGING_FILE)
+            }
             res.setHeader('content-type', 'application/json')
             // The file as it now is, and the text each edit took out of it, for its Undo to put back.
-            return res.end(JSON.stringify({ doc, removed }))
+            return res.end(JSON.stringify(answer))
           }
           if (url.pathname === '/api/upload' && req.method === 'POST') {
             const name = `${crypto.randomUUID().slice(0, 8)}-${safeName(url.searchParams.get('name') ?? 'file')}`
