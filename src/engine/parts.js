@@ -296,12 +296,12 @@ const TAILS = {
   horse: { // hair like the mane: three locks from one narrow dock, arching out and falling full
     wag: [0.18, 2],
     build: (color) => group(...[[0, 1, 0.28], [-1, 0.93, 0.24], [1, 0.9, 0.24]].map(([s, len, w]) => {
-      const fall = (u) => smooth(u, 0.0, 0.4) * (1 - 0.45 * smooth(u, 0.7, 1));
-      const x = (u) => s * (0.008 + 0.034 * u * u); // the side locks part a little toward the end
-      const pts = [[0, 0.0, 0.03], [0, 0.018, -0.03], [x(0.3), 0.0, -0.083], [x(0.55), -0.075 * len, -0.113], [x(0.8), -0.17 * len, -0.118], [x(1), -0.27 * len, -0.1]];
+      const fall = (u) => smooth(u, 0.05, 0.45) * (1 - 0.45 * smooth(u, 0.72, 1));
+      const x = (u) => s * (0.008 + 0.036 * u * u); // the side locks part a little toward the end
+      const pts = [[0, 0.0, 0.03], [0, 0.02, -0.03], [x(0.3), 0.004, -0.086], [x(0.55), -0.07 * len, -0.122], [x(0.8), -0.165 * len, -0.134], [x(1), -0.262 * len, -0.126]];
       return hairLock(pts, {
         color, sink: 0.5, center: [0, -0.07, 0.1], around: 16, steps: 40,
-        width: (u) => 0.03 + w * 0.3 * fall(u), height: (u) => 0.03 + 0.032 * fall(u) * (1 - 0.3 * u),
+        width: (u) => 0.028 + w * 0.3 * fall(u), height: (u) => 0.028 + 0.052 * fall(u) * (1 - 0.4 * u),
       });
     })),
   },
