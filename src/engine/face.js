@@ -83,10 +83,16 @@ export class Face {
   /** A snout that carries the mouth (see muzzle() in parts.js), or null to draw it on the face. */
   setMuzzle(muzzle) { this.muzzle = muzzle; this.lastKey = ''; }
 
-  /** Extra layers in the face's material that show this canvas too (eye domes, see parts.js). */
+  /** Extra layers in the face's material that show this canvas too (eye domes, see parts.js):
+   *  the eyes sit on them, so the brows are drawn lower, on the domes' upper fronts. */
   setLayers(materials) {
     for (const m of materials) { m.map = this.texture; m.needsUpdate = true; }
+    this.domed = materials.length > 0;
+    this.lastKey = '';
   }
+
+  /** A furred face has no hair to hide the canvas's edges, so the emotion's shade fades out before them. */
+  setFurry(on) { this.furry = on; this.lastKey = ''; }
 
   /** A 3D brow ridge (see parts.js) shows the brows, so none are drawn under it. */
   setBrowRidge(on) { this.browRidge = on; this.lastKey = ''; }
@@ -149,8 +155,11 @@ export class Face {
     const glow = this.eyeMode === 'glow';
     if (!glow) for (const [x, side] of eyes) this.eye(x, eyeY, side);
     const brows = e.brows ?? (p.brows ? 'soft' : null);
-    if (brows && !this.browRidge) for (const [x, side] of eyes) drawBrow(g, x, eyeY - 82 * k, side, brows, p);
-    if (e.shade) drawShade(g, e.shade, layout);
+    if (brows && !this.browRidge) for (const [x, side] of eyes) drawBrow(g, x, eyeY - (this.domed ? 49 : 82) * k, side, brows, p);
+    if (e.shade) {
+      if (this.furry) this.softShade(e.shade, layout, eyeY);
+      else drawShade(g, e.shade, layout);
+    }
     if (glow) for (const [x, side] of eyes) EYE_MODES.glow(g, x, eyeY, side, k, p, t, e);
     if (e.tears) drawTears(g, e.tears, layout, k, t);
 
@@ -186,6 +195,31 @@ export class Face {
     m.texture.needsUpdate = true;
   }
 
+  /** The emotion's shade in an oval around the eyes, fading out before the canvas's sides and top. */
+  softShade(amount, layout, eyeY) {
+    if (!this.shadeCanvas) {
+      this.shadeCanvas = document.createElement('canvas');
+      this.shadeCanvas.width = this.shadeCanvas.height = SIZE * 2;
+    }
+    const g = this.shadeCanvas.getContext('2d');
+    g.setTransform(2, 0, 0, 2, 0, 0);
+    g.globalCompositeOperation = 'source-over';
+    g.clearRect(0, 0, SIZE, SIZE);
+    drawShade(g, amount, layout);
+    g.globalCompositeOperation = 'destination-in';
+    const ry = Math.max(eyeY, 120) + 20;
+    g.translate(SIZE / 2, eyeY);
+    g.scale(1, ry / 236);
+    const oval = g.createRadialGradient(0, 0, 0, 0, 0, 236);
+    oval.addColorStop(0, '#000');
+    oval.addColorStop(0.55, '#000');
+    oval.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    g.fillStyle = oval;
+    g.fillRect(-SIZE, -SIZE * 2, SIZE * 2, SIZE * 4);
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    this.ctx.drawImage(this.shadeCanvas, 0, 0, SIZE, SIZE);
+  }
+
   mask({ color, shape = 'heart' }, eyes, eyeY, mouthY) {
     const g = this.ctx;
     g.save();
@@ -197,7 +231,20 @@ export class Face {
     }
     g.fillStyle = color;
     g.beginPath();
-    if (shape === 'heart') { // around both eyes and down over the mouth (monkeys)
+    if (shape === 'heart' && this.browRidge) { // one soft shape tucked under the ridge: round the eyes, in at the cheeks, round the mouth
+      const top = eyeY - 40 * this.params.eyeSize, cx = SIZE / 2, ox = cx - eyes[0][0] + 60, my = mouthY - 12;
+      g.moveTo(cx - ox, top + 18);
+      g.bezierCurveTo(cx - ox * 0.5, top + 2, cx + ox * 0.5, top + 2, cx + ox, top + 18);
+      // each side from the top corner down round the eye, in at the cheek and round the mouth to the chin
+      const side = (s) => [
+        [cx + s * (ox + 22), eyeY - 5, cx + s * (ox + 12), eyeY + 55, cx + s * (ox - 30), eyeY + 85],
+        [cx + s * (ox - 55), eyeY + 100, cx + s * 95, my - 20, cx + s * 92, my + 10],
+        [cx + s * 88, my + 48, cx + s * 42, my + 72, cx, my + 72],
+      ];
+      for (const c of side(1)) g.bezierCurveTo(...c);
+      const left = side(-1), starts = [[cx - ox, top + 18], ...left.map((c) => c.slice(4))];
+      for (let i = left.length - 1; i >= 0; i--) g.bezierCurveTo(...left[i].slice(2, 4), ...left[i].slice(0, 2), ...starts[i]); // back up the other side
+    } else if (shape === 'heart') { // around both eyes and down over the mouth (monkeys)
       for (const [x] of eyes) g.ellipse(x + (SIZE / 2 - x) * 0.12, eyeY + 6, 74, 80, 0, 0, TAU);
       g.ellipse(SIZE / 2, mouthY - 12, 92, 74, 0, 0, TAU);
     } else if (shape === 'muzzle') {

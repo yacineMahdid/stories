@@ -45,13 +45,14 @@ const MARKS = {
     ],
   },
   // big patches: one over an ear and the side of the head, the back of the head, the back and
-  // the rump, a flank, the chest, a thigh, a shin and an arm each
+  // the rump, a flank, one from the chest round the side to the other flank, a thigh, a shin and an arm each
   patches: {
     wobble: 0.55,
     marks: [
       [0.168, 0.849, -0.1, 0.085], [0.14, 0.92, -0.06, 0.05], [-0.12, 0.735, -0.175, 0.058],
       [-0.068, 0.983, 0.029, 0.04], [0.038, 0.429, -0.029, 0.066], [0.075, 0.37, -0.01, 0.04],
-      [-0.105, 0.314, 0.053, 0.055], [0.062, 0.447, 0.119, 0.04], [-0.05, 0.274, -0.026, 0.045],
+      [-0.105, 0.314, 0.053, 0.055], [0.07, 0.448, 0.118, 0.04], [0.1, 0.405, 0.095, 0.042], [0.108, 0.352, 0.052, 0.038],
+      [-0.05, 0.274, -0.026, 0.045],
       [0.08, 0.161, 0.021, 0.042], [-0.073, 0.074, 0.03, 0.034], [0.206, 0.441, 0.022, 0.038],
       [-0.276, 0.389, 0.022, 0.028],
     ],
@@ -116,13 +117,16 @@ float tabbyHead(vec3 p) {
   float a = abs(atan(q.x, -q.z)) / 3.14159;   // 0 at the back of the head, 1 at the face
   // Bands wrap the back and sides of the head, dip toward the jaw as they come round, and taper
   // away before they reach the face (each ending in its own place) and before the crown.
-  float s = q.y + 0.03 * a * a + 0.045 * smoothstep(0.3, 0.8, a) * (1.0 - 0.6 * el) + 0.012 * (noise3(p * 9.0) - 0.5);
+  // (they curve down toward the nape in the middle of the back, unevenly spaced)
+  float s = q.y + 0.03 * a * a + 0.045 * smoothstep(0.3, 0.8, a) * (1.0 - 0.6 * el) + 0.012 * (noise3(p * 9.0) - 0.5)
+          + 0.028 * exp(-(q.x * q.x) / 0.007) * (1.0 - smoothstep(0.0, 0.35, a));
+  s += 0.011 * sin(s * 41.0 + 1.3);
   float period = 0.088, v = s / period + 0.3, k = floor(v + 0.5);
   float d = abs(v - k) * period;
   float end = 0.6 + 0.07 * sin(k * 2.7);
   float taper = (1.0 - smoothstep(end - 0.22, end, a)) * (1.0 - smoothstep(0.5, 0.78, el)) * smoothstep(-0.8, -0.55, el);
   float w = fwidth(s) * 0.75 + 1e-5;
-  float c = band(d, (0.019 + 0.004 * sin(k * 1.9)) * taper, w);
+  float c = band(d, (0.018 + 0.007 * sin(k * 2.3 + 0.5)) * taper, w);
   // Lines from the forehead back over the crown: a long one in the middle and one each side that
   // flares out toward the brows, all pointed at both ends.
   float th = atan(q.z, q.y);                  // 0 on top, +1.57 at the face, -1.57 at the back
@@ -190,12 +194,13 @@ vec3 furColor(vec3 p, bool arm, float t, float perp) {
     if (!arm) c = mix(c, uFur2, cover(d, 0.005, w));
   }
   if (uBack > 0.5) {
-    // A silver saddle over the lower back and the rump, its edge soft and feathered like fur.
-    float phi = atan(p.x, -(p.z - TORSO_Z));     // 0 at the spine; the saddle reaches 55 degrees round
-    float d = (length(vec2(phi / 0.95, (p.y - 0.345) / 0.115)) - 1.0) * 0.1;
-    d += 0.02 * (noise3(p * vec3(70.0, 14.0, 70.0)) - 0.5) + 0.01 * (noise3(p * vec3(150.0, 30.0, 150.0)) - 0.5);
+    // A silver saddle over the lower back: a rounded shield, broader at its top, with a soft, clean
+    // edge (about 1.5 cm) and a slightly lighter middle.
+    float phi = atan(p.x, -(p.z - TORSO_Z));     // 0 at the spine
+    vec2 e = vec2(phi / (0.78 + 0.22 * smoothstep(0.27, 0.44, p.y)), (p.y - 0.352) / 0.112);
+    float d = (pow(pow(abs(e.x), 2.6) + pow(abs(e.y), 2.6), 1.0 / 2.6) - 1.0) * 0.095;
     float w = fwidth(d) * 0.75 + 1e-5;
-    if (!arm) c = mix(c, uFur2, 0.9 * cover(d + 0.01, 0.026, w));
+    if (!arm) c = mix(c, uFur2, cover(d, 0.0075, w) * (0.84 + 0.16 * cover(d + 0.03, 0.025, w)));
   }
   if (uSpots > 0.5) {
     float wob = noise3(p * 11.0) - 0.5 + 0.6 * (noise3(p * 26.0 + 4.1) - 0.5), d = 1.0;
@@ -205,7 +210,7 @@ vec3 furColor(vec3 p, bool arm, float t, float perp) {
       d = min(d, length(p - m.xyz) - m.w * (1.0 + uMarkWobble * wob));
     }
     float w = fwidth(d) * 0.75 + 1e-5;
-    c = mix(c, uFur3, cover(d, 0.0015, w));
+    c = mix(c, uFur3, cover(d, 0.0005, w));
   }
   if (uStripes > 0.5) {
     float head = tabbyHead(p), body = tabbyBody(p, arm, t, perp);
@@ -273,7 +278,7 @@ export function createBodyMaterial() {
       .replace('vec4 diffuseColor = vec4( diffuse, opacity );', 'vec4 diffuseColor = vec4( outfitColor(vRest), opacity );')
       .replace('#include <lights_physical_fragment>', sheenChunk('uFurry > 0.5', 'furMask'));
   };
-  material.customProgramCacheKey = () => 'canonical-outfit-7';
+  material.customProgramCacheKey = () => 'canonical-outfit-8';
   material.userData.outfit = uniforms;
   return material;
 }

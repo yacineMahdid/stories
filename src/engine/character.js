@@ -19,6 +19,8 @@ const _e = new THREE.Euler();
 const _v = new THREE.Vector3();
 const _inv = new THREE.Matrix4();
 const CONTACT_BONES = ['Hips', 'Head', 'LeftFoot', 'RightFoot', 'LeftHand', 'RightHand'];
+// Seated poses: a long hanging tail swings back a little (its part's `lift`) to stay off the seat and floor.
+const SEATED = new Set(['Sit', 'SitFloor', 'SitCrossed', 'Kneel', 'Squat']);
 
 let contactTexture = null;
 function softShadowTexture() {
@@ -130,6 +132,7 @@ export class Character {
     this.bodyType = applyBody(this, this.spec.body);
     this.bones.Head.scale.setScalar(this.spec.headScale * (this.bodyType.head ?? 1));
     this.face.setParams(this.spec.face);
+    this.face.setFurry(!!(this.spec.fur || this.spec.parts?.length));
     this.ready = this.setHair(this.spec.hair);
     this.setEars(this.spec.ears);
     return this.ready;
@@ -139,9 +142,24 @@ export class Character {
   setParts(parts = []) {
     for (const { object } of this.partObjects ?? []) {
       object.removeFromParent();
-      object.traverse((m) => { if (m.isMesh) { m.geometry.dispose(); if (m.material.map?.userData.owned) m.material.map.dispose(); m.material.dispose(); } });
+      object.traverse((m) => {
+        if (!m.isMesh) return;
+        m.geometry.dispose();
+        if (m.material.map?.userData.owned) m.material.map.dispose();
+        m.material.dispose();
+        m.customDepthMaterial?.dispose();
+      });
     }
     this.partObjects = buildParts(parts, this.spec.skin).map((part) => { this.bones[part.bone].add(part.object); return part; });
+    // A part with its own canvas casts its shadow with its own depth material: the renderer's shared
+    // one would keep the canvas (it copies a caster's map) after the part is gone, and re-upload it.
+    for (const { object } of this.partObjects) {
+      object.traverse((m) => {
+        if (!m.isMesh) return;
+        if (m.material.map?.userData.owned) m.customDepthMaterial = new THREE.MeshDepthMaterial();
+        if (m.material.name === 'Face') m.visible = !this.wireframeOn; // eye domes' face layers
+      });
+    }
     // A snout carries the mouth, so the face draws it there (see Face.setMuzzle); a brow ridge
     // takes the place of drawn brows and moves with the emotion.
     this.face.setMuzzle(this.partObjects.find((part) => part.muzzle)?.muzzle ?? null);
@@ -163,10 +181,7 @@ export class Character {
    */
   setEars(style = 'human') {
     this.spec.ears = style;
-    for (const o of this.earObjects ?? []) {
-      o.removeFromParent();
-      o.traverse((m) => { if (m.isMesh) { m.geometry.dispose(); m.material.dispose(); } });
-    }
+    this.removeEars();
     const def = EAR_STYLES[style] ?? EAR_STYLES.human;
     const withEars = this.baseGeometry ??= this.bodyMesh.geometry;
     const earless = def.scale === 0 ? earlessGeometry(withEars, this.skeleton) : null;
@@ -175,8 +190,16 @@ export class Character {
     this.bones.LeftEar.scale.setScalar(s);
     this.bones.RightEar.scale.setScalar(s);
     const furry = this.spec.fur || this.spec.parts?.length;
-    const colors = { fur: furry ? this.spec.skin : this.spec.hair?.color ?? '#4a2f22', skin: this.spec.skin };
+    const colors = { fur: furry ? this.spec.skin : this.spec.hair?.color ?? '#4a2f22', skin: this.spec.skin, second: this.spec.fur?.second };
     this.earObjects = buildEars(style, colors, earless?.head).map(({ bone, object }) => { this.bones[bone].add(object); return object; });
+  }
+
+  removeEars() {
+    for (const o of this.earObjects ?? []) {
+      o.removeFromParent();
+      o.traverse((m) => { if (m.isMesh) { m.geometry.dispose(); m.material.dispose(); } });
+    }
+    this.earObjects = [];
   }
 
   /**
@@ -253,9 +276,11 @@ export class Character {
 
   set showSkeleton(visible) { this.skeletonHelper.visible = visible; }
   set wireframe(on) {
+    this.wireframeOn = on;
     this.bodyMesh.material.wireframe = on;
     this.hairMaterial.wireframe = on;
     this.faceMesh.visible = !on;
+    for (const { object } of this.partObjects ?? []) object.traverse((m) => { if (m.isMesh && m.material.name === 'Face') m.visible = !on; });
   }
 
   update(dt) {
@@ -266,10 +291,11 @@ export class Character {
     this.symbols.update(dt);
     this.updateContact();
     this.wagTime = (this.wagTime ?? 0) + dt;
-    for (const { object, wag } of this.partObjects ?? []) {
+    this.seated = (this.seated ?? 0) + ((SEATED.has(this.current?.getClip().name) ? 1 : 0) - (this.seated ?? 0)) * Math.min(1, dt * 4);
+    for (const { object, wag, lift = 0 } of this.partObjects ?? []) {
       if (!wag) continue;
       object.rotation.y = wag[0] * Math.sin(this.wagTime * wag[1]);
-      object.rotation.x = 0.06 * Math.sin(this.wagTime * wag[1] * 0.5);
+      object.rotation.x = 0.06 * Math.sin(this.wagTime * wag[1] * 0.5) + lift * this.seated;
     }
   }
 
@@ -330,6 +356,7 @@ export class Character {
     this.contact.geometry.dispose();
     this.contact.material.dispose();
     this.setParts([]);
+    this.removeEars();
     this.symbols.dispose();
     this.face.dispose();
     this.skeletonHelper.dispose?.();

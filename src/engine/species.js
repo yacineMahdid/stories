@@ -6,7 +6,7 @@ export const SPECIES = {
   monkey: {
     label: 'Monkey',
     spec: {
-      skin: '#8a5a3c', fur: { second: '#f0c9a2', belly: true, paws: '#e8bf98' }, ears: 'big',
+      skin: '#8a5a3c', fur: { second: '#f0c9a2', belly: true, paws: '#e8bf98' }, ears: 'monkey',
       face: { mask: { color: '#f0c9a2', shape: 'heart' }, eyes: 'round', eyeColor: '#2a1f1a', eyeLine: '#3b2216', nose: 'nostrils', noseColor: '#7a4a35', mouth: 'smile' },
       parts: [{ type: 'tail', shape: 'monkey', color: '#8a5a3c' }],
     },

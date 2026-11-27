@@ -21,6 +21,7 @@ export const EAR_STYLES = {
   floppy: { label: 'Floppy', scale: 0 },
   cow: { label: 'Cow', scale: 0 },
   horse: { label: 'Horse', scale: 0 },
+  monkey: { label: 'Monkey', scale: 0 },
   none: { label: 'None', scale: 0 },
 };
 
@@ -424,10 +425,10 @@ const SHAPES = {
     at: [0.165, 0.335, -0.045], sink: 0.012, up: [0.72, 0.68, -0.1], face: [0.25, 0.0, 1],
     inner: INNER_PINK, band: 0.015,
   },
-  floppy: { // hangs from a soft fold on the top of the head, the hollow toward the cheek
-    outline: [[-0.052, -0.03], [-0.062, 0.06], [-0.062, 0.15], [-0.045, 0.225], [0, 0.25], [0.045, 0.225], [0.062, 0.15], [0.062, 0.06], [0.052, -0.03], [0, -0.045]],
-    center: [0, 0.09], cup: 0.012, flat: 0.5, thick: 0.012, rim: 0.006, bend: [[0, 0], [0.18, 2.0], [0.6, 2.45], [1, 2.35]],
-    at: [0.178, 0.3, 0.0], sink: 0.012, up: [0.75, 0.66, 0.0], face: [0.66, -0.75, 0], flare: [0.016, 0.008], flareHeight: 0.045,
+  floppy: { // lies over the top-side of the head, then folds softly down to hang, the hollow toward the cheek
+    outline: [[-0.07, -0.03], [-0.068, 0.04], [-0.058, 0.11], [-0.056, 0.17], [-0.042, 0.228], [0, 0.255], [0.042, 0.228], [0.056, 0.17], [0.058, 0.11], [0.068, 0.04], [0.07, -0.03], [0, -0.045]],
+    center: [0, 0.09], cup: 0.01, flat: 0.5, thick: 0.017, rim: 0.0085, bend: [[0, 0], [0.33, 0.39], [0.62, 0.92], [1, 0.95]],
+    at: [0.12, 0.39, -0.01], sink: -0.004, up: [0.845, -0.534, 0], face: [-0.534, -0.845, -0.045], flare: [0.004, 0.006], flareHeight: 0.02,
     inner: 'shade', band: 0.014, frontRows: 16,
   },
   cow: {
@@ -442,6 +443,12 @@ const SHAPES = {
     at: [0.1, 0.395, -0.045], sink: 0.012, up: [0.24, 0.96, -0.1], face: [0.4, 0.0, 1],
     inner: '#3a2a22', band: 0.013,
   },
+  monkey: { // round and cupped, standing out from the side of the head where a human ear is, the face's color inside
+    outline: [[-0.05, -0.03], [-0.06, 0.025], [-0.052, 0.068], [-0.022, 0.093], [0.012, 0.096], [0.046, 0.078], [0.06, 0.035], [0.052, -0.03], [0, -0.045]],
+    center: [0, 0.035], cup: 0.024, flat: 0.35, thick: 0.012, rim: 0.0065, bend: -0.12,
+    at: [0.196, 0.16, -0.035], sink: 0.012, up: [0.95, 0.22, -0.2], face: [0.35, 0.05, 1],
+    inner: 'second', band: 0.015, fade: [0.0, 0.02],
+  },
   elf: {
     outline: [[-0.03, -0.04], [-0.04, 0.02], [-0.03, 0.07], [-0.008, 0.12], [0, 0.13], [0.012, 0.115], [0.034, 0.06], [0.038, 0.0], [0.026, -0.045], [0, -0.055]],
     center: [0, 0.03], cup: 0.012, flat: 0.5, thick: 0.008, rim: 0.0045, bend: 0.25,
@@ -452,7 +459,7 @@ const SHAPES = {
 
 /**
  * Build the ear meshes for a style. Returns [{ bone, object }] to attach (both sides);
- * `colors` = { fur, skin }; `head` = the head's vertices in Head space (see earlessGeometry), to
+ * `colors` = { fur, skin, second? } (second: the fur's second color, inside a monkey's ear); `head` = the head's vertices in Head space (see earlessGeometry), to
  * seat each ear on the head's curve.
  */
 export function buildEars(style, colors, head = null) {
@@ -462,6 +469,7 @@ export function buildEars(style, colors, head = null) {
   let inner = shape.inner;
   if (inner === 'shade') inner = new THREE.Color(fur).multiplyScalar(0.82);
   else if (inner === 'skin') inner = new THREE.Color(colors.skin).multiply(new THREE.Color(0.93, 0.8, 0.8));
+  else if (inner === 'second') inner = new THREE.Color(colors.second ?? new THREE.Color(fur).lerp(new THREE.Color(0xffffff), 0.45));
   const left = sculptEar(shape, head);
   const out = [];
   for (const geo of [left, mirrored(left)]) {
