@@ -39,28 +39,28 @@ float noise3(vec3 x) {
              mix(mix(hash3(i + vec3(0, 0, 1)), hash3(i + vec3(1, 0, 1)), f.x), mix(hash3(i + vec3(0, 1, 1)), hash3(i + vec3(1, 1, 1)), f.x), f.y), f.z);
 }
 
+// Pattern edges are clean lines, anti-aliased over about a pixel (every derivative is taken
+// outside the branches, where it is defined).
+float furEdge(float d, float at, float w) { return smoothstep(at - w, at + w, d); }
+
 vec3 furColor(vec3 p, bool arm, float t) {
+  vec2 eb = vec2(p.x / 0.088, (p.y - 0.345) / 0.14), ec = vec2(p.x / 0.175, (p.y - 0.6) / 0.105);
+  float db = dot(eb, eb), dc = dot(ec, ec);
+  float n = noise3(p * 12.0 + 3.7) * 0.65 + noise3(p * 26.0 + 1.3) * 0.35;
+  float sh = sin(p.y * 95.0 + sin(p.x * 16.0) * 1.4);
+  float sb = sin((p.y + 0.18 * noise3(p * 7.0)) * 72.0);
+  float wb = fwidth(db) * 0.75 + 1e-5, wc = fwidth(dc) * 0.75 + 1e-5, wn = fwidth(n) * 0.75 + 1e-5;
+  float wz = fwidth(p.z) * 0.75 + 1e-5, wh = fwidth(sh) * 0.75 + 1e-5, ws = fwidth(sb) * 0.75 + 1e-5;
   vec3 c = uSkin;
-  if (uBelly > 0.5 && !arm && p.y > 0.2 && p.y < 0.5 && p.z > 0.05) {
-    vec2 e = vec2(p.x / 0.088, (p.y - 0.345) / 0.14);
-    if (dot(e, e) < 1.0) c = uFur2;
-  }
-  if (uChin > 0.5 && p.y > 0.555 && p.z > 0.07) {
-    vec2 e = vec2(p.x / 0.175, (p.y - 0.6) / 0.105);
-    if (dot(e, e) < 1.0) c = uFur2;
-  }
-  if (uBack > 0.5 && !arm && p.y > 0.24 && p.y < 0.53 && p.z < 0.0) c = uFur2;
-  if (uSpots > 0.5) {
-    float n = noise3(p * 12.0 + 3.7) * 0.65 + noise3(p * 26.0 + 1.3) * 0.35;
-    if (n > 0.6) c = uFur3;
-  }
+  if (uBelly > 0.5 && !arm && p.y > 0.2 && p.y < 0.5 && p.z > 0.05) c = mix(c, uFur2, 1.0 - furEdge(db, 1.0, wb));
+  if (uChin > 0.5 && p.y > 0.555 && p.z > 0.07) c = mix(c, uFur2, 1.0 - furEdge(dc, 1.0, wc));
+  if (uBack > 0.5 && !arm && p.y > 0.24 && p.y < 0.53) c = mix(c, uFur2, 1.0 - furEdge(p.z, 0.0, wz));
+  if (uSpots > 0.5) c = mix(c, uFur3, furEdge(n, 0.6, wn));
   if (uStripes > 0.5) {
     if (p.y > 0.56) { // head: clean bands over the crown and the back, wavering a little
-      float s = sin(p.y * 95.0 + sin(p.x * 16.0) * 1.4);
-      if (s > 0.45 && (p.z < 0.06 || p.y > 0.9)) c = uFur3;
+      if (p.z < 0.06 || p.y > 0.9) c = mix(c, uFur3, furEdge(sh, 0.45, wh));
     } else {
-      float s = sin((p.y + 0.18 * noise3(p * 7.0)) * 72.0);
-      if (s > 0.5 && (p.z < 0.03 || arm || p.y < 0.22)) c = uFur3;
+      if (p.z < 0.03 || arm || p.y < 0.22) c = mix(c, uFur3, furEdge(sb, 0.5, ws));
     }
   }
   if (uPaws > 0.5 && ((arm && t > 0.158) || p.y < 0.045)) c = uPawColor;
@@ -113,7 +113,7 @@ export function createBodyMaterial() {
       // tint the sheen by the painted color so dark fur and saturated cloth keep their color
       .replace('material.sheenColor = sheenColor;', 'material.sheenColor = sheenColor * mix( vec3( 0.35 ), diffuseColor.rgb, 0.75 );');
   };
-  material.customProgramCacheKey = () => 'canonical-outfit-5';
+  material.customProgramCacheKey = () => 'canonical-outfit-6';
   material.userData.outfit = uniforms;
   return material;
 }

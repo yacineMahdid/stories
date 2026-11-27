@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 
 // Ear styles. Human ears are part of the body mesh and ride on the LeftEar/RightEar bones, so
 // they are resized (or hidden) by scaling those bones. Other ears are small extruded shapes
@@ -23,13 +24,23 @@ export const EAR_STYLES = {
 
 const INNER_PINK = '#f3a8b6';
 
+/**
+ * A soft, pillowy ear shape: a thin core with a fully rounded rim, smooth-shaded all over (an
+ * extrusion is faceted, so its vertices are welded before the normals are computed). As thick
+ * as `depth` plus the bevel on both sides.
+ */
 function extrude(shape, depth, bevel) {
+  const core = depth * 0.3, round = (depth - core) / 2 + bevel;
   const geo = new THREE.ExtrudeGeometry(shape, {
-    depth, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel, bevelSegments: 3, curveSegments: 16,
+    depth: core, bevelEnabled: true, bevelThickness: round, bevelSize: bevel, bevelSegments: 8, curveSegments: 24,
   });
-  geo.translate(0, 0, -depth / 2);
-  geo.computeVertexNormals();
-  return geo;
+  geo.deleteAttribute('normal');
+  geo.deleteAttribute('uv');
+  const soft = mergeVertices(geo, 1e-5);
+  geo.dispose();
+  soft.translate(0, 0, -core / 2);
+  soft.computeVertexNormals();
+  return soft;
 }
 
 function triangleShape(w, h, round = 0.25) {

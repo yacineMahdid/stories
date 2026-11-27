@@ -139,7 +139,7 @@ export class Character {
   setParts(parts = []) {
     for (const { object } of this.partObjects ?? []) {
       object.removeFromParent();
-      object.traverse((m) => { if (m.isMesh) { m.geometry.dispose(); m.material.map?.dispose(); m.material.dispose(); } });
+      object.traverse((m) => { if (m.isMesh) { m.geometry.dispose(); if (m.material.map?.userData.owned) m.material.map.dispose(); m.material.dispose(); } });
     }
     this.partObjects = buildParts(parts).map((part) => { this.bones[part.bone].add(part.object); return part; });
     // A snout carries the mouth, so the face draws it there (see Face.setMuzzle); a brow ridge

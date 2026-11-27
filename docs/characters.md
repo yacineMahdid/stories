@@ -69,6 +69,11 @@ cow, dog, cat, horse, frog), all on the same rig and animations.
   has its own canvas, projected from the front (`muzzle()` in `parts.js`). The gorilla's
   brow ridge is two halves that frown, lift and worry with the emotion's brows
   (`poseBrowRidge`), and no brows are drawn under it.
+- Animal parts get the same care as the human's hair. The horse's mane and tail, the cow's tail
+  tuft and the baboon's cheek fur are locks swept along curves (`hairLock` in `parts.js`) in
+  the hair's soft, matte material, with flow UVs and darkened undersides. Ears are pillowy
+  shapes with fully rounded, smooth-shaded rims. The fur's belly, chin, back, spot and stripe
+  edges are clean, anti-aliased lines.
 
 ```js
 const hero = await createCharacter(SPECIES.dog.spec);
