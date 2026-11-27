@@ -14,6 +14,7 @@ const SIZE = 512;
 const TAU = Math.PI * 2;
 const toPx = (x) => ((x + 0.23) / 0.46) * SIZE;
 const toPy = (y) => ((1.02 - y) / 0.46) * SIZE;
+const HEAD_TOP = 0.45; // the canvas's top row in Head-bone space (the Head bone is at y 0.57)
 
 // Feature anchors (body units -> canvas pixels).
 const EYE_Y = toPy(0.745);
@@ -155,7 +156,7 @@ export class Face {
 
     if (p.whiskers) this.whiskers(p.whiskers, noseY);
     this.nose(SIZE / 2, noseY);
-    if (this.muzzle) this.drawMuzzle(p, e, t);
+    if (this.muzzle) this.drawMuzzle(p, e, t, layout);
     else this.mouth(g, SIZE / 2, mouthY, p, e, t);
     this.texture.needsUpdate = true;
   }
@@ -167,11 +168,17 @@ export class Face {
 
   /** The mouth on the snout: the canvas is projected onto it from the front, so one face pixel
    *  there is as wide as on the face (times the snout's mouth scale). */
-  drawMuzzle(p, e, t) {
+  drawMuzzle(p, e, t, layout) {
     const m = this.muzzle, g = m.ctx, W = m.size, perUnit = SIZE / 0.46;
     g.setTransform(1, 0, 0, 1, 0, 0);
     if (m.base) g.drawImage(m.base, 0, 0); // the snout's own paint: its color, nostrils
     else { g.fillStyle = m.color; g.fillRect(0, 0, W, W); }
+    if (e.shade && m.center) { // the emotion's shade runs on over the snout where it rises into the face
+      const cy = m.center[1], ry = m.radii[1];
+      // both canvases are front projections: a face row maps to a snout row through its height in Head space
+      g.setTransform(W / SIZE, 0, 0, (W * 0.46) / (SIZE * 2 * ry), 0, (0.5 - (HEAD_TOP - cy) / (2 * ry)) * W);
+      drawShade(g, e.shade, layout);
+    }
     g.setTransform(m.scale * W / (2 * perUnit * m.radii[0]), 0, 0, m.scale * W / (2 * perUnit * m.radii[1]), W / 2, (0.5 - m.mouthY / 2) * W);
     g.lineCap = 'round';
     g.lineJoin = 'round';

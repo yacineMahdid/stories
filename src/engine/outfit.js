@@ -279,21 +279,28 @@ export function createBodyMaterial() {
 }
 
 /**
+ * Give a part's physical material the furred body's coat, from its onBeforeCompile: the sheen in
+ * the fur's own hue and the faint grain, over the part's own positions (Head or Tail space, the
+ * body's scale). Furred tails, ears and the parts that grow out of the head (snouts, the brow
+ * ridge, eye domes) use it, so they shade like the coat they grow from.
+ */
+export function furCoat(shader) {
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <common>', '#include <common>\nvarying vec3 vFur;')
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\nvFur = position;');
+  shader.fragmentShader = shader.fragmentShader
+    .replace('#include <common>', `#include <common>\nvarying vec3 vFur;\n${FUR_GLSL}`)
+    .replace('#include <lights_physical_fragment>', `diffuseColor.rgb *= 1.0 + furGrain(vFur * 260.0);\n${sheenChunk('true', '1.0')}`);
+}
+
+/**
  * A material for furred parts (tails) that matches a furred body: the same response, sheen and
  * grain. `map` carries the colors and markings; one shader program for every such part.
  */
 export function createFurMaterial(map) {
   const material = new THREE.MeshPhysicalMaterial({ name: 'Fur', ...LOOK, map, sheenColor: new THREE.Color(0xffffff) });
-  material.onBeforeCompile = (shader) => {
-    shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vFur;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvFur = position;');
-    shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', `#include <common>\nvarying vec3 vFur;\n${FUR_GLSL}`)
-      .replace('#include <map_fragment>', `#include <map_fragment>\ndiffuseColor.rgb *= 1.0 + furGrain(vFur * 260.0);`)
-      .replace('#include <lights_physical_fragment>', sheenChunk('true', '1.0'));
-  };
-  material.customProgramCacheKey = () => 'fur-part-1';
+  material.onBeforeCompile = furCoat;
+  material.customProgramCacheKey = () => 'fur-part-2';
   return material;
 }
 

@@ -150,10 +150,10 @@ export class Character {
     this.poseParts();
   }
 
-  /** Parts that follow the emotion: a brow ridge frowns, lifts and worries like drawn brows. */
+  /** Parts that follow the emotion: a brow ridge frowns, lifts and worries like drawn brows, and darkens with the face's shade. */
   poseParts() {
-    const brows = EMOTIONS[this.face.emotionId]?.brows ?? null;
-    for (const part of this.partObjects ?? []) if (part.ridge) poseBrowRidge(part.ridge, brows);
+    const emotion = EMOTIONS[this.face.emotionId];
+    for (const part of this.partObjects ?? []) if (part.ridge) poseBrowRidge(part.ridge, emotion?.brows ?? null, emotion?.shade ?? 0);
   }
 
   /**

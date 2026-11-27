@@ -1,58 +1,11 @@
 import * as THREE from 'three';
 import { BROWS } from './face-parts.js';
 import { createHairMaterial, setHairColor, setHairTexture, UV_SCALE } from './hair.js';
-import { createFurMaterial } from './outfit.js';
+import { createFurMaterial, furCoat } from './outfit.js';
 
 // Extra 3D parts for animal characters: snouts, noses, horns, manes, brow ridges, eye domes and
 // tails. Positions are in the space of the bone each part rides on: Head (y up from the neck,
 // +z toward the face) or Tail (at the base of the spine, +z toward the front of the body).
-
-const mat = (color, roughness = 0.75) => new THREE.MeshPhysicalMaterial({
-  color, roughness, metalness: 0, specularIntensity: 0.3, sheen: 0.35, sheenRoughness: 0.8, sheenColor: new THREE.Color(color).lerp(new THREE.Color(0xffffff), 0.3),
-});
-
-function ellipsoid(radii, color, { segments = 28, roughness } = {}) {
-  const m = new THREE.Mesh(new THREE.SphereGeometry(1, segments, Math.round(segments * 0.7)), mat(color, roughness));
-  m.scale.set(...radii);
-  m.castShadow = true;
-  return m;
-}
-
-/** A tube along a smooth curve whose radius follows `radius(u)` (u = 0..1 along the curve). */
-function taperedTube(points, radius, color, opts = {}) {
-  const m = new THREE.Mesh(taperedTubeGeometry(points, radius, opts), mat(color, opts.roughness));
-  m.castShadow = true;
-  return m;
-}
-
-function taperedTubeGeometry(points, radius, { around = 16, steps = 40, ridges = 0 } = {}) {
-  const curve = new THREE.CatmullRomCurve3(points.map((p) => new THREE.Vector3(...p)));
-  const frames = curve.computeFrenetFrames(steps, false);
-  const pos = [], idx = [];
-  for (let i = 0; i <= steps; i++) {
-    const u = i / steps, c = curve.getPointAt(u), r = radius(u);
-    for (let k = 0; k < around; k++) {
-      const a = (k / around) * Math.PI * 2, rr = r * (1 + ridges * Math.cos(a * 5));
-      const n = frames.normals[i].clone().multiplyScalar(Math.cos(a) * rr).add(frames.binormals[i].clone().multiplyScalar(Math.sin(a) * rr));
-      pos.push(c.x + n.x, c.y + n.y, c.z + n.z);
-    }
-  }
-  for (let i = 0; i < steps; i++) {
-    for (let k = 0; k < around; k++) {
-      const a = i * around + k, b = i * around + ((k + 1) % around);
-      idx.push(a, b, a + around, b, b + around, a + around); // outward-facing
-    }
-  }
-  const tipCenter = curve.getPointAt(1);
-  const tip = pos.length / 3;
-  pos.push(tipCenter.x, tipCenter.y, tipCenter.z);
-  for (let k = 0; k < around; k++) idx.push(steps * around + k, steps * around + ((k + 1) % around), tip);
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  geo.setIndex(idx);
-  geo.computeVertexNormals();
-  return geo;
-}
 
 // --- hair: manes, tails and tufts in the human hair's soft, matte material (hair.js) ------------
 
@@ -138,7 +91,6 @@ const lobes = (count, low) => (u) => low + (1 - low) * Math.sqrt(Math.abs(Math.s
 const HEAD_CENTER = [0, 0.21, -0.01];
 
 const group = (...children) => { const g = new THREE.Group(); g.add(...children); return g; };
-const at = (obj, x, y, z, rx = 0, ry = 0, rz = 0) => { obj.position.set(x, y, z); obj.rotation.set(rx, ry, rz); return obj; };
 
 // --- the head's skin, so parts can grow out of it ------------------------------------------------
 
@@ -219,16 +171,18 @@ const smax = (a, b, k) => { const h = Math.max(k - Math.abs(a - b), 0) / k; retu
 const smoothstep = (x, a, b) => THREE.MathUtils.smoothstep(x, a, b);
 
 /**
- * A material that matches the body's (outfit.js): the same roughness, specular and velvet sheen
- * tinted by the color, so a part in the skin color shades exactly like the head it grows from.
- * Vertex colors carry baked occlusion (and, for horns, the color itself).
+ * A material that matches the furred body's (outfit.js): the same roughness, specular, velvet
+ * sheen in the color's own hue and faint grain (furCoat), so a part in the skin color shades
+ * exactly like the head it grows from. Vertex colors carry baked occlusion.
  */
 function skinMat(color, { map = null, vertexColors = false } = {}) {
-  const c = new THREE.Color(color);
-  return new THREE.MeshPhysicalMaterial({
-    color: map ? 0xffffff : c, map, vertexColors, roughness: 0.8, metalness: 0, specularIntensity: 0.25,
-    sheen: 0.35, sheenRoughness: 0.8, sheenColor: c.clone().multiplyScalar(0.75).addScalar(0.0875),
+  const material = new THREE.MeshPhysicalMaterial({
+    color: map ? 0xffffff : new THREE.Color(color), map, vertexColors, roughness: 0.8, metalness: 0, specularIntensity: 0.25,
+    sheen: 0.35, sheenRoughness: 0.8, sheenColor: new THREE.Color(0xffffff),
   });
+  material.onBeforeCompile = furCoat;
+  material.customProgramCacheKey = () => 'skin-part-1';
+  return material;
 }
 
 // --- builders, each returning [{ bone, object, wag? }] -----------------------------------------
@@ -435,7 +389,7 @@ function muzzle(def, color, nostrils, top) {
   const mesh = new THREE.Mesh(geometry, skinMat(color, { map: texture, vertexColors: true }));
   mesh.castShadow = true;
   const [mouthAt, scale] = def.mouth;
-  return { mesh, depth, muzzle: { ctx: canvas.getContext('2d'), texture, size, base, radii: [rx, ry], color, mouthY: (mouthAt - cy) / ry, scale } };
+  return { mesh, depth, muzzle: { ctx: canvas.getContext('2d'), texture, size, base, center: [cx, cy], radii: [rx, ry], color, mouthY: (mouthAt - cy) / ry, scale } };
 }
 
 /**
@@ -497,7 +451,7 @@ export const PART_BUILDERS = {
   brow({ color }) { // one sculpted ridge that frowns, lifts and worries with the emotion's brows
     const mesh = new THREE.Mesh(new THREE.BufferGeometry(), skinMat(color, { vertexColors: true }));
     mesh.castShadow = true;
-    const ridge = { mesh };
+    const ridge = { mesh, color: new THREE.Color(color) };
     poseBrowRidge(ridge, null);
     return [{ bone: 'Head', object: mesh, ridge }];
   },
@@ -708,11 +662,19 @@ function tailCanvas(color, { rings = null, tip = null, soft = false }) {
 
 const BROW_Y = 0.226;
 
+const SHADE = { r: 24 / 255, g: 10 / 255, b: 34 / 255 }; // the face's emotion shade (drawShade in face-parts.js)
+
 /**
  * Pose a brow ridge like the face would draw the brows (see BROWS in face-parts.js): each side's
- * inner and outer ends rise and fall with the brow's tilt and lift. null rests it.
+ * inner and outer ends rise and fall with the brow's tilt and lift. null rests it. `shade` is the
+ * emotion's shade, which darkens the ridge as the face canvas darkens the brows around it.
  */
-export function poseBrowRidge(ridge, name) {
+export function poseBrowRidge(ridge, name, shade = 0) {
+  if (ridge.color && ridge.shade !== shade) { // most of drawShade's strength is over the brows: blend as the canvas does, in sRGB
+    ridge.shade = shade;
+    const a = 0.88 * shade, c = ridge.color.getRGB({ r: 0, g: 0, b: 0 }, THREE.SRGBColorSpace);
+    ridge.mesh.material.color.setRGB(c.r + (SHADE.r - c.r) * a, c.g + (SHADE.g - c.g) * a, c.b + (SHADE.b - c.b) * a, THREE.SRGBColorSpace);
+  }
   let left = BROWS[name] ?? BROWS.soft, right = left;
   if (left.asym) { left = { tilt: -0.1, lift: -26 }; right = { tilt: 0.22, lift: 4 }; }
   const px = (0.46 / 512) * 0.8; // a face-canvas pixel in Head units, a little softened

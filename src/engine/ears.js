@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { furCoat } from './outfit.js';
 
 // Ear styles. Human ears are part of the body mesh and ride on the LeftEar/RightEar bones, so
 // they are resized by scaling those bones. Every other style (scale 0) hides them: the body
@@ -380,11 +381,10 @@ function earMaterial(fur, inner, { band = 0.012, soft = 0.005, fade = [0.004, 0.
       .replace('vec4 diffuseColor = vec4( diffuse, opacity );', [
         'float earInner = smoothstep( uMask.x - uMask.y, uMask.x + uMask.y, vEarMask.x ) * smoothstep( uMask.z, uMask.w, vEarMask.y );',
         'vec4 diffuseColor = vec4( mix( diffuse, uInner, uMask.y > 0.0 ? earInner : 0.0 ), opacity );',
-      ].join('\n'))
-      // tint the sheen by the painted color, as on the body
-      .replace('material.sheenColor = sheenColor;', 'material.sheenColor = sheenColor * mix( vec3( 0.35 ), diffuseColor.rgb, 0.75 );');
+      ].join('\n'));
+    furCoat(shader); // the body's coat: the sheen in the painted color's hue, and its faint grain
   };
-  material.customProgramCacheKey = () => 'sculpted-ear-1';
+  material.customProgramCacheKey = () => 'sculpted-ear-2';
   material.userData.ear = uniforms;
   return material;
 }

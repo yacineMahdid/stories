@@ -97,6 +97,8 @@ color darkened the way the director darkens a recolored body's stripes (`buildSp
 is the color lightened, and `stripes` or `tip` set them outright. Hair tails (the dog's plume, the
 horse's tail, the cow's tuft) are `hairLock`s in the hair's material; a lock's `blend` turns it
 into another color along its length (the dog's pale tip). Every tail is under 6,000 triangles.
+Ears, snouts, the brow ridge and eye domes take the furred tails' coat too (`furCoat`), so nothing
+that grows out of the body shades differently from it.
 
 ## Animation and emotion
 
@@ -112,13 +114,17 @@ into another color along its length (the dog's pale tip). Every tail is under 6,
   mouth, resting, talking or the emotion's, is drawn on the snout under the nose: the snout
   has its own canvas, projected from the front (`muzzle()` in `parts.js`). The gorilla's
   brow ridge is one sculpted roll that frowns, lifts and worries with the emotion's brows
-  (`poseBrowRidge`), and no brows are drawn under it. The frog's eyes, in every emotion, are
+  (`poseBrowRidge`), and no brows are drawn under it. An emotion's shade (gloomy, furious,
+  menacing...) runs on over the snout's canvas and darkens the brow ridge, so a bridge or ridge
+  that rises into the shaded face doesn't stay bright. The frog's eyes, in every emotion, are
   drawn on its eye domes (see Animal faces).
-- Animal parts get the same care as the human's hair. The horse's mane and tail, the cow's tail
-  tuft and the baboon's cheek fur are locks swept along curves (`hairLock` in `parts.js`) in
-  the hair's soft, matte material, with flow UVs and darkened undersides. Ears are sculpted,
-  cupped shells that grow out of the head (see Ears). The fur's belly, chin, back, spot and stripe
-  edges are clean, anti-aliased lines.
+- Animal parts get the same care as the human's hair. The horse's mane and tail, the dog's tail
+  plume, the cow's tail tuft and the baboon's cheek fur are locks swept along curves (`hairLock`
+  in `parts.js`) in the hair's soft, matte material, with flow UVs and darkened undersides. Ears
+  are sculpted, cupped shells that grow out of the head (see Ears); snouts, the dog's nose, the
+  gorilla's brow ridge, horns and eye domes rise out of the head in a soft fillet (see Animal
+  faces); the fur's markings are laid out for the anatomy, soft where fur would be and clean
+  where a toy would have a seam (see Fur, markings and tails).
 
 ```js
 const hero = await createCharacter(SPECIES.dog.spec);
@@ -155,8 +161,9 @@ Animal and elf ears are sculpted shells on the `Head` bone, the right one the le
 - **Color.** The back is the fur color (the hair color on a human). The inner color (pink, cream,
   tan, dark brown, a shade of the fur, or the skin's for the elf) is painted per pixel in the
   hollow, with a soft edge a little in from the rim, and fades out before it meets the head; a
-  little occlusion deepens the hollow. The material is the body's matte velvet (roughness 0.8,
-  low specular, a sheen tinted by the color), one shader program for every ear.
+  little occlusion deepens the hollow. The material is the furred body's matte velvet (roughness
+  0.8, low specular, and the coat's sheen in the painted color's hue and faint grain, `furCoat` in
+  `outfit.js`), one shader program for every ear.
 - **Cost.** Under 3,000 triangles an ear, built in a few milliseconds.
 
 | Style | Look |
@@ -185,7 +192,8 @@ sculpted to grow out of the head, not sit on it (`parts.js`):
   the face in a soft concave blend and its edge ends just under the skin, where the head hides
   it. Toward that edge its normals turn to the skin's, so the shading runs on into the head, and
   vertex colors bake a little occlusion into the crease and the underside. Parts in the skin's
-  color use a material matched to the body's (`skinMat`), so they shade like the head itself.
+  color use a material matched to the furred body's (`skinMat`: its response, and the coat's
+  sheen and grain from `furCoat` in `outfit.js`), so they shade like the head itself.
 - **Snouts** (`SNOUTS`) are depth maps over the lower face: a few rounded caps (`cap`: a
   superellipse footprint, a front that can lean back, a rounded fall to its edge) in one smooth
   union, with nostrils pressed in as soft dimples (`dimples`) and painted dark inside.
