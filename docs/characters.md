@@ -84,7 +84,7 @@ that start a little inside the body, so they grow out of it, and wag:
 | Shape | Look |
 |---|---|
 | `cat` | long and plump, rising in a lazy S with the tip hooked over; five rings and a dark tip |
-| `dog` | a short, fluffy plume of hair carried up, round in section, turning pale toward the tip |
+| `dog` | a short, fluffy plume of hair carried up and back off the rump at about 40°, its last third swung over to one side so it stands clear of the back from behind, round in section, turning pale toward the tip |
 | `monkey` | long and slender, swept up behind and rolled into a curl at the end |
 | `baboon` | thick at the root, carried up in an arch and then hanging, darker toward the end |
 | `cow` | a thin rope that grows into a hair tuft (`tip` is the tuft's color), ending a hand above the floor |
@@ -98,8 +98,10 @@ is the color lightened, and `stripes` or `tip` set them outright. Hair tails (th
 horse's tail, the cow's tuft) are `hairLock`s in the hair's material; a lock's `blend` turns it
 into another color along its length (the dog's pale tip). Every tail is under 6,000 triangles.
 In a seated pose (sit, sit on the floor or cross-legged, kneel, squat) the long hanging tails
-(horse, cow, baboon) swing back a little (each tail's `lift`, eased in and out by
-`Character.update`), so they stay off the seat and the floor.
+(horse, cow, baboon) swing back (each tail's `lift`, half as much again on the floor, eased in and
+out by `Character.update`), so they stay off the seat and the floor. Lying on the back (lie down,
+sleep) a tail would reach back into the floor, so every tail turns out to the side to lie beside
+the body, and hardly wags.
 Ears, snouts, the brow ridge and eye domes take the furred tails' coat too (`furCoat`), so nothing
 that grows out of the body shades differently from it.
 
@@ -118,21 +120,26 @@ that grows out of the body shades differently from it.
   has its own canvas, projected from the front (`muzzle()` in `parts.js`). The gorilla's
   brow ridge is one sculpted roll that frowns, lifts and worries with the emotion's brows
   (`poseBrowRidge`), and no brows are drawn under it. An emotion's shade (gloomy, furious,
-  menacing...) runs on over the snout's canvas and darkens the brow ridge (and dims its sheen,
-  which takes the color's hue but not its darkness), so a bridge or ridge that rises into the
-  shaded face doesn't stay bright. On a furred face, with no hair to hide the face canvas's
-  edges, the shade fades out in an oval round the eyes before the canvas's sides and top
-  (`Face.softShade`); a human's is drawn as before. The frog's eyes, in every emotion, are
+  menacing...) runs on over a snout and darkens the brow ridge (and dims its sheen, which takes
+  the color's hue but not its darkness), so a snout or ridge that rises into the shaded face
+  doesn't stay bright. On a furred face, with no hair to hide the face canvas's edges, the shade
+  fades out in an oval round the eyes before the canvas's sides and top (`Face.softShade`); a
+  human's is drawn as before. Where a snout rises into the shade, the snout carries it on its own
+  shade layer, and the face's shade is taken off it (see The shade on a snout under Animal
+  faces), so the snout darkens with the forehead with no rim and no change of tone. The frog's eyes, in every emotion, are
   drawn on its eye domes, and so are its brows, on the domes' upper fronts (see Animal faces).
 - Animal parts get the same care as the human's hair. The horse's mane and tail, the dog's tail
   plume, the cow's tail tuft and the baboon's cheek fur are locks swept along curves (`hairLock`
   in `parts.js`) in the hair's soft, matte material, with flow UVs and darkened undersides. A
   lock on the head can `hug` it: its section wraps onto the skin instead of lying in a plane, so a
-  wide, flat lock lies on the head with no edge standing off it. The horse's mane is a crest of
-  shingled locks, smaller toward the nape, lying over to one side, and a forelock that falls
-  forward and to the side over the brow; the baboon's cheek fur is one flat mass each side, three
-  overlapping locks lying back along the jaw from under the eye, their rounded ends scalloping
-  its back edge. Ears
+  wide, flat lock lies on the head with no edge standing off it (`hug` can also change along
+  the lock). The horse's mane is a crest with eight long, flat locks lying down the back of the
+  head and curving over to one side, smaller toward the nape, each tip riding a little higher
+  than the root of the next like shingles, so from behind it is one dark mass with a soft,
+  scalloped edge to one side; and a forelock that falls forward and to the side over the brow.
+  The baboon's cheek fur is one soft mass each side, three overlapping locks lying back along the
+  jaw from under the eye, full enough to read as a mass from the front, their rounded ends
+  scalloping its back edge. Ears
   are sculpted, cupped shells that grow out of the head (see Ears); snouts, the dog's nose, the
   gorilla's brow ridge, horns and eye domes rise out of the head in a soft fillet (see Animal
   faces); the fur's markings are laid out for the anatomy, soft where fur would be and clean
@@ -204,7 +211,10 @@ sculpted to grow out of the head, not sit on it (`parts.js`):
   the smooth maximum (`smax`) of its own shape and the skin sunk a few millimetres, so it meets
   the face in a soft concave blend and its edge ends just under the skin, where the head hides
   it. Toward that edge its normals turn to the skin's, so the shading runs on into the head, and
-  vertex colors bake a little occlusion into the crease and the underside. Parts in the skin's
+  vertex colors bake a little occlusion into the crease and the underside. The real head is
+  faintly ridged down the middle of its front (about 1.3 mm), which the sampled skin leaves out;
+  where a snout comes out of the skin near the middle it follows that ridge (`midRidge`), so the
+  line where it leaves the head stays round instead of dipping in a V. Parts in the skin's
   color use a material matched to the furred body's (`skinMat`: its response, and the coat's
   sheen and grain from `furCoat` in `outfit.js`), so they shade like the head itself.
 - **Snouts** (`SNOUTS`) rise out of the lower face, with nostrils pressed in as soft dimples
@@ -216,12 +226,13 @@ sculpted to grow out of the head, not sit on it (`parts.js`):
   its edge) in one smooth union. A long or round muzzle (the dog's, the horse's, the baboon's) is
   measured along rays from a point inside the head and inside its main mass (`roundBulge`): a few
   (super)ellipsoids (`ball`) in one smooth union, so it is round underneath too and runs back into
-  the chin as a full jaw instead of ending in a shelf. The dog has a round muzzle carried well
-  forward, soft puffs either side of the mouth and a low bridge up into the brow; above an ellipse
-  round the muzzle (`split`) it is painted in the face's color (`top`, by default the character's
-  skin), fading softly before the nose, so the bridge runs on into the forehead. The horse has a
-  broad, round muzzle ball on the lower face, its nostrils on the front, and a low bridge in the
-  face's color; the baboon a long, blunt muzzle, a straight top from the brow to an upright,
+  the chin as a full jaw instead of ending in a shelf. The dog has a puppy's muzzle: a round
+  ball carried well forward on the lower face below the eyes, soft puffs either side of the mouth,
+  and no bridge up the forehead; above an ellipse round the muzzle (`split`) it is painted in the
+  face's color (`top`, by default the character's skin), fading softly over the muzzle's top, so
+  the muzzle's cream and the coat meet in a soft stop. The horse has a broad, round muzzle ball on
+  the lower face, its nostrils on the front, its top fillet in the face's color, and no bridge
+  either; the baboon a long, blunt muzzle, a straight top from the brow to an upright,
   rounded front and a full jaw under it, its sheen lowered and its color dimmed (`sheen`, `dim`)
   so it matches the dark mask round its eyes; the cow a wide, flat muzzle; the gorilla a broad
   muzzle under a wide nose with flared nostrils.
@@ -233,6 +244,19 @@ sculpted to grow out of the head, not sit on it (`parts.js`):
   a canvas of its own (a snout, a furred tail) casts its shadow with its own depth material,
   disposed with it, so its canvas is freed with the part (the renderer's shared depth material
   would keep it).
+- **The shade on a snout.** The face layer lies 1.5 mm out from the head, so it also lies over a
+  snout's low fillet; shading the snout's own canvas as well darkened a jagged rim there, and
+  the canvas darkened only the snout's color, not its sheen, so it shaded in another tone. So a
+  snout has a shade layer instead (`shadeLayer`): a shell over its upper part in the face layer's
+  own material, 1.5 mm out where the snout meets the skin and closer over the rest, on every
+  other ring of the snout's fan (about 1k triangles), with a 256 px canvas of its own, hidden
+  until an emotion's shade reaches it. `fanMesh` also finds the line where the snout comes out
+  of the skin (`rim`), and `shadeMask` fills it, feathered over about 1.5 mm. `Face.shadeMuzzle`
+  maps the face's soft shade into the snout's canvas through Head space and keeps the mask's
+  inside, and takes the mask's inside off the face's shade: over the fillet, where both layers
+  show, the two fade into each other and add up to the one shade, so the snout darkens with the
+  forehead with no rim, outline or change of tone. The layer's canvas is redrawn only when the
+  shade changes, not while talking.
 - **The dog's nose** is a mesh of its own: a rounded inverted triangle puffed like a cushion, two
   nostrils pressed into its lower front (darker inside) and a faint shine, set on the muzzle's
   front tip a third of its depth into it, along the muzzle's normal.

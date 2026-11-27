@@ -157,15 +157,17 @@ export class Face {
     const brows = e.brows ?? (p.brows ? 'soft' : null);
     if (brows && !this.browRidge) for (const [x, side] of eyes) drawBrow(g, x, eyeY - (this.domed ? 49 : 82) * k, side, brows, p);
     if (e.shade) {
-      if (this.furry) this.softShade(e.shade, layout, eyeY);
+      if (this.furry || this.muzzle) this.softShade(e.shade, layout, eyeY);
       else drawShade(g, e.shade, layout);
+    } else if (this.muzzle?.shade) {
+      this.muzzle.shade.material.visible = false;
     }
     if (glow) for (const [x, side] of eyes) EYE_MODES.glow(g, x, eyeY, side, k, p, t, e);
     if (e.tears) drawTears(g, e.tears, layout, k, t);
 
     if (p.whiskers) this.whiskers(p.whiskers, noseY);
     this.nose(SIZE / 2, noseY);
-    if (this.muzzle) this.drawMuzzle(p, e, t, layout);
+    if (this.muzzle) this.drawMuzzle(p, e, t);
     else this.mouth(g, SIZE / 2, mouthY, p, e, t);
     this.texture.needsUpdate = true;
   }
@@ -177,17 +179,11 @@ export class Face {
 
   /** The mouth on the snout: the canvas is projected onto it from the front, so one face pixel
    *  there is as wide as on the face (times the snout's mouth scale). */
-  drawMuzzle(p, e, t, layout) {
+  drawMuzzle(p, e, t) {
     const m = this.muzzle, g = m.ctx, W = m.size, perUnit = SIZE / 0.46;
     g.setTransform(1, 0, 0, 1, 0, 0);
     if (m.base) g.drawImage(m.base, 0, 0); // the snout's own paint: its color, nostrils
     else { g.fillStyle = m.color; g.fillRect(0, 0, W, W); }
-    if (e.shade && m.center) { // the emotion's shade runs on over the snout where it rises into the face
-      const cy = m.center[1], ry = m.radii[1];
-      // both canvases are front projections: a face row maps to a snout row through its height in Head space
-      g.setTransform(W / SIZE, 0, 0, (W * 0.46) / (SIZE * 2 * ry), 0, (0.5 - (HEAD_TOP - cy) / (2 * ry)) * W);
-      drawShade(g, e.shade, layout);
-    }
     g.setTransform(m.scale * W / (2 * perUnit * m.radii[0]), 0, 0, m.scale * W / (2 * perUnit * m.radii[1]), W / 2, (0.5 - m.mouthY / 2) * W);
     g.lineCap = 'round';
     g.lineJoin = 'round';
@@ -217,7 +213,41 @@ export class Face {
     g.fillStyle = oval;
     g.fillRect(-SIZE, -SIZE * 2, SIZE * 2, SIZE * 4);
     g.setTransform(1, 0, 0, 1, 0, 0);
+    g.globalCompositeOperation = 'source-over';
+    if (this.muzzle?.shade) this.shadeMuzzle(this.muzzle, `${amount}|${eyeY}`);
     this.ctx.drawImage(this.shadeCanvas, 0, 0, SIZE, SIZE);
+  }
+
+  /**
+   * Where a snout rises into the shade, its own shade layer (in the face layer's material, see
+   * shadeLayer in parts.js) carries it, and the face's shade is taken off the snout: the face layer
+   * also lies over the snout's low fillet, so shading both would darken a rim there. Over the
+   * fillet the two fade into each other (the snout's shade mask), and add up to the one shade.
+   * Both canvases are front projections, so a face pixel maps to the snout's canvas through Head space.
+   */
+  shadeMuzzle(m, key) {
+    const s = m.shade, W = s.size, [cx, cy] = m.center, [rx, ry] = m.radii, k = 0.46 / SIZE;
+    const ax = (W * k) / (2 * rx), bx = W * (0.5 - (0.23 + cx) / (2 * rx)), ay = (W * k) / (2 * ry), by = W * (0.5 - (HEAD_TOP - cy) / (2 * ry));
+    if (s.key !== key) { // the snout's part of the shade (the mask's inside)
+      s.key = key;
+      const g = s.ctx;
+      g.setTransform(1, 0, 0, 1, 0, 0);
+      g.clearRect(0, 0, W, W);
+      g.setTransform(ax, 0, 0, ay, bx, by);
+      g.drawImage(this.shadeCanvas, 0, 0, SIZE, SIZE);
+      g.setTransform(1, 0, 0, 1, 0, 0);
+      g.globalCompositeOperation = 'destination-in';
+      g.drawImage(s.mask, 0, 0, W, W);
+      g.globalCompositeOperation = 'source-over';
+      s.texture.needsUpdate = true;
+    }
+    s.material.visible = true;
+    const f = this.shadeCanvas.getContext('2d'); // and the face's part (the mask's outside)
+    f.setTransform(2 / ax, 0, 0, 2 / ay, (-2 * bx) / ax, (-2 * by) / ay);
+    f.globalCompositeOperation = 'destination-out';
+    f.drawImage(s.mask, 0, 0, W, W);
+    f.globalCompositeOperation = 'source-over';
+    f.setTransform(1, 0, 0, 1, 0, 0);
   }
 
   mask({ color, shape = 'heart' }, eyes, eyeY, mouthY) {

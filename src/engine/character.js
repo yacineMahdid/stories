@@ -19,8 +19,11 @@ const _e = new THREE.Euler();
 const _v = new THREE.Vector3();
 const _inv = new THREE.Matrix4();
 const CONTACT_BONES = ['Hips', 'Head', 'LeftFoot', 'RightFoot', 'LeftHand', 'RightHand'];
-// Seated poses: a long hanging tail swings back a little (its part's `lift`) to stay off the seat and floor.
-const SEATED = new Set(['Sit', 'SitFloor', 'SitCrossed', 'Kneel', 'Squat']);
+// Seated poses: a long hanging tail swings back (its part's `lift`, more when sitting on the floor) to
+// stay off the seat and floor. Lying on the back, a tail would reach back into the floor, so every
+// tail lies out to the side instead, and hardly wags.
+const SEATED = { Sit: 1, Kneel: 1, Squat: 1, SitFloor: 1.6, SitCrossed: 1.6 };
+const LYING = new Set(['LieDown', 'Sleep']);
 
 let contactTexture = null;
 function softShadowTexture() {
@@ -291,10 +294,12 @@ export class Character {
     this.symbols.update(dt);
     this.updateContact();
     this.wagTime = (this.wagTime ?? 0) + dt;
-    this.seated = (this.seated ?? 0) + ((SEATED.has(this.current?.getClip().name) ? 1 : 0) - (this.seated ?? 0)) * Math.min(1, dt * 4);
+    const clip = this.current?.getClip().name, ease = Math.min(1, dt * 4);
+    this.seated = (this.seated ?? 0) + ((SEATED[clip] ?? 0) - (this.seated ?? 0)) * ease;
+    this.lying = (this.lying ?? 0) + ((LYING.has(clip) ? 1 : 0) - (this.lying ?? 0)) * ease;
     for (const { object, wag, lift = 0 } of this.partObjects ?? []) {
       if (!wag) continue;
-      object.rotation.y = wag[0] * Math.sin(this.wagTime * wag[1]);
+      object.rotation.y = wag[0] * Math.sin(this.wagTime * wag[1]) * (1 - 0.8 * this.lying) + 1.45 * this.lying;
       object.rotation.x = 0.06 * Math.sin(this.wagTime * wag[1] * 0.5) + lift * this.seated;
     }
   }
