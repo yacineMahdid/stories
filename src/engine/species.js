@@ -6,7 +6,7 @@ export const SPECIES = {
   monkey: {
     label: 'Monkey',
     spec: {
-      skin: '#8a5a3c', fur: { second: '#f0c9a2', belly: true }, ears: 'big',
+      skin: '#8a5a3c', fur: { second: '#f0c9a2', belly: true, paws: '#e8bf98' }, ears: 'big',
       face: { mask: { color: '#f0c9a2', shape: 'heart' }, eyes: 'round', eyeColor: '#2a1f1a', eyeLine: '#3b2216', nose: 'nostrils', noseColor: '#7a4a35', mouth: 'smile' },
       parts: [{ type: 'tail', shape: 'monkey', color: '#8a5a3c' }],
     },
@@ -30,7 +30,7 @@ export const SPECIES = {
   cow: {
     label: 'Cow',
     spec: {
-      skin: '#f4f1ec', fur: { third: '#2b2b2b', spots: true, paws: '#4a3f3a' }, ears: 'cow', body: 'chubby',
+      skin: '#f4f1ec', fur: { third: '#2b2b2b', spots: 'patches', paws: '#4a3f3a' }, ears: 'cow', body: 'chubby',
       face: { eyes: 'doll', eyeColor: '#3a2a22', nose: 'none', mouth: 'smile', mouthY: 46, blush: true },
       parts: [{ type: 'snout', shape: 'cow', color: '#f3b9bb', nostrils: '#8a4a50' }, { type: 'horns', color: '#efe6d2' }, { type: 'tail', shape: 'cow', color: '#f4f1ec', tip: '#2b2b2b' }],
     },
@@ -46,7 +46,7 @@ export const SPECIES = {
   cat: {
     label: 'Cat',
     spec: {
-      skin: '#e8913c', fur: { second: '#fff3e6', third: '#b8642a', belly: true, chin: true, stripes: true }, ears: 'cat',
+      skin: '#e8913c', fur: { second: '#fff3e6', third: '#c07730', belly: true, chin: 'muzzle', stripes: true }, ears: 'cat',
       face: { eyes: 'classic', eyeColor: '#4f8a3a', nose: 'heart', noseColor: '#f08a9a', mouth: 'cat', whiskers: '#5a3a2a', blush: true },
       parts: [{ type: 'tail', shape: 'cat', color: '#e8913c' }],
     },

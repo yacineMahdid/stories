@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { BROWS } from './face-parts.js';
 import { createHairMaterial, setHairColor, setHairTexture, UV_SCALE } from './hair.js';
+import { createFurMaterial } from './outfit.js';
 
 // Extra 3D parts for animal characters: snouts, noses, horns, manes, brow ridges, eye domes and
 // tails. Positions are in the space of the bone each part rides on: Head (y up from the neck,
@@ -57,10 +58,10 @@ function taperedTubeGeometry(points, radius, { around = 16, steps = 40, ridges =
 
 const TILE_U = 0.24, TILE_V = 0.48; // world size of one hair tile (hair.js)
 
-function hairMaterial(color, texture = 'straight') {
+function hairMaterial(color, texture = 'straight', blendColor) {
   const material = createHairMaterial();
   setHairTexture(material, texture);
-  setHairColor(material, color);
+  setHairColor(material, color, blendColor);
   return material;
 }
 
@@ -68,9 +69,10 @@ function hairMaterial(color, texture = 'straight') {
  * A lock of hair swept along a curve: an elliptical section `width(u)` across and `height(u)` out
  * from the curve (u = 0..1 along it), sunk by `sink` of its height into what it grows from. "Out"
  * points away from `center` (a mane on the head), or along the curve's normal (a tail). Flow UVs
- * run along the curve, and the underside is darkened like the hair's baked occlusion.
+ * run along the curve, and the underside is darkened like the hair's baked occlusion. `blend`
+ * ({ color, amount(u) }) turns the lock into another color along its length (a dog's pale tail tip).
  */
-function hairLock(points, { width, height, sink = 0.5, center = null, color, texture, around = 18, steps = 48 }) {
+function hairLock(points, { width, height, sink = 0.5, center = null, color, texture, around = 18, steps = 48, blend = null }) {
   const curve = new THREE.CatmullRomCurve3(points.map((p) => new THREE.Vector3(...p)));
   const frames = center ? null : curve.computeFrenetFrames(steps, false);
   const len = curve.getLength(), R = around + 1;
@@ -91,7 +93,7 @@ function hairLock(points, { width, height, sink = 0.5, center = null, color, tex
       uv.push((k / around) * perim / TILE_U / UV_SCALE, (u * len) / TILE_V / UV_SCALE);
       // occlusion: dark where it meets the head and on its underside, lighter toward the tips
       const occ = 0.5 + 0.5 * THREE.MathUtils.smoothstep(sa, -0.9, 0.7);
-      col.push(Math.min(1, occ + 0.15 * u), 0, 0, 1 - 0.5 * THREE.MathUtils.smoothstep(u, 0.85, 1));
+      col.push(Math.min(1, occ + 0.15 * u), blend ? blend.amount(u) : 0, 0, 1 - 0.5 * THREE.MathUtils.smoothstep(u, 0.85, 1));
     }
     return { c, t };
   };
@@ -110,7 +112,7 @@ function hairLock(points, { width, height, sink = 0.5, center = null, color, tex
     const p = c.clone().addScaledVector(t, (e ? 1 : -1) * Math.min(width(e), height(e)) * 0.4);
     pos.push(p.x, p.y, p.z);
     uv.push(0.5 * perim / TILE_U / UV_SCALE, (e * len) / TILE_V / UV_SCALE);
-    col.push(0.8, 0, 0, 0.4);
+    col.push(0.8, blend ? blend.amount(e) : 0, 0, 0.4);
     for (let k = 0; k < around; k++) idx.push(...(e ? [tip, base + k + 1, base + k] : [tip, base + k, base + k + 1]));
   });
   const geo = new THREE.BufferGeometry();
@@ -126,7 +128,7 @@ function hairLock(points, { width, height, sink = 0.5, center = null, color, tex
     const x = n.getX(a) + n.getX(b), y = n.getY(a) + n.getY(b), z = n.getZ(a) + n.getZ(b), l = Math.hypot(x, y, z) || 1;
     n.setXYZ(a, x / l, y / l, z / l); n.setXYZ(b, x / l, y / l, z / l);
   }
-  const m = new THREE.Mesh(geo, hairMaterial(color, texture));
+  const m = new THREE.Mesh(geo, hairMaterial(color, texture, blend?.color));
   m.castShadow = true;
   return m;
 }
@@ -535,27 +537,174 @@ export const PART_BUILDERS = {
     }
     return out;
   },
-  tail({ shape = 'dog', color, tip }) {
-    const T = {
-      dog: { pts: [[0, 0, 0], [0, 0.04, -0.06], [0, 0.1, -0.085], [0, 0.14, -0.055]], r: (u) => 0.03 - 0.016 * u, wag: [0.5, 9] },
-      cat: { pts: [[0, 0, 0], [0, -0.03, -0.08], [0, 0.05, -0.15], [0, 0.17, -0.16], [0, 0.23, -0.11]], r: (u) => 0.022 - 0.006 * u, wag: [0.25, 2.5] },
-      cow: { pts: [[0, 0, 0], [0, -0.05, -0.05], [0, -0.15, -0.065]], r: () => 0.011, wag: [0.2, 2] },
-      horse: { pts: [[0, 0, 0], [0, -0.02, -0.07], [0, -0.12, -0.1], [0, -0.21, -0.09]], r: (u) => 0.035 + 0.02 * Math.sin(u * Math.PI) - 0.02 * u, wag: [0.18, 2], ridges: 0.12 },
-      monkey: { pts: [[0, 0, 0], [0, -0.04, -0.1], [0, 0.03, -0.2], [0, 0.15, -0.21], [0, 0.2, -0.15], [0, 0.16, -0.1]], r: () => 0.015, wag: [0.2, 2] },
-      baboon: { pts: [[0, 0, 0], [0, 0.03, -0.06], [0, 0.0, -0.11], [0, -0.08, -0.125]], r: (u) => 0.02 - 0.006 * u, wag: [0.15, 2] },
-    }[shape];
-    // a horse's tail is hair, like its mane; the others are furred like the body
-    const g = group(shape === 'horse'
-      ? hairLock(T.pts, { color, sink: 0.5, width: (u) => 2 * T.r(u) * 1.15, height: (u) => 2 * T.r(u), around: 20 })
-      : taperedTube(T.pts, T.r, color, { ridges: T.ridges ?? 0 }));
-    if (shape === 'cow') { // the tuft at the tip
-      g.add(hairLock([[0, -0.135, -0.065], [0, -0.17, -0.068], [0, -0.215, -0.066]], {
-        color: tip ?? '#3a2f2a', sink: 0.5, width: (u) => 0.01 + 0.05 * Math.sin(Math.PI * Math.min(1, u * 1.25)) ** 0.7, height: (u) => 0.01 + 0.045 * Math.sin(Math.PI * Math.min(1, u * 1.25)) ** 0.7, steps: 20, around: 14,
-      }));
-    }
-    return [{ bone: 'Tail', object: g, wag: T.wag }];
+  tail({ shape = 'dog', color, tip, stripes }) {
+    const T = TAILS[shape] ?? TAILS.dog;
+    return [{ bone: 'Tail', object: T.build(color, { tip, stripes }), wag: T.wag }];
   },
 };
+
+// --- tails ---------------------------------------------------------------------------------------
+// In Tail space: y up, +z toward the front of the body. Every tail starts a little inside the body,
+// so it grows out of it, and its markings follow its fur color (a recolored cat keeps its rings):
+// stripes are the fur darkened like the body's stripes (see buildSpec), a pale tip the fur lightened.
+
+const shade = (hex, amount) => `#${new THREE.Color(hex).lerp(new THREE.Color(amount > 0 ? 0xffffff : 0x000000), Math.abs(amount)).getHexString()}`;
+const smooth = THREE.MathUtils.smoothstep;
+const flare = (u, r) => r * 0.35 * (1 - smooth(u, 0, 0.1)); // the root widens a little into the body
+
+const TAILS = {
+  cat: { // long and plump, rising in a lazy S with the tip hooked over, ringed, with a dark tip
+    wag: [0.25, 2.5],
+    build: (color, { stripes }) => furTail(
+      [[0, 0.005, 0.025], [0, -0.014, -0.035], [0.006, -0.018, -0.095], [0.015, 0.035, -0.16], [0.024, 0.135, -0.185], [0.03, 0.235, -0.16], [0.028, 0.3, -0.105]],
+      (u) => 0.0275 - 0.0075 * u + flare(u, 0.0275),
+      tailCanvas(color, { rings: stripes ?? shade(color, -0.35), tip: stripes ?? shade(color, -0.35) })),
+  },
+  dog: { // a short, fluffy plume carried up, with a pale tip
+    wag: [0.5, 9],
+    build: (color, { tip }) => {
+      const full = (u) => smooth(u, -0.05, 0.4) * (1 - u) ** 0.55;
+      return hairLock([[0, -0.005, 0.03], [0, 0.03, -0.04], [0, 0.1, -0.08], [0, 0.17, -0.072], [0, 0.205, -0.03]], {
+        color, texture: 'wavy', sink: 0.5, center: [0, 0.08, 0.06], steps: 40, around: 20,
+        width: (u) => 0.03 + 0.085 * full(u) * lobes(3, 0.82)(u),
+        height: (u) => 0.03 + 0.06 * full(u),
+        blend: { color: tip ?? shade(color, 0.6), amount: (u) => smooth(u, 0.66, 0.86) },
+      });
+    },
+  },
+  monkey: { // long and slender, swept up behind and rolled into a curl
+    wag: [0.2, 2],
+    build: (color) => furTail(
+      [[0, 0, 0.02], [0, -0.022, -0.045], [0, -0.035, -0.115], [0, -0.012, -0.19], [0, 0.06, -0.245], [0, 0.155, -0.265], [0, 0.24, -0.245],
+        [0, 0.29, -0.19], [0, 0.285, -0.13], [0, 0.25, -0.1], [0, 0.212, -0.118], [0, 0.205, -0.158], [0, 0.228, -0.178]],
+      (u) => 0.0185 - 0.0095 * u + flare(u, 0.0185),
+      tailCanvas(color, {}), { steps: 120, around: 16 }),
+  },
+  baboon: { // thick at the root, carried up in an arch and then hanging, darker toward the end
+    wag: [0.15, 2],
+    build: (color) => furTail(
+      [[0, 0, 0.02], [0, 0.028, -0.04], [0, 0.07, -0.092], [0, 0.08, -0.135], [0, 0.045, -0.17], [0, -0.035, -0.188], [0, -0.13, -0.19]],
+      (u) => 0.026 - 0.013 * u + flare(u, 0.026),
+      tailCanvas(color, { tip: shade(color, -0.3), soft: true })),
+  },
+  cow: { // a thin rope hanging down, ending in a hair tuft it grows into
+    wag: [0.2, 2],
+    build: (color, { tip }) => {
+      const g = group(furTail([[0, 0, 0.02], [0, -0.03, -0.035], [0, -0.1, -0.06], [0, -0.185, -0.066]], (u) => 0.0105 + flare(u, 0.016), tailCanvas(color, {}), { around: 14, steps: 40 }));
+      const swell = (u) => Math.sin(Math.PI * Math.min(1, u * 1.08)) ** 0.75;
+      g.add(hairLock([[0, -0.155, -0.064], [0, -0.2, -0.067], [0, -0.262, -0.064]], {
+        color: tip ?? '#3a2f2a', sink: 0.5, center: [0, -0.2, 0.05], steps: 24, around: 14,
+        width: (u) => 0.022 + 0.04 * swell(u) * (1 - 0.35 * u), height: (u) => 0.022 + 0.034 * swell(u) * (1 - 0.35 * u),
+      }));
+      return g;
+    },
+  },
+  horse: { // hair like the mane: three locks from one narrow dock, arching out and falling full
+    wag: [0.18, 2],
+    build: (color) => group(...[[0, 1, 0.28], [-1, 0.93, 0.24], [1, 0.9, 0.24]].map(([s, len, w]) => {
+      const fall = (u) => smooth(u, 0.05, 0.45) * (1 - 0.45 * smooth(u, 0.72, 1));
+      const x = (u) => s * (0.008 + 0.036 * u * u); // the side locks part a little toward the end
+      const pts = [[0, 0.0, 0.03], [0, 0.02, -0.03], [x(0.3), 0.004, -0.086], [x(0.55), -0.07 * len, -0.122], [x(0.8), -0.165 * len, -0.134], [x(1), -0.262 * len, -0.126]];
+      return hairLock(pts, {
+        color, sink: 0.5, center: [0, -0.07, 0.1], around: 16, steps: 40,
+        width: (u) => 0.028 + w * 0.3 * fall(u), height: (u) => 0.028 + 0.052 * fall(u) * (1 - 0.4 * u),
+      });
+    })),
+  },
+};
+
+/**
+ * A furred tail: a tube along a smooth curve with radius `radius(u)` (u = 0..1, root to tip), a fully
+ * rounded tip, and the body's fur material. UVs run along it (v = 0 at the root, 1 at the very tip)
+ * so a strip of canvas paints its rings, tip and gradients.
+ */
+function furTail(points, radius, map, { around = 22, steps = 72 } = {}) {
+  const curve = new THREE.CatmullRomCurve3(points.map((p) => new THREE.Vector3(...p)));
+  const frames = curve.computeFrenetFrames(steps, false);
+  const len = curve.getLength(), rTip = radius(1), capRings = 6, total = len + rTip * Math.PI / 2;
+  const pos = [], uv = [], idx = [], R = around + 1;
+  const ring = (c, n, b, r, v) => {
+    for (let k = 0; k <= around; k++) {
+      const a = (k / around) * Math.PI * 2;
+      pos.push(c.x + (n.x * Math.cos(a) + b.x * Math.sin(a)) * r, c.y + (n.y * Math.cos(a) + b.y * Math.sin(a)) * r, c.z + (n.z * Math.cos(a) + b.z * Math.sin(a)) * r);
+      uv.push(k / around, v);
+    }
+  };
+  for (let i = 0; i <= steps; i++) ring(curve.getPointAt(i / steps), frames.normals[i], frames.binormals[i], radius(i / steps), (i / steps) * len / total);
+  // the rounded tip: rings shrinking on a quarter circle past the end, then the very tip
+  const end = curve.getPointAt(1), t = curve.getTangentAt(1), n = frames.normals[steps], b = frames.binormals[steps];
+  for (let j = 1; j < capRings; j++) {
+    const th = (j / capRings) * Math.PI / 2;
+    ring(end.clone().addScaledVector(t, rTip * Math.sin(th)), n, b, rTip * Math.cos(th), (len + rTip * th) / total);
+  }
+  const rows = steps + capRings; // rings so far
+  for (let i = 0; i < rows - 1; i++) {
+    for (let k = 0; k < around; k++) { const a = i * R + k, c = a + R; idx.push(a, a + 1, c, a + 1, c + 1, c); } // outward-facing
+  }
+  const tipAt = end.clone().addScaledVector(t, rTip), tip = pos.length / 3;
+  pos.push(tipAt.x, tipAt.y, tipAt.z); uv.push(0.5, 1);
+  for (let k = 0; k < around; k++) idx.push((rows - 1) * R + k, (rows - 1) * R + k + 1, tip);
+  // the root, inside the body, is closed too
+  const root = pos.length / 3, c0 = curve.getPointAt(0);
+  pos.push(c0.x, c0.y, c0.z); uv.push(0.5, 0);
+  for (let k = 0; k < around; k++) idx.push(root, k + 1, k);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  // the seam's two columns share one normal; the very tip points along the tail
+  const nrm = geo.attributes.normal;
+  for (let i = 0; i < rows; i++) {
+    const a = i * R, z = a + around;
+    const x = nrm.getX(a) + nrm.getX(z), y = nrm.getY(a) + nrm.getY(z), w = nrm.getZ(a) + nrm.getZ(z), l = Math.hypot(x, y, w) || 1;
+    nrm.setXYZ(a, x / l, y / l, w / l); nrm.setXYZ(z, x / l, y / l, w / l);
+  }
+  nrm.setXYZ(tip, t.x, t.y, t.z);
+  const mesh = new THREE.Mesh(geo, createFurMaterial(map));
+  mesh.castShadow = true;
+  return mesh;
+}
+
+/**
+ * A strip of canvas painted along a tail (v = 0 at the root, at the bottom): the fur color, then
+ * `rings` (a color: bands that go all the way round, each a little wavy, like a tabby's) and a
+ * `tip` color over the last part, sharp-edged like the rings or, with `soft`, a gradual darkening.
+ */
+function tailCanvas(color, { rings = null, tip = null, soft = false }) {
+  const W = 32, H = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = W; canvas.height = H;
+  const g = canvas.getContext('2d');
+  const img = g.createImageData(W, H);
+  const base = new THREE.Color(color), ring = rings && new THREE.Color(rings), end = tip && new THREE.Color(tip);
+  const out = new THREE.Color(), rgb = { r: 0, g: 0, b: 0 };
+  for (let y = 0; y < H; y++) {
+    const v = 1 - (y + 0.5) / H;
+    for (let x = 0; x < W; x++) {
+      const u = (x + 0.5) / W, wave = Math.sin(2 * Math.PI * u + 1.3) * 0.006 + Math.sin(4 * Math.PI * u) * 0.004;
+      out.copy(base);
+      if (ring) {
+        // five rings, closer and slimmer toward the tip, between the root and the dark tip
+        for (let i = 0; i < 5; i++) {
+          const mid = 0.2 + i * 0.13 - i * i * 0.004, half = 0.034 - i * 0.002;
+          const cov = 1 - smooth(Math.abs(v + wave - mid), half - 0.003, half + 0.003);
+          if (cov > 0) out.lerp(ring, cov);
+        }
+      }
+      if (end) out.lerp(end, soft ? smooth(v, 0.6, 0.95) : smooth(v + wave, 0.845, 0.855));
+      const k = (y * W + x) * 4;
+      out.getRGB(rgb, THREE.SRGBColorSpace);
+      img.data[k] = Math.round(rgb.r * 255); img.data[k + 1] = Math.round(rgb.g * 255); img.data[k + 2] = Math.round(rgb.b * 255); img.data[k + 3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 4;
+  texture.userData.owned = true; // disposed with the part
+  return texture;
+}
 
 const BROW_Y = 0.226;
 
