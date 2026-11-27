@@ -63,7 +63,7 @@ export const SPECIES = {
     label: 'Frog',
     spec: {
       skin: '#7cc36a', fur: { second: '#e2f2b8', third: '#58a84c', belly: true, chin: true, spots: true }, ears: 'none', body: 'stocky',
-      face: { eyes: 'round', eyeSize: 1.15, eyeSpacing: 1.12, eyeY: -18, nose: 'nostrils', noseColor: '#3f7a35', mouth: 'bigsmile', blush: true, blushColor: '#f29a9a' },
+      face: { eyes: 'round', eyeSize: 1.15, eyeSpacing: 1.07, eyeY: -138, nose: 'nostrils', noseColor: '#3f7a35', mouth: 'bigsmile', blush: true, blushColor: '#f29a9a' }, // eyes on the domes
       parts: [{ type: 'domes', color: '#7cc36a' }],
     },
   },

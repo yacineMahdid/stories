@@ -82,6 +82,11 @@ export class Face {
   /** A snout that carries the mouth (see muzzle() in parts.js), or null to draw it on the face. */
   setMuzzle(muzzle) { this.muzzle = muzzle; this.lastKey = ''; }
 
+  /** Extra layers in the face's material that show this canvas too (eye domes, see parts.js). */
+  setLayers(materials) {
+    for (const m of materials) { m.map = this.texture; m.needsUpdate = true; }
+  }
+
   /** A 3D brow ridge (see parts.js) shows the brows, so none are drawn under it. */
   setBrowRidge(on) { this.browRidge = on; this.lastKey = ''; }
 
@@ -165,8 +170,8 @@ export class Face {
   drawMuzzle(p, e, t) {
     const m = this.muzzle, g = m.ctx, W = m.size, perUnit = SIZE / 0.46;
     g.setTransform(1, 0, 0, 1, 0, 0);
-    g.fillStyle = m.color;
-    g.fillRect(0, 0, W, W);
+    if (m.base) g.drawImage(m.base, 0, 0); // the snout's own paint: its color, nostrils
+    else { g.fillStyle = m.color; g.fillRect(0, 0, W, W); }
     g.setTransform(m.scale * W / (2 * perUnit * m.radii[0]), 0, 0, m.scale * W / (2 * perUnit * m.radii[1]), W / 2, (0.5 - m.mouthY / 2) * W);
     g.lineCap = 'round';
     g.lineJoin = 'round';
@@ -176,6 +181,13 @@ export class Face {
 
   mask({ color, shape = 'heart' }, eyes, eyeY, mouthY) {
     const g = this.ctx;
+    g.save();
+    if (this.browRidge) { // the ridge's shelf starts at the tops of the eyes: no mask above, where it would show through
+      const top = eyeY - 40 * this.params.eyeSize;
+      g.beginPath(); g.moveTo(0, SIZE);
+      for (let x = 0; x <= SIZE; x += 16) g.lineTo(x, top + 0.012 * Math.max(0, Math.abs(x - SIZE / 2) - 110) ** 2); // rounding down past the ridge's ends
+      g.lineTo(SIZE, SIZE); g.closePath(); g.clip();
+    }
     g.fillStyle = color;
     g.beginPath();
     if (shape === 'heart') { // around both eyes and down over the mouth (monkeys)
@@ -187,6 +199,7 @@ export class Face {
       g.ellipse(SIZE / 2, (eyeY + mouthY) / 2, 170, 150, 0, 0, TAU);
     }
     g.fill();
+    g.restore();
   }
 
   whiskers(color, noseY) {

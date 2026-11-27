@@ -141,11 +141,12 @@ export class Character {
       object.removeFromParent();
       object.traverse((m) => { if (m.isMesh) { m.geometry.dispose(); if (m.material.map?.userData.owned) m.material.map.dispose(); m.material.dispose(); } });
     }
-    this.partObjects = buildParts(parts).map((part) => { this.bones[part.bone].add(part.object); return part; });
+    this.partObjects = buildParts(parts, this.spec.skin).map((part) => { this.bones[part.bone].add(part.object); return part; });
     // A snout carries the mouth, so the face draws it there (see Face.setMuzzle); a brow ridge
     // takes the place of drawn brows and moves with the emotion.
     this.face.setMuzzle(this.partObjects.find((part) => part.muzzle)?.muzzle ?? null);
     this.face.setBrowRidge(this.partObjects.some((part) => part.ridge));
+    this.face.setLayers(this.partObjects.flatMap((part) => part.faceLayer ?? [])); // eyes on eye domes
     this.poseParts();
   }
 
