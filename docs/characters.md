@@ -67,8 +67,9 @@ cow, dog, cat, horse, frog), all on the same rig and animations.
 - Emotions work the same on every species. On a snout (dog, horse, cow, baboon, gorilla) the
   mouth, resting, talking or the emotion's, is drawn on the snout under the nose: the snout
   has its own canvas, projected from the front (`muzzle()` in `parts.js`). The gorilla's
-  brow ridge is two halves that frown, lift and worry with the emotion's brows
-  (`poseBrowRidge`), and no brows are drawn under it.
+  brow ridge is one sculpted roll that frowns, lifts and worries with the emotion's brows
+  (`poseBrowRidge`), and no brows are drawn under it. The frog's eyes, in every emotion, are
+  drawn on its eye domes (see Animal faces).
 - Animal parts get the same care as the human's hair. The horse's mane and tail, the cow's tail
   tuft and the baboon's cheek fur are locks swept along curves (`hairLock` in `parts.js`) in
   the hair's soft, matte material, with flow UVs and darkened undersides. Ears are pillowy
@@ -83,6 +84,53 @@ hero.setEmotion('excited');
 hero.talking = true;
 hero.socket('rightHand').add(someProp);
 ```
+
+## Animal faces
+
+Snouts, the dog's nose, the gorilla's brow ridge, the cow's horns and the frog's eye domes are
+sculpted to grow out of the head, not sit on it (`parts.js`):
+
+- **The head's skin.** `HEAD_R` is the base head's skin sampled from the mesh (the human ears
+  left out): its distance from a point inside the head (`HEAD_C`) in 10° steps of azimuth and
+  elevation. From it come `skinZ(x, y)`, the depth of the front of the head (a 5 mm grid made on
+  first use), and the skin's normal. A part rises out of this surface in a fillet: its surface is
+  the smooth maximum (`smax`) of its own shape and the skin sunk a few millimetres, so it meets
+  the face in a soft concave blend and its edge ends just under the skin, where the head hides
+  it. Toward that edge its normals turn to the skin's, so the shading runs on into the head, and
+  vertex colors bake a little occlusion into the crease and the underside. Parts in the skin's
+  color use a material matched to the body's (`skinMat`), so they shade like the head itself.
+- **Snouts** (`SNOUTS`) are depth maps over the lower face: a few rounded caps (`cap`: a
+  superellipse footprint, a front that can lean back, a rounded fall to its edge) in one smooth
+  union, with nostrils pressed in as soft dimples (`dimples`) and painted dark inside.
+  `frontBulge` meshes one as rings around its center, evenly spaced along the surface out to where
+  it sinks under the skin (about 5k triangles). The dog has a soft muzzle whose rounded top runs up
+  into the brow, with puffed cheeks either side of the mouth; above the chin fur's ellipse it is
+  painted in the face's color (`top`, by default the character's skin), so the bridge runs on
+  into the forehead. The cow has a wide, flat muzzle; the horse a straight bridge down to a
+  broad, soft end; the baboon a long, deep muzzle with a blunt end; the gorilla a broad muzzle
+  under a wide nose with flared nostrils.
+- **The mouth on the snout.** Each snout has its own 512 px canvas, projected from the front over
+  the snout's extent: u = 0.5 + (x - cx) / 2rx, v = 0.5 + (y - cy) / 2ry in Head space.
+  `Face.drawMuzzle` copies the snout's own paint (its color, nostrils, the dog's face color) and
+  draws the mouth, resting, talking or the emotion's, at `SNOUTS[shape].mouth` = [height in Head
+  space, size relative to a mouth on the face], on the snout's front under the nose.
+- **The dog's nose** is a mesh of its own: a rounded inverted triangle puffed like a cushion, two
+  nostrils pressed into its lower front (darker inside) and a faint shine, set a third of its depth
+  into the muzzle along the muzzle's normal.
+- **The gorilla's brow ridge** is one rounded roll of the forehead: a depth map along the brow
+  line, arched over each eye and a little lower between them, a shelf over the eyes and a soft
+  groove above, fading into the temples. `poseBrowRidge` rebuilds it for each emotion's brows, and
+  under a ridge the face's mask stops at the tops of the eyes, so none of it shows through.
+- **Horns** curve out and up from the top of the head to round tips. Each root flares and grows
+  out of the skin (`growFromSkin`: the same fillet, along the lines from `HEAD_C`), colored like
+  the fur there (`base`, by default the character's skin) and turning to the horn's color over
+  its first few centimetres; the tips are a little darker.
+- **Eye domes** (the frog's) are balls half out of the head at `at` ([x, y] in Head space, by
+  default [0.112, 0.3]) with radius `size` (0.072), filleted into the skin. Each carries a layer
+  in the face's own material over its front, projected from the front exactly like the face
+  (`Face.setLayers`, wired by `Character.setParts`), so the eyes the face draws there sit on the
+  domes, in every style and emotion, blinking, crying or shaded. The frog's `eyeY` and
+  `eyeSpacing` put its eyes there.
 
 ## Hair
 
