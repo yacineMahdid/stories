@@ -9,7 +9,7 @@ import { loadGLTF } from './loader.js';
 import { EMOTIONS } from './emotions.js';
 import { Symbols } from './symbols.js';
 import { applyBody } from './body.js';
-import { EAR_STYLES, buildEars } from './ears.js';
+import { EAR_STYLES, buildEars, earlessGeometry } from './ears.js';
 import { buildParts, poseBrowRidge } from './parts.js';
 
 // A character is the canonical base + a spec. Everything that makes characters differ
@@ -155,7 +155,11 @@ export class Character {
     for (const part of this.partObjects ?? []) if (part.ridge) poseBrowRidge(part.ridge, brows);
   }
 
-  /** Swap the ears (see ears.js). Animal ears take the hair color, or the fur color. */
+  /**
+   * Swap the ears (see ears.js). Human ears are sized by their bones; every other style hides
+   * them by swapping the body to its earless geometry (shared, built once), where the head is
+   * smooth, and seats its own ears on the head. Animal ears take the hair color, or the fur color.
+   */
   setEars(style = 'human') {
     this.spec.ears = style;
     for (const o of this.earObjects ?? []) {
@@ -163,12 +167,15 @@ export class Character {
       o.traverse((m) => { if (m.isMesh) { m.geometry.dispose(); m.material.dispose(); } });
     }
     const def = EAR_STYLES[style] ?? EAR_STYLES.human;
-    const s = Math.max(def.scale, 0.001);
+    const withEars = this.baseGeometry ??= this.bodyMesh.geometry;
+    const earless = def.scale === 0 ? earlessGeometry(withEars, this.skeleton) : null;
+    this.bodyMesh.geometry = earless?.geometry ?? withEars;
+    const s = earless ? 1 : def.scale;
     this.bones.LeftEar.scale.setScalar(s);
     this.bones.RightEar.scale.setScalar(s);
     const furry = this.spec.fur || this.spec.parts?.length;
     const colors = { fur: furry ? this.spec.skin : this.spec.hair?.color ?? '#4a2f22', skin: this.spec.skin };
-    this.earObjects = buildEars(style, colors).map(({ bone, object }) => { this.bones[bone].add(object); return object; });
+    this.earObjects = buildEars(style, colors, earless?.head).map(({ bone, object }) => { this.bones[bone].add(object); return object; });
   }
 
   /**
