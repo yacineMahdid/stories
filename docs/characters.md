@@ -54,6 +54,50 @@ Root
 `species.js` holds ready-made specs for a human and eight animals (monkey, baboon, gorilla,
 cow, dog, cat, horse, frog), all on the same rig and animations.
 
+### Fur, markings and tails
+
+The fur is painted in the body shader (`furColor` in `outfit.js`) from rest-pose positions, so
+markings stay on the same spot of the body on every body type and in every pose. Each one is laid
+out for the anatomy (the head is treated as a ball, the torso as an upright cylinder, the arms and
+legs along their own axes) and ends by tapering or softening, never in a straight cut: edges are
+soft where fur would be soft (a muzzle, a bib, a saddle) and clean, anti-aliased lines where a
+toy would have a seam (patches, spots, paws).
+
+| `fur` key | Look |
+|---|---|
+| `belly` | a pale oval on the belly |
+| `chin` | a pale chin and throat running down into the chest; `'muzzle'` makes the chin smaller and adds two whisker pads under the nose, the fur's color down the bridge between them (cat) |
+| `back` | a silver saddle over the lower back and rump, its edge soft and feathered (gorilla) |
+| `spots` | `true`: round spots of a few sizes on the back and crown of the head, the back, the outer thighs and the arms, none on the face (frog); `'patches'`: big patches with hand-cut outlines over an ear, the back of the head, the back, a flank, the chest and the limbs (cow). Both are designed layouts (`MARKS`), up to 16 balls in rest space |
+| `stripes` | tabby: three lines from the forehead back over the crown (the outer two flaring toward the brows), bands that wrap the back and sides of the head, dip toward the jaw and taper to points before the face, each ending in its own place; bands that start at the spine and sweep down around the sides, thinning out before the belly, the neck and the hips; bars across the outer side of the arms and the back and outer side of the legs |
+| `paws` | hands and feet in their own color (hooves, dark or pale paws) |
+
+Any `fur` also makes the coat read as a plush pile rather than skin: the sheen takes the fur's own
+hue, a little paler and tighter than skin's, so silhouettes glow like velvet instead of graying,
+and a faint grain (a few percent of the color) fades out before it gets finer than a pixel.
+Clothes on a furred body keep the plain sheen, and a body without `fur` (every human) renders
+exactly as before: all of it sits behind uniforms in the one shared program.
+
+Tails are parts on the `Tail` bone (`{ type: 'tail', shape, color, tip?, stripes? }` in `parts.js`)
+that start a little inside the body, so they grow out of it, and wag:
+
+| Shape | Look |
+|---|---|
+| `cat` | long and plump, rising in a lazy S with the tip hooked over; five rings and a dark tip |
+| `dog` | a short, fluffy plume of hair carried up, turning pale toward the tip |
+| `monkey` | long and slender, swept up behind and rolled into a curl at the end |
+| `baboon` | thick at the root, carried up in an arch and then hanging, darker toward the end |
+| `cow` | a thin rope that grows into a hair tuft (`tip` is the tuft's color) |
+| `horse` | three locks of hair from one narrow dock, arching out and falling full, parting a little at the ends |
+
+Furred tails are tubes with a fully rounded tip in the body's fur material (`createFurMaterial` in
+`outfit.js`: the same response, sheen and grain), painted by a strip of canvas along their length.
+Their markings follow the tail's color, so a recolored cat keeps matching rings: rings are the
+color darkened the way the director darkens a recolored body's stripes (`buildSpec`), a pale tip
+is the color lightened, and `stripes` or `tip` set them outright. Hair tails (the dog's plume, the
+horse's tail, the cow's tuft) are `hairLock`s in the hair's material; a lock's `blend` turns it
+into another color along its length (the dog's pale tip). Every tail is under 6,000 triangles.
+
 ## Animation and emotion
 
 - `animations.js` + `moves.js`: 56 procedural clips in groups (basics, getting around,
