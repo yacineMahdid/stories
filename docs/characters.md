@@ -71,8 +71,8 @@ cow, dog, cat, horse, frog), all on the same rig and animations.
   (`poseBrowRidge`), and no brows are drawn under it.
 - Animal parts get the same care as the human's hair. The horse's mane and tail, the cow's tail
   tuft and the baboon's cheek fur are locks swept along curves (`hairLock` in `parts.js`) in
-  the hair's soft, matte material, with flow UVs and darkened undersides. Ears are pillowy
-  shapes with fully rounded, smooth-shaded rims. The fur's belly, chin, back, spot and stripe
+  the hair's soft, matte material, with flow UVs and darkened undersides. Ears are sculpted,
+  cupped shells that grow out of the head (see Ears). The fur's belly, chin, back, spot and stripe
   edges are clean, anti-aliased lines.
 
 ```js
@@ -83,6 +83,49 @@ hero.setEmotion('excited');
 hero.talking = true;
 hero.socket('rightHand').add(someProp);
 ```
+
+## Ears
+
+`ears.js`, `spec.ears`. Human ears (`human`, `small`, `big`) are part of the body mesh and ride on
+the `LeftEar`/`RightEar` bones, which are scaled to size them. Every other style hides them
+without a dent: the body swaps to an earless copy of its geometry (`earlessGeometry`, built once
+per page and shared by every character that needs it), and the ear bones stay at full size. Each
+human ear is a disk of the mesh inside one loop of head vertices; the disk is laid out flat (a
+Tutte embedding into a circle, which never folds), mapped into the loop and lifted onto a sphere
+fitted to the head around it, blending into the loop's exact heights. The side of the head is
+smooth there from every angle, rigid on `Head` like the rest of it, and the fur paints over it
+like anywhere else (it has new rest positions).
+
+Animal and elf ears are sculpted shells on the `Head` bone, the right one the left mirrored
+(`sculptEar`):
+
+- **Shape.** A closed outline in the ear's own plane is filled with rings around a center. The
+  mid-surface is a bowl, so the front is a cupped hollow and the back is rounded; the shell is
+  two to three centimetres thick in the middle and thins to a round rim about a centimetre
+  across, with a gently rounded tip. An ear can curl along its length (the floppy ear's soft
+  fold and hang).
+- **Seat.** The base is wide and sunk into the head on the head's own curve (a sphere fitted to
+  the head's vertices around it), and it flares toward the head, so the ear grows out of the head
+  instead of sitting on it. Ears are rigid on `Head`, so they turn and nod with it.
+- **Color.** The back is the fur color (the hair color on a human). The inner color (pink, cream,
+  tan, dark brown, a shade of the fur, or the skin's for the elf) is painted per pixel in the
+  hollow, with a soft edge a little in from the rim, and fades out before it meets the head; a
+  little occlusion deepens the hollow. The material is the body's matte velvet (roughness 0.8,
+  low specular, a sheen tinted by the color), one shader program for every ear.
+- **Cost.** Under 3,000 triangles an ear, built in a few milliseconds.
+
+| Style | Look |
+|---|---|
+| `cat` | rounded triangles tilted out, a pink hollow |
+| `fox` | taller, narrower triangles, a cream hollow |
+| `bunny` | long upright ovals leaning back, pink |
+| `bear` | small and round, a tan hollow |
+| `mouse` | big, round and thin, pink |
+| `floppy` | a soft fold on top of the head, hanging beside the cheek with the hollow toward it (dog) |
+| `cow` | leaf-shaped, sticking out sideways below the horns, pink |
+| `horse` | tall and narrow with a deep cup, a dark hollow |
+| `elf` | long and pointed in the skin's color, where the human ear was, sweeping up and back |
+| `none` | no ears (frog) |
 
 ## Hair
 
