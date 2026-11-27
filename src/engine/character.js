@@ -94,6 +94,7 @@ export class Character {
       polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
     });
     this.face = new Face(this.faceMesh.material);
+    this.face.setFootprint(this.faceMesh.geometry);
     this.hairMaterial = createHairMaterial();
     this.hairMesh = null;
     this.symbols = new Symbols(this.bones.Head);
@@ -297,10 +298,10 @@ export class Character {
     const clip = this.current?.getClip().name, ease = Math.min(1, dt * 4);
     this.seated = (this.seated ?? 0) + ((SEATED[clip] ?? 0) - (this.seated ?? 0)) * ease;
     this.lying = (this.lying ?? 0) + ((LYING.has(clip) ? 1 : 0) - (this.lying ?? 0)) * ease;
-    for (const { object, wag, lift = 0 } of this.partObjects ?? []) {
+    for (const { object, wag, lift = 0, lie = 1 } of this.partObjects ?? []) {
       if (!wag) continue;
-      object.rotation.y = wag[0] * Math.sin(this.wagTime * wag[1]) * (1 - 0.8 * this.lying) + 1.45 * this.lying;
-      object.rotation.x = 0.06 * Math.sin(this.wagTime * wag[1] * 0.5) + lift * this.seated;
+      object.rotation.y = wag[0] * Math.sin(this.wagTime * wag[1]) * (1 - 0.8 * this.lying) + 1.45 * lie * this.lying;
+      object.rotation.x = 0.06 * Math.sin(this.wagTime * wag[1] * 0.5) * (1 - this.lying) + lift * this.seated;
     }
   }
 

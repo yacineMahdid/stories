@@ -16,6 +16,50 @@ const toPx = (x) => ((x + 0.23) / 0.46) * SIZE;
 const toPy = (y) => ((1.02 - y) / 0.46) * SIZE;
 const HEAD_TOP = 0.45; // the canvas's top row in Head-bone space (the Head bone is at y 0.57)
 
+// Where the face layer mesh lies on the canvas, its edges faded in: white well inside the mesh,
+// half from 20 px inside its edges (sides, jaw and crown), clear at them. Built once per geometry.
+const FOOTPRINTS = new WeakMap();
+const FOOTPRINT_EDGE = 40, FOOTPRINT_BLUR = 8; // the band taken off along the edges (half of it inside), the fade
+
+function footprint(geometry) {
+  let mask = FOOTPRINTS.get(geometry);
+  if (mask) return mask;
+  const uv = geometry.attributes.uv, index = geometry.index, at = (i) => [uv.getX(i) * SIZE, uv.getY(i) * SIZE]; // flipY off: v runs down the canvas
+  const vertex = (t) => (index ? index.getX(t) : t);
+  const shape = document.createElement('canvas');
+  shape.width = shape.height = SIZE;
+  const g = shape.getContext('2d');
+  const tri = [], edges = new Map();
+  for (let t = 0; t < (index ?? uv).count; t += 3) {
+    const v = [vertex(t), vertex(t + 1), vertex(t + 2)];
+    tri.push(v);
+    for (let k = 0; k < 3; k++) {
+      const a = v[k], b = v[(k + 1) % 3], key = a < b ? `${a},${b}` : `${b},${a}`;
+      edges.set(key, (edges.get(key) ?? 0) + 1);
+    }
+  }
+  g.fillStyle = '#fff';
+  g.beginPath(); // one path, so shared edges leave no seams
+  for (const v of tri) { const [a, b, c] = v.map(at); g.moveTo(...a); g.lineTo(...b); g.lineTo(...c); g.closePath(); }
+  g.fill();
+  g.globalCompositeOperation = 'destination-out'; // take a band off along the mesh's open edges
+  g.lineWidth = FOOTPRINT_EDGE; g.lineCap = 'round'; g.lineJoin = 'round';
+  g.beginPath();
+  for (const [key, n] of edges) {
+    if (n !== 1) continue;
+    const [a, b] = key.split(',').map(Number);
+    g.moveTo(...at(a)); g.lineTo(...at(b));
+  }
+  g.stroke();
+  mask = document.createElement('canvas');
+  mask.width = mask.height = SIZE;
+  const m = mask.getContext('2d');
+  m.filter = `blur(${FOOTPRINT_BLUR}px)`;
+  m.drawImage(shape, 0, 0);
+  FOOTPRINTS.set(geometry, mask);
+  return mask;
+}
+
 // Feature anchors (body units -> canvas pixels).
 const EYE_Y = toPy(0.745);
 const EYE_DX = toPx(0.105) - SIZE / 2;
@@ -93,6 +137,9 @@ export class Face {
 
   /** A furred face has no hair to hide the canvas's edges, so the emotion's shade fades out before them. */
   setFurry(on) { this.furry = on; this.lastKey = ''; }
+
+  /** The face layer mesh this canvas is drawn on: a furred face's shade fades out before its edges. */
+  setFootprint(geometry) { this.footprintGeometry = geometry; this.lastKey = ''; }
 
   /** A 3D brow ridge (see parts.js) shows the brows, so none are drawn under it. */
   setBrowRidge(on) { this.browRidge = on; this.lastKey = ''; }
@@ -191,7 +238,8 @@ export class Face {
     m.texture.needsUpdate = true;
   }
 
-  /** The emotion's shade in an oval around the eyes, fading out before the canvas's sides and top. */
+  /** The emotion's shade in an oval around the eyes, fading out before the canvas's sides and top
+   *  and before the face layer's edges (the head goes on past them, unshaded). */
   softShade(amount, layout, eyeY) {
     if (!this.shadeCanvas) {
       this.shadeCanvas = document.createElement('canvas');
@@ -212,6 +260,7 @@ export class Face {
     oval.addColorStop(1, 'rgba(0, 0, 0, 0)');
     g.fillStyle = oval;
     g.fillRect(-SIZE, -SIZE * 2, SIZE * 2, SIZE * 4);
+    if (this.footprintGeometry) { g.setTransform(2, 0, 0, 2, 0, 0); g.drawImage(footprint(this.footprintGeometry), 0, 0); }
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.globalCompositeOperation = 'source-over';
     if (this.muzzle?.shade) this.shadeMuzzle(this.muzzle, `${amount}|${eyeY}`);

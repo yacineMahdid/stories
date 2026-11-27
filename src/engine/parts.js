@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { BROWS } from './face-parts.js';
 import { createHairMaterial, setHairColor, setHairTexture, UV_SCALE } from './hair.js';
 import { createFurMaterial, furCoat } from './outfit.js';
@@ -24,13 +24,14 @@ function hairMaterial(color, texture = 'straight', blendColor) {
  * from the curve (u = 0..1 along it), sunk by `sink` of its height into what it grows from. "Out"
  * points away from `center` (a mane on the head), or along the curve's normal (a tail). Flow UVs
  * run along the curve, and the underside is darkened like the hair's baked occlusion. `blend`
- * ({ color, amount(u) }) turns the lock into another color along its length (a dog's pale tail tip).
+ * ({ color, amount(u) }) turns the lock into another color along its length (a dog's pale tail tip),
+ * and `strands` (0..1) how strongly the strand tile shows (lower for a softer, smoother lock).
  * With `hug` (Head space only), the section is wrapped onto the head instead of lying in a plane:
  * across, it follows the skin's curve, and out is measured from the skin (the curve lifted `hug`
  * over it, a number or a function of u), so a wide, flat lock lies on the head with no edge
  * standing off it.
  */
-function hairLock(points, { width, height, sink = 0.5, center = null, color, texture, around = 18, steps = 48, blend = null, hug = null }) {
+function hairLock(points, { width, height, sink = 0.5, center = null, color, texture, around = 18, steps = 48, blend = null, hug = null, strands = 1 }) {
   const curve = new THREE.CatmullRomCurve3(points.map((p) => new THREE.Vector3(...p)));
   const frames = center ? null : curve.computeFrenetFrames(steps, false);
   const len = curve.getLength(), R = around + 1;
@@ -52,7 +53,7 @@ function hairLock(points, { width, height, sink = 0.5, center = null, color, tex
       uv.push((k / around) * perim / TILE_U / UV_SCALE, (u * len) / TILE_V / UV_SCALE);
       // occlusion: dark where it meets the head and on its underside, lighter toward the tips
       const occ = 0.5 + 0.5 * THREE.MathUtils.smoothstep(sa, -0.9, 0.7);
-      col.push(Math.min(1, occ + 0.15 * u), blend ? blend.amount(u) : 0, 0, 1 - 0.5 * THREE.MathUtils.smoothstep(u, 0.85, 1));
+      col.push(Math.min(1, occ + 0.15 * u), blend ? blend.amount(u) : 0, 0, strands * (1 - 0.5 * THREE.MathUtils.smoothstep(u, 0.85, 1)));
     }
     return { c: hug === null ? c : toSkin(c.clone(), lift + h * (1.3 - 2 * sink)), t };
   };
@@ -71,7 +72,7 @@ function hairLock(points, { width, height, sink = 0.5, center = null, color, tex
     const p = c.clone().addScaledVector(t, (e ? 1 : -1) * Math.min(width(e), height(e)) * 0.4);
     pos.push(p.x, p.y, p.z);
     uv.push(0.5 * perim / TILE_U / UV_SCALE, (e * len) / TILE_V / UV_SCALE);
-    col.push(0.8, blend ? blend.amount(e) : 0, 0, 0.4);
+    col.push(0.8, blend ? blend.amount(e) : 0, 0, 0.4 * strands);
     for (let k = 0; k < around; k++) idx.push(...(e ? [tip, base + k + 1, base + k] : [tip, base + k, base + k + 1]));
   });
   const geo = new THREE.BufferGeometry();
@@ -90,6 +91,14 @@ function hairLock(points, { width, height, sink = 0.5, center = null, color, tex
   const m = new THREE.Mesh(geo, hairMaterial(color, texture, blend?.color));
   m.castShadow = true;
   return m;
+}
+
+/** Locks of one hair into one mesh (one draw call), in the first one's material. */
+function mergeLocks(locks) {
+  const mesh = new THREE.Mesh(mergeGeometries(locks.map((m) => m.geometry)), locks[0].material);
+  mesh.castShadow = true;
+  for (const m of locks) { m.geometry.dispose(); if (m !== locks[0]) m.material.dispose(); }
+  return mesh;
 }
 
 /** Locks that bulge in a row (a mane's tufts): 1 at a lock's middle, `low` between two. */
@@ -466,8 +475,8 @@ function shadeMask({ box: [cx, cy, rx, ry], rim }) {
  * emotion's shade on the snout is lit and blended exactly like the face's (painting it into the
  * snout's canvas would darken only its color, not its sheen). It lies 1.5 mm out where the snout
  * meets the skin, like the face layer, and closer over the rest; it is drawn only where the shade
- * can reach (Face.shadeMuzzle). It takes every other ring of the snout's fan: the shade is a soft
- * gradient, and the chords along the profiles stay well inside the gap over the snout.
+ * can reach (Face.shadeMuzzle). It takes every other ring of the snout's fan and, where the chords
+ * stay clear of the snout, every other profile: the shade is a soft gradient.
  */
 function shadeLayer({ geometry: src, gaps, grid: [around, rings] }) {
   const P = src.attributes.position, N = src.attributes.normal, pos = new Float32Array(P.count * 3);
@@ -477,11 +486,22 @@ function shadeLayer({ geometry: src, gaps, grid: [around, rings] }) {
   }
   const v = (j, k) => (j ? 1 + (j - 1) * around + (k % around) : 0), keep = (i) => P.getY(i) > 0.1 && gaps[i] > -0.0015, idx = [];
   const tri = (a, b, c) => { if (keep(a) || keep(b) || keep(c)) idx.push(a, b, c); };
-  for (let j = 0; j + 2 <= rings; j += 2) {
-    for (let k = 0; k < around; k++) {
-      if (j === 0) { tri(0, v(2, k), v(2, k + 1)); continue; }
-      tri(v(j, k), v(j + 2, k), v(j, k + 1));
-      tri(v(j, k + 1), v(j + 2, k), v(j + 2, k + 1));
+  // a strip two profiles wide is one chord across where that stays clear of the snout under it, and
+  // keeps the profile between where it would dip into it (across a narrow bridge)
+  const clear = (a, m, c) => ((pos[a * 3] + pos[c * 3]) / 2 - P.getX(m)) * N.getX(m) + ((pos[a * 3 + 1] + pos[c * 3 + 1]) / 2 - P.getY(m)) * N.getY(m)
+    + ((pos[a * 3 + 2] + pos[c * 3 + 2]) / 2 - P.getZ(m)) * N.getZ(m) > 0.0002;
+  for (let k = 0; k < around; k += 2) {
+    let step = 2;
+    for (let j = 2; j <= rings; j += 2) {
+      const a = v(j, k), m = v(j, k + 1), c = v(j, k + 2);
+      if ((keep(a) || keep(m) || keep(c)) && !clear(a, m, c)) step = 1;
+    }
+    for (let q = k; q < k + 2; q += step) {
+      for (let j = 0; j + 2 <= rings; j += 2) {
+        if (j === 0) { tri(0, v(2, q), v(2, q + step)); continue; }
+        tri(v(j, q), v(j + 2, q), v(j, q + step));
+        tri(v(j, q + step), v(j + 2, q), v(j + 2, q + step));
+      }
     }
   }
   const geo = new THREE.BufferGeometry();
@@ -643,56 +663,58 @@ export const PART_BUILDERS = {
   mane({ color }) { // a crest of soft locks lying down the back of the head and over to one side, and a forelock over the brow
     const crest = [[0, 0.445, 0.04], [0, 0.432, -0.06], [0, 0.37, -0.17], [0, 0.27, -0.235], [0, 0.15, -0.25], [0, 0.05, -0.215]];
     const line = new THREE.CatmullRomCurve3(crest.map((p) => new THREE.Vector3(...p)));
-    const lock = (pts, w, h, opts = {}) => ({ bone: 'Head', object: hairLock(pts, { center: HEAD_CENTER, color, sink: 0.42, hug: 0.002, steps: 36, around: 18, width: w, height: h, ...opts }) });
+    const lock = (pts, w, h, opts = {}) => hairLock(pts, { center: HEAD_CENTER, color, sink: 0.42, hug: 0.002, steps: 22, around: 12, width: w, height: h, ...opts });
     // the crest itself, thinner toward the nape, that the locks grow from
-    const out = [lock(crest, (u) => 0.012 + 0.04 * (1 - 0.5 * u) * Math.min(1, u / 0.05, (1 - u) / 0.1) ** 0.6, (u) => 0.01 + 0.026 * (1 - 0.5 * u) * Math.min(1, u / 0.05, (1 - u) / 0.1) ** 0.6, { steps: 40 })];
-    const N = 8, SIDE = new THREE.Vector3(-1, 0, 0); // over to the character's right
-    for (let i = 0; i < N; i++) {
-      // long, flat locks lying down the back of the head, curving over to the side, each tip over the next one's root like shingles
-      const t = 0.02 + (0.8 * i) / (N - 1), k = 1 - 0.35 * t, along = line.getTangentAt(t), L = 0.17 * k;
+    const locks = [lock(crest, (u) => 0.012 + 0.04 * (1 - 0.5 * u) * Math.min(1, u / 0.05, (1 - u) / 0.1) ** 0.6, (u) => 0.01 + 0.026 * (1 - 0.5 * u) * Math.min(1, u / 0.05, (1 - u) / 0.1) ** 0.6, { steps: 28, around: 14 })];
+    const SIDE = new THREE.Vector3(-1, 0, 0); // over to the character's right
+    // long, flat locks lying down the back of the head, curving over to the side, each tip over the next one's root like
+    // shingles; not all alike: [where on the crest, length, width, how far over to the side], a little uneven, so the
+    // scalloped edge they make reads as hair rather than a row of copies, the last one small and tucked in at the nape
+    for (const [t, len, wide, over] of [[0.02, 1.06, 0.94, 0], [0.12, 0.9, 1.1, 0.12], [0.255, 1.12, 0.92, -0.08], [0.36, 0.95, 1.06, 0.1],
+      [0.475, 1.1, 0.9, -0.05], [0.575, 0.88, 1.12, 0.14], [0.69, 1.04, 0.95, -0.1], [0.8, 0.72, 0.8, 0.2]]) {
+      const k = 1 - 0.35 * t, along = line.getTangentAt(t), L = 0.17 * k * len;
       const p = line.getPointAt(t).addScaledVector(SIDE, 0.006 * k), pts = [p.toArray()];
       for (let j = 0; j < 4; j++) {
-        const th = 0.5 + 0.65 * ((j + 0.5) / 4); // along the crest at the root, more to the side toward the tip
+        const th = 0.5 + over + (0.65 - over) * ((j + 0.5) / 4); // along the crest at the root, more to the side toward the tip
         p.addScaledVector(along, (L / 4) * Math.cos(th)).addScaledVector(SIDE, (L / 4) * Math.sin(th));
         pts.push(p.toArray());
       }
       const end = (u) => Math.sqrt(Math.max(0, 1 - Math.max(0, (u - 0.72) / 0.29) ** 2)); // a round end, so the edge scallops softly
-      out.push(lock(pts,
-        (u) => 0.006 + 0.074 * k * (0.55 + 0.45 * smoothstep(u, 0, 0.35)) * end(u),
+      locks.push(lock(pts,
+        (u) => 0.006 + 0.074 * k * wide * (0.55 + 0.45 * smoothstep(u, 0, 0.35)) * end(u),
         (u) => 0.005 + 0.019 * k * (1 - 0.4 * u) * end(u) ** 0.5,
-        { hug: (u) => 0.002 + 0.004 * u }));
+        { hug: (u) => 0.002 + (t > 0.75 ? 0.002 : 0.004) * u }));
     }
     // the forelock: from the crown, forward and over to the side, lying on the forehead
-    out.push(lock([[0.006, 0.448, 0.02], [0.004, 0.44, 0.085], [-0.022, 0.405, 0.14], [-0.055, 0.345, 0.172], [-0.07, 0.3, 0.18]],
+    locks.push(lock([[0.006, 0.448, 0.02], [0.004, 0.44, 0.085], [-0.022, 0.405, 0.14], [-0.055, 0.345, 0.172], [-0.07, 0.3, 0.18]],
       (u) => 0.014 + 0.075 * (0.75 + 0.25 * smoothstep(u, 0, 0.3)) * (1 - u) ** 0.6,
-      (u) => 0.008 + 0.05 * (1 - 0.5 * u) * (1 - u) ** 0.35, { steps: 32, around: 16 }));
-    return out;
+      (u) => 0.008 + 0.05 * (1 - 0.5 * u) * (1 - u) ** 0.35, { steps: 24, around: 14 }));
+    return [{ bone: 'Head', object: mergeLocks(locks) }];
   },
   ruff({ color }) { // baboon cheek fur: one soft mass each side, lying back along the jaw, its back edge in rounded lobes
-    const out = [];
+    const locks = [];
     for (const s of [-1, 1]) {
-      // three overlapping flat locks from under the eye, the middle one longest: their rounded ends scallop the edge
-      for (const [pts, w, end] of [
-        [[[0.162, 0.132, 0.1], [0.196, 0.118, 0.025], [0.206, 0.104, -0.035]], 0.06, 0.9],
-        [[[0.158, 0.108, 0.105], [0.196, 0.088, 0.03], [0.206, 0.07, -0.06]], 0.066, 1],
-        [[[0.152, 0.084, 0.105], [0.184, 0.06, 0.035], [0.188, 0.044, -0.03]], 0.058, 0.85],
+      // three overlapping flat locks from under the eye, the middle one longest and fullest, the others tucked in
+      // against it: their rounded ends scallop the back edge, while from the front they read as one rounded mass.
+      // Their fronts start under the edge of the face's dark mask and rise gently out of the skin.
+      for (const [pts, w, h, end] of [
+        [[[0.16, 0.128, 0.094], [0.195, 0.116, 0.022], [0.204, 0.104, -0.032]], 0.056, 0.014, 0.88],
+        [[[0.156, 0.106, 0.1], [0.197, 0.088, 0.028], [0.207, 0.07, -0.06]], 0.078, 0.026, 1],
+        [[[0.152, 0.084, 0.098], [0.184, 0.062, 0.032], [0.188, 0.046, -0.03]], 0.054, 0.014, 0.84],
       ]) {
         const round = (u) => Math.sqrt(Math.max(0, 1 - (smoothstep(u, 0.5, end) * 0.98) ** 2)); // a rounded end, not a point
-        out.push({
-          bone: 'Head',
-          object: hairLock(pts.map(([x, y, z]) => [s * x, y, z]), {
-            center: HEAD_CENTER, color, sink: 0.5, hug: 0.001, steps: 28, around: 16,
-            width: (u) => 0.006 + w * (0.55 + 0.45 * smoothstep(u, 0, 0.35)) * round(u),
-            height: (u) => 0.004 + 0.02 * smoothstep(u, 0, 0.3) * (0.4 + 0.6 * round(u)) ** 0.7, // full enough to read as a soft mass from the front
-          }),
-        });
+        locks.push(hairLock(pts.map(([x, y, z]) => [s * x, y, z]), {
+          center: HEAD_CENTER, color, sink: 0.5, hug: 0.001, steps: 28, around: 16, strands: 0.4,
+          width: (u) => 0.006 + w * (0.55 + 0.45 * smoothstep(u, 0, 0.35)) * round(u),
+          height: (u) => 0.004 + h * smoothstep(u, 0, 0.4) * (0.4 + 0.6 * round(u)) ** 0.7,
+        }));
       }
     }
-    return out;
+    return [{ bone: 'Head', object: mergeLocks(locks) }];
   },
   tail({ shape = 'dog', color, tip, stripes }) {
     const T = TAILS[shape] ?? TAILS.dog;
-    return [{ bone: 'Tail', object: T.build(color, { tip, stripes }), wag: T.wag, lift: T.lift ?? 0 }];
+    return [{ bone: 'Tail', object: T.build(color, { tip, stripes }), wag: T.wag, lift: T.lift ?? 0, lie: T.lie ?? 1 }];
   },
 };
 
@@ -713,15 +735,16 @@ const TAILS = {
       (u) => 0.0275 - 0.0075 * u + flare(u, 0.0275),
       tailCanvas(color, { rings: stripes ?? shade(color, -0.35), tip: stripes ?? shade(color, -0.35) })),
   },
-  dog: { // a short, fluffy plume carried up and back off the rump, its end swung over to one side, with a pale tip
-    wag: [0.5, 9],
+  dog: { // a sickle: up and back off the rump, slim, then a fluffy plume swung out past the flank, its pale tip hooked up
+    wag: [0.45, 9], lie: -1, // to the character's left, so lying down it turns out to that side (see Character.update)
     build: (color, { tip }) => {
-      const full = (u) => smooth(u, -0.05, 0.4) * (1 - u) ** 0.55;
-      return hairLock([[0, -0.005, 0.03], [0, 0.012, -0.03], [0, 0.06, -0.078], [0.004, 0.118, -0.118], [0.022, 0.168, -0.135], [0.042, 0.205, -0.122]], {
-        color, texture: 'wavy', sink: 0.5, center: [0, 0.08, 0.06], steps: 40, around: 20,
-        width: (u) => 0.03 + 0.055 * full(u) * lobes(3, 0.82)(u),
-        height: (u) => 0.03 + 0.055 * full(u),
-        blend: { color: tip ?? shade(color, 0.6), amount: (u) => smooth(u, 0.66, 0.86) },
+      const plume = (u) => smooth(u, 0.2, 0.55), round = (u) => 0.35 + 0.65 * Math.sqrt(Math.max(0, 1 - Math.max(0, (u - 0.78) / 0.23) ** 2));
+      return hairLock([[0, -0.005, 0.03], [0, 0.012, -0.022], [0.003, 0.045, -0.062], [0.016, 0.086, -0.088], [0.046, 0.119, -0.098],
+        [0.083, 0.13, -0.09], [0.109, 0.135, -0.075], [0.117, 0.158, -0.064]], {
+        color, texture: 'wavy', sink: 0.5, center: [0, 0.08, 0.06], steps: 44, around: 20,
+        width: (u) => (0.02 + 0.038 * plume(u)) * round(u) * lobes(3, 0.86)(u),
+        height: (u) => (0.018 + 0.036 * plume(u)) * round(u),
+        blend: { color: tip ?? shade(color, 0.6), amount: (u) => smooth(u, 0.8, 0.93) },
       });
     },
   },
@@ -1041,10 +1064,19 @@ function horn(s, color, base) {
 
 /**
  * An eye dome: a ball half out of the head at (x, y) on its front, growing out of the skin in a
- * fillet. Its front carries a layer in the face's own material (`layer`, given the face canvas
- * by Face.setLayers), projected from the front exactly like the face, so the eyes the face draws
- * there (any style, blinking, every emotion's eyes) sit on the domes.
+ * fillet. It carries a layer in the face's own material (`layer`, given the face canvas by
+ * Face.setLayers), projected from the front exactly like the face, so the eyes the face draws
+ * there (any style, blinking, every emotion's eyes) sit on the domes, and everything else the
+ * face shows there (an emotion's shade) runs on over them unbroken.
+ *
+ * The layer covers all of the dome that is out of the head, its low fillet and underside too (the
+ * canvas there is what the face layer would show around them). Where the fillet is still below the
+ * head's own face layer, both would show the canvas, doubling its shade into a dark ring, so there
+ * the dome's layer rides just over the head's (FACE_LIFT) and is drawn first, writing its depth:
+ * the head's layer is hidden behind it, and the dome's own shows the same canvas in its place.
  */
+const FACE_LIFT = 0.0023; // over the skin: the head's face layer lies about 1.5 mm out
+
 function dome(x, y, r, color) {
   const c = new THREE.Vector3(x, y, skinZ(x, y) + r * 0.1); // its front faces the eye drawn at (x, y)
   const sphere = new THREE.SphereGeometry(r, 40, 30);
@@ -1060,24 +1092,27 @@ function dome(x, y, r, color) {
   geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
   const mesh = new THREE.Mesh(geo, skinMat(color, { vertexColors: true }));
   mesh.castShadow = true;
-  // the face layer: the dome's front, 1.2 mm out, with the face canvas's own front projection
-  const P = geo.attributes.position, N = geo.attributes.normal, lp = [], luv = [];
+  // the face layer: 1.2 mm out, and near the skin just over the head's face layer
+  const P = geo.attributes.position, N = geo.attributes.normal, lp = [], luv = [], gap = [];
   for (let i = 0; i < P.count; i++) {
-    const px = P.getX(i) + N.getX(i) * 0.0012, py = P.getY(i) + N.getY(i) * 0.0012, pz = P.getZ(i) + N.getZ(i) * 0.0012;
+    const h = aboveSkin(P.getX(i), P.getY(i), P.getZ(i)), off = smax(0.0012, FACE_LIFT - h, 0.002);
+    const px = P.getX(i) + N.getX(i) * off, py = P.getY(i) + N.getY(i) * off, pz = P.getZ(i) + N.getZ(i) * off;
     lp.push(px, py, pz);
     luv.push((px + 0.23) / 0.46, (0.45 - py) / 0.46);
+    gap.push(h);
   }
-  const keep = (i) => N.getZ(i) > 0.05 && heights[i] > 0.006, src = geo.index.array, lidx = [];
-  for (let t = 0; t < src.length; t += 3) if (keep(src[t]) && keep(src[t + 1]) && keep(src[t + 2])) lidx.push(src[t], src[t + 1], src[t + 2]);
+  const keep = (i) => gap[i] > -0.0012, src = geo.index.array, lidx = []; // not the part pressed under the skin
+  for (let t = 0; t < src.length; t += 3) if (keep(src[t]) || keep(src[t + 1]) || keep(src[t + 2])) lidx.push(src[t], src[t + 1], src[t + 2]);
   const lg = new THREE.BufferGeometry();
   lg.setAttribute('position', new THREE.Float32BufferAttribute(lp, 3));
   lg.setAttribute('normal', N.clone());
   lg.setAttribute('uv', new THREE.Float32BufferAttribute(luv, 2));
   lg.setIndex(lidx);
   const layer = new THREE.Mesh(lg, new THREE.MeshStandardMaterial({
-    name: 'Face', transparent: true, depthWrite: false, roughness: 0.9, metalness: 0,
+    name: 'Face', transparent: true, depthWrite: true, roughness: 0.9, metalness: 0,
     polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
   }));
+  layer.renderOrder = -1; // before the head's face layer, which it hides where it lies over it
   mesh.add(layer);
   return { mesh, layer: layer.material };
 }
